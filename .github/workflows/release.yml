@@ -1,0 +1,87 @@
+name: Portable release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: windows-x64
+            archive: glorycourse-windows-x64.zip
+          - os: macos-15
+            target: macos-arm64
+            archive: glorycourse-macos-arm64.zip
+          - os: ubuntu-24.04
+            target: linux-x64
+            archive: glorycourse-linux-x64.tar.gz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.3'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run verify
+      - run: npm run package
+      - run: npm run test:package
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/${{ matrix.archive }}
+            dist/${{ matrix.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify complete asset set
+        working-directory: dist
+        shell: bash
+        run: |
+          test -f glorycourse-windows-x64.zip
+          test -f glorycourse-macos-arm64.zip
+          test -f glorycourse-linux-x64.tar.gz
+          cat *.sha256 > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 3
+          sha256sum --check SHA256SUMS
+      - name: Prepare draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Node.js가 포함된 휴대용 배포본입니다. README의 OS별 시작/종료 안내를 참고하세요.
+
+          공개 전 확인: 실제 Windows 11, macOS 15 Apple Silicon, Ubuntu 24.04 GNOME에서 다운로드 후 첫 실행과 종료를 확인하고 이 문단을 검증 결과로 교체하세요. macOS 서명·공증 전에는 시험 배포입니다. 자동 테스트 통과만으로 GUI 지원이 검증되지는 않습니다.
+
+          업데이트: 현재 자료 백업 → 프로그램 종료 → 새 폴더에 압축 해제 → 시작 → 기존 자료 확인.
+          NOTES
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > draft-state.txt; then
+            test "$(cat draft-state.txt)" = true || { echo 'Published release will not be modified'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Glorycourse $RELEASE_TAG" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/*.zip dist/*.tar.gz dist/SHA256SUMS --clobber

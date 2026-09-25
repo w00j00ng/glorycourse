@@ -1,0 +1,26 @@
+{
+  "meta": { "storeEpoch": "epoch-1", "storeRevision": 0 },
+  "semesters": [],
+  "members": [],
+  "courses": [],
+  "semesterCourses": [],
+  "applications": [{
+    "id": "application-1",
+    "semesterId": "semester-1",
+    "memberId": "member-1",
+    "applicationOrder": null,
+    "applicationOrderStatus": "NORMAL",
+    "orderResolution": "SOURCE_AGREED",
+    "orderResolutionNote": null,
+    "revision": 0,
+    "createdAt": "2026-09-22T00:00:00.000Z",
+    "updatedAt": "2026-09-22T00:00:00.000Z"
+  }],
+  "applicationChoices": [],
+  "enrollments": [],
+  "allocationDrafts": [],
+  "allocationDraftItems": [],
+  "importBatches": [],
+  "finalizationReceipts": [],
+  "restoreReceipts": []
+}

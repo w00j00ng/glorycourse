@@ -1,0 +1,2454 @@
+openapi: 3.1.1
+info:
+  title: Glorycourse API
+  version: 0.1.0
+  description: 로컬 단일 관리자용 수강신청·수강이력 관리 API.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: /api/v1
+security:
+  - localSession: []
+tags:
+  - name: Local
+  - name: Catalog
+  - name: Applications
+  - name: Enrollments
+  - name: Imports
+  - name: Allocation
+  - name: Recovery
+x-operational-limits:
+  uploadBytes: 20971520
+  expandedWorkbookBytes: 104857600
+  workbookSheets: 20
+  workbookRows: 100000
+  workbookCells: 1000000
+  storeBytes: 209715200
+  allocationApplicants: 10000
+  semesterCourses: 1000
+  choicesPerApplication: 100
+paths:
+  /session:
+    post:
+      tags: [Local]
+      operationId: createLocalSession
+      summary: 같은 출처 UI용 로컬 세션을 발급한다.
+      security: []
+      responses:
+        '201':
+          description: 발급됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocalSession'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /runtime:
+    get:
+      tags: [Local]
+      operationId: getRuntimeInfo
+      summary: 현재 로컬 자료 저장 위치를 조회한다.
+      responses:
+        '200':
+          description: 로컬 실행 정보
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeInfo'
+  /shutdown:
+    post:
+      tags: [Local]
+      operationId: shutdownLocalServer
+      summary: 접수한 저장을 완료한 뒤 로컬 프로그램을 종료한다.
+      responses:
+        '200':
+          description: 접수한 작업 완료 및 연결 종료. 종료 파일은 잠금 해제까지 확인한다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state]
+                properties:
+                  state:
+                    const: stopped
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: 이미 종료 중
+  /data-folder:
+    post:
+      tags: [Local]
+      operationId: openDataFolder
+      summary: 현재 자료 폴더를 운영체제 파일 관리자로 연다.
+      responses:
+        '204':
+          description: 파일 관리자 열기 요청 완료
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /semesters:
+    get:
+      tags: [Catalog]
+      operationId: listSemesters
+      summary: 학기 이름 선택지를 최신 학기 순서부터 조회한다.
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 학기 목록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemesterResourceList'
+    post:
+      tags: [Catalog]
+      operationId: createSemester
+      summary: 학기를 추가한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSemesterRequest'
+      responses:
+        '201':
+          description: 생성된 학기 문맥
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemesterContext'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /semesters/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [Catalog]
+      operationId: deleteSemester
+      summary: 신청·이력·초안·확정 기록이 없는 학기와 개설 강좌를 삭제한다.
+      parameters:
+        - name: expectedRevision
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '204':
+          description: 학기 삭제 완료
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /semesters/{id}/move:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Catalog]
+      operationId: moveSemester
+      summary: 인접 학기와 순서를 한 번에 맞바꾼다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveSemesterRequest'
+      responses:
+        '200':
+          description: 이동된 학기 문맥
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemesterContext'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /members:
+    get:
+      tags: [Catalog]
+      operationId: listMembers
+      summary: 회원 이름 선택지를 조회한다.
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 회원 목록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamedResourceList'
+  /courses:
+    get:
+      tags: [Catalog]
+      operationId: listCourses
+      summary: 강좌 이름 선택지를 조회한다.
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 강좌 목록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamedResourceList'
+  /semesters/{id}/context:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Catalog]
+      operationId: getSemesterContext
+      summary: 학기 순서·개설 강좌·자동 배정 준비 상태를 조회한다.
+      responses:
+        '200':
+          description: 학기 문맥
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemesterContext'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Catalog]
+      operationId: updateSemesterContext
+      summary: 학기 이름·순서와 개설 강좌 이름·정원을 수정한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSemesterContextRequest'
+      responses:
+        '200':
+          description: 수정된 학기 문맥
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemesterContext'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /semesters/{semesterId}/courses/{semesterCourseId}:
+    parameters:
+      - name: semesterId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - name: semesterCourseId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+    delete:
+      tags: [Catalog]
+      operationId: deleteSemesterCourse
+      summary: 수강이력이 없는 학기별 개설 강좌를 삭제한다.
+      parameters:
+        - $ref: '#/components/parameters/ExpectedRevision'
+        - name: confirmApplications
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: 연결된 수강신청 선택과 빈 신청 삭제를 확인했는지 나타낸다.
+      responses:
+        '204':
+          description: 삭제됨
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /semesters/{semesterId}/enrollments:
+    parameters:
+      - name: semesterId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+    get:
+      tags: [Enrollments]
+      operationId: previewSemesterEnrollmentDeletion
+      summary: 선택 학기의 전체 수강이력 삭제 건수와 자료 버전을 확인한다.
+      responses:
+        '200':
+          description: 삭제 대상 학기와 건수
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [semesterName, count, storeRevision, storeEpoch]
+                properties:
+                  semesterName:
+                    type: string
+                  count:
+                    type: integer
+                    minimum: 0
+                  storeRevision:
+                    type: integer
+                    minimum: 0
+                  storeEpoch:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Enrollments]
+      operationId: deleteSemesterEnrollments
+      summary: 확인한 학기의 수강이력을 모두 삭제한다. 수강신청과 배정초안은 유지한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmationName, expectedRevision, expectedEpoch]
+              properties:
+                confirmationName:
+                  type: string
+                expectedRevision:
+                  type: integer
+                  minimum: 0
+                expectedEpoch:
+                  type: string
+      responses:
+        '200':
+          description: 삭제한 수강이력 건수
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deletedCount]
+                properties:
+                  deletedCount:
+                    type: integer
+                    minimum: 1
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /applications:
+    get:
+      tags: [Applications]
+      operationId: listApplications
+      summary: 수강신청 묶음을 조회한다.
+      parameters:
+        - $ref: '#/components/parameters/SemesterIdQuery'
+        - $ref: '#/components/parameters/CourseIdQuery'
+        - $ref: '#/components/parameters/MemberNameQuery'
+        - $ref: '#/components/parameters/ApplicationSortQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 신청 목록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationList'
+    post:
+      tags: [Applications]
+      operationId: createApplication
+      summary: 이름을 Resolve하고 신청 묶음을 한 명령으로 생성한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApplicationRequest'
+      responses:
+        '201':
+          description: 생성된 신청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /applications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Applications]
+      operationId: getApplication
+      summary: 신청 묶음 하나를 조회한다.
+      responses:
+        '200':
+          description: 신청 묶음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Applications]
+      operationId: updateApplication
+      summary: 신청 묶음과 희망 목록을 수정한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateApplicationRequest'
+      responses:
+        '200':
+          description: 수정된 신청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      tags: [Applications]
+      operationId: deleteApplication
+      summary: 신청 묶음을 삭제한다.
+      parameters:
+        - $ref: '#/components/parameters/ExpectedRevision'
+      responses:
+        '204':
+          description: 삭제됨
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /applications/template:
+    get:
+      tags: [Applications]
+      operationId: downloadApplicationTemplate
+      summary: 신청 이관 양식을 내려받는다.
+      parameters:
+        - name: semesterId
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Id'
+          description: 학기·개설강좌 시트에 포함할 학기 ID
+      responses:
+        '200':
+          $ref: '#/components/responses/XlsxFile'
+  /applications/export:
+    get:
+      tags: [Applications]
+      operationId: exportApplications
+      summary: 현재 필터 전체 신청을 내려받는다.
+      parameters:
+        - $ref: '#/components/parameters/SemesterIdQuery'
+        - $ref: '#/components/parameters/CourseIdQuery'
+        - $ref: '#/components/parameters/MemberNameQuery'
+        - $ref: '#/components/parameters/ApplicationSortQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/XlsxFile'
+  /applications/batch:
+    post:
+      tags: [Applications]
+      operationId: createApplicationsBatch
+      summary: 수강신청 1~100건을 하나의 트랜잭션으로 등록한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApplicationsBatchRequest'
+      responses:
+        '201':
+          description: 모두 등록된 신청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationsBatchResult'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /enrollments/batch/preview:
+    post:
+      tags: [Enrollments]
+      operationId: previewEnrollmentsBatch
+      summary: 이력 1~100건의 중복과 누적 정원을 함께 검토한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnrollmentsBatchRequest'
+      responses:
+        '200':
+          description: 행 번호를 포함한 전체 경고와 준비 토큰
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedAction'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /enrollments/batch:
+    post:
+      tags: [Enrollments]
+      operationId: createEnrollmentsBatch
+      summary: 일괄 Preview에서 검토한 모든 이력을 한 트랜잭션으로 등록한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreparedEnrollmentRequest'
+      responses:
+        '201':
+          description: 모두 등록된 이력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentsBatchResult'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /enrollments:
+    get:
+      tags: [Enrollments]
+      operationId: listEnrollments
+      summary: 확정 수강이력을 조회한다.
+      parameters:
+        - $ref: '#/components/parameters/SemesterIdQuery'
+        - $ref: '#/components/parameters/CourseIdQuery'
+        - $ref: '#/components/parameters/MemberNameQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 수강이력 목록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentList'
+    post:
+      tags: [Enrollments]
+      operationId: createEnrollment
+      summary: 준비된 직접 수강이력 생성을 실행한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreparedEnrollmentRequest'
+      responses:
+        '201':
+          description: 생성된 이력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enrollment'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /enrollments/preview:
+    post:
+      tags: [Enrollments]
+      operationId: previewEnrollmentChange
+      summary: 수강이력 생성·수정·삭제 후보와 경고를 계산한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollmentPreviewRequest'
+      responses:
+        '200':
+          description: 이력 변경 미리보기
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedAction'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /enrollments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Enrollments]
+      operationId: getEnrollment
+      summary: 수강이력 하나를 조회한다.
+      responses:
+        '200':
+          description: 수강이력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enrollment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Enrollments]
+      operationId: updateEnrollment
+      summary: 준비된 수강이력 수정을 실행한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreparedEnrollmentRequest'
+      responses:
+        '200':
+          description: 수정된 이력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enrollment'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      tags: [Enrollments]
+      operationId: deleteEnrollment
+      summary: 준비된 수강이력 삭제를 실행한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreparedEnrollmentRequest'
+      responses:
+        '204':
+          description: 삭제됨
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /enrollments/template:
+    get:
+      tags: [Enrollments]
+      operationId: downloadEnrollmentTemplate
+      summary: 수강이력 이관 양식을 내려받는다.
+      responses:
+        '200':
+          $ref: '#/components/responses/XlsxFile'
+  /enrollments/export:
+    get:
+      tags: [Enrollments]
+      operationId: exportEnrollments
+      summary: 현재 필터 전체 수강이력을 내려받는다.
+      parameters:
+        - $ref: '#/components/parameters/SemesterIdQuery'
+        - $ref: '#/components/parameters/CourseIdQuery'
+        - $ref: '#/components/parameters/MemberNameQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/XlsxFile'
+  /imports/preview:
+    post:
+      tags: [Imports]
+      operationId: previewImport
+      summary: xlsx를 파싱하고 반영 후보를 계산한다. DB는 변경하지 않는다.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportUploadRequest'
+      responses:
+        '200':
+          description: 이관 미리보기
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportPreview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /imports/{previewId}/stage:
+    parameters:
+      - $ref: '#/components/parameters/PreviewId'
+    post:
+      tags: [Imports]
+      operationId: stageImport
+      summary: 원본 행과 검토 자료만 저장한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportStageRequest'
+      responses:
+        '201':
+          description: 보관된 원본
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /imports/{previewId}/commit:
+    parameters:
+      - $ref: '#/components/parameters/PreviewId'
+    post:
+      tags: [Imports]
+      operationId: commitImport
+      summary: 선택한 이관 결과를 한 저장 명령으로 반영한다.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportCommitRequest'
+      responses:
+        '200':
+          description: 기존 성공 영수증 또는 새 반영 영수증
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportReceipt'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /import-batches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Imports]
+      operationId: getImportBatch
+      summary: 보관된 원본과 반영 결과를 조회한다.
+      responses:
+        '200':
+          description: 이관 묶음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /import-batches/{id}/preview:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Imports]
+      operationId: previewStagedImport
+      summary: STAGED 원본을 현재 자료 기준으로 다시 검토한다.
+      responses:
+        '200':
+          description: 새 이관 미리보기
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportPreview'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /allocation-policies:
+    get:
+      tags: [Allocation]
+      operationId: listAllocationPolicies
+      summary: 지원 정책과 차이를 조회한다.
+      responses:
+        '200':
+          description: 정책 목록
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AllocationPolicy'
+  /allocation-drafts:
+    get:
+      tags: [Allocation]
+      operationId: listAllocationDrafts
+      summary: 진행 중인 초안만 조회한다.
+      parameters:
+        - $ref: '#/components/parameters/SemesterIdQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 초안 목록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllocationDraftList'
+    post:
+      tags: [Allocation]
+      operationId: createAllocationDraft
+      summary: AUTO 또는 MANUAL 초안을 새로 생성한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAllocationDraftRequest'
+      responses:
+        '201':
+          description: 생성된 초안
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllocationDraftDetail'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /allocation-drafts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Allocation]
+      operationId: getAllocationDraft
+      summary: 저장 당시 결과와 현재 입력 변화를 조회한다.
+      responses:
+        '200':
+          description: 초안 상세
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllocationDraftDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Allocation]
+      operationId: deleteAllocationDraft
+      summary: 배정초안과 초안 항목을 삭제한다. 수강이력은 유지한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpectedDraftRevisionRequest'
+      responses:
+        '204':
+          description: 삭제됨
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /allocation-drafts/{id}/items:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Allocation]
+      operationId: addManualDraftItem
+      summary: 신청 없는 회원을 수동 초안에 추가한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddDraftItemRequest'
+      responses:
+        '201':
+          description: 추가된 초안 행
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllocationDraftItem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /allocation-drafts/{id}/items/{memberId}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/MemberId'
+    patch:
+      tags: [Allocation]
+      operationId: updateDraftItem
+      summary: 회원 한 명의 final 선택을 변경한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDraftItemRequest'
+      responses:
+        '200':
+          description: 수정된 초안 행
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllocationDraftItem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /allocation-drafts/{id}/items/{memberId}/restore-auto:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/MemberId'
+    post:
+      tags: [Allocation]
+      operationId: restoreAutomaticDraftItem
+      summary: 회원 한 명의 관리자 final을 저장된 자동 결과로 복원한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpectedDraftRevisionRequest'
+      responses:
+        '200':
+          description: 복원된 초안 행
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllocationDraftItem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /allocation-drafts/{id}/finalize-preview:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Allocation]
+      operationId: previewDraftFinalization
+      summary: 현재 자료로 확정 후보와 경고를 재검증한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpectedDraftRevisionRequest'
+      responses:
+        '200':
+          description: 확정 미리보기
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinalizationPreview'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /allocation-drafts/{id}/finalize:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Allocation]
+      operationId: finalizeAllocationDraft
+      summary: 수강이력·FINALIZED·영수증을 한 번 저장한다.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinalizeDraftRequest'
+      responses:
+        '200':
+          description: 기존 성공 영수증 또는 새 확정 영수증
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinalizationReceipt'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /semesters/{id}/enrollment-report:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Allocation]
+      operationId: getEnrollmentReportStatus
+      summary: 학기 수강이력 현황 다운로드 완료 상태를 조회한다.
+      responses:
+        '200':
+          description: 확정 및 현황 다운로드 상태
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [semesterId, finalized, enrollmentReportIsCurrent, enrollmentReportDownloadedAt]
+                properties:
+                  semesterId:
+                    $ref: '#/components/schemas/Id'
+                  finalized:
+                    type: boolean
+                  enrollmentReportIsCurrent:
+                    type: boolean
+                  enrollmentReportDownloadedAt:
+                    oneOf:
+                      - type: string
+                        format: date-time
+                      - type: 'null'
+    post:
+      tags: [Allocation]
+      operationId: downloadFinalizedEnrollmentReport
+      summary: 확정된 학기 수강이력 현황을 내려받고 완료 자료 버전을 기록한다.
+      responses:
+        '200':
+          $ref: '#/components/responses/XlsxFile'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /backups:
+    get:
+      tags: [Recovery]
+      operationId: listBackups
+      summary: 로컬 백업 목록을 조회한다.
+      responses:
+        '200':
+          description: 백업 목록
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Backup'
+    post:
+      tags: [Recovery]
+      operationId: createBackup
+      summary: 현재 자료의 검증 가능한 수동 백업을 만든다.
+      responses:
+        '201':
+          description: 생성된 백업
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backup'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /restores/preview:
+    post:
+      tags: [Recovery]
+      operationId: previewRestore
+      summary: 복원 파일을 검증하고 교체 영향을 계산한다.
+      requestBody:
+        required: true
+        content:
+          application/vnd.sqlite3:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: 복원 미리보기
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestorePreview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /restores:
+    post:
+      tags: [Recovery]
+      operationId: restoreBackup
+      summary: 사전 백업 후 검증된 자료를 복원하고 epoch를 바꾼다.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '200':
+          description: 복원 영수증
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreReceipt'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    localSession:
+      type: apiKey
+      in: header
+      name: X-Glorycourse-Session
+      description: 같은 출처 UI에서 발급받은 로컬 세션 토큰. URL과 로그에 기록하지 않는다.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    MemberId:
+      name: memberId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    PreviewId:
+      name: previewId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    Query:
+      name: q
+      in: query
+      schema:
+        type: string
+        maxLength: 200
+    SemesterIdQuery:
+      name: semesterId
+      in: query
+      schema:
+        $ref: '#/components/schemas/Id'
+    CourseIdQuery:
+      name: courseId
+      in: query
+      schema:
+        $ref: '#/components/schemas/Id'
+    MemberNameQuery:
+      name: memberName
+      in: query
+      schema:
+        type: string
+        maxLength: 200
+    ApplicationSortQuery:
+      name: sort
+      in: query
+      description: 신청순서 또는 회원명 정렬. 신청순서가 없는 자료는 마지막에 둔다.
+      schema:
+        type: string
+        enum: [ORDER_ASC, ORDER_DESC, NAME_ASC, NAME_DESC]
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 9007199254740991
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    ExpectedRevision:
+      name: expectedRevision
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/SafeInteger'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+  responses:
+    BadRequest:
+      description: 읽을 수 없는 요청 또는 파일 형식
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: 허용되지 않은 Host, Origin 또는 세션
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: 대상 리소스 없음
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: revision, Preview, 준비 토큰 또는 멱등 키 충돌
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: 업로드·압축 해제·행 수 또는 저장 크기 한도 초과
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: 실행 단계의 업무 제약 위반
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: 저장 장치 오류 또는 복구 필요 상태
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    XlsxFile:
+      description: xlsx 파일
+      content:
+        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+          schema:
+            type: string
+            format: binary
+  schemas:
+    Id:
+      type: string
+      minLength: 1
+      maxLength: 200
+    SafeInteger:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+    PositiveSafeInteger:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    Timestamp:
+      type: string
+      format: date-time
+    LocalSession:
+      type: object
+      additionalProperties: false
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+          minLength: 1
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
+    RuntimeInfo:
+      type: object
+      additionalProperties: false
+      required: [dataDirectory, application, instanceId, version]
+      properties:
+        application:
+          const: glorycourse
+        instanceId:
+          type: string
+          format: uuid
+        version:
+          type: string
+        dataDirectory:
+          type: string
+          minLength: 1
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [page, limit, total]
+      properties:
+        page:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        limit:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        total:
+          $ref: '#/components/schemas/SafeInteger'
+    NamedResource:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+    NamedResourceList:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NamedResource'
+        page:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        limit:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        total:
+          $ref: '#/components/schemas/SafeInteger'
+    SemesterResource:
+      type: object
+      additionalProperties: false
+      required: [id, name, order]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        order:
+          oneOf:
+            - $ref: '#/components/schemas/PositiveSafeInteger'
+            - type: 'null'
+    SemesterResourceList:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemesterResource'
+        page:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        limit:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        total:
+          $ref: '#/components/schemas/SafeInteger'
+    ValidationIssue:
+      type: object
+      additionalProperties: false
+      required: [code, message, severity, blockingStages, acknowledgementStages, subject, source, detail]
+      properties:
+        code:
+          $ref: '#/components/schemas/Id'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        severity:
+          enum: [ERROR, WARNING, INFO]
+        blockingStages:
+          type: array
+          uniqueItems: true
+          items:
+            enum: [IMPORT_COMMIT, AUTO_ALLOCATE, FINALIZE, ENROLLMENT_WRITE, RESTORE]
+        acknowledgementStages:
+          type: array
+          uniqueItems: true
+          items:
+            enum: [IMPORT_COMMIT, FINALIZE, ENROLLMENT_WRITE, RESTORE]
+        subject:
+          type: object
+          additionalProperties: false
+          required: [entityType]
+          properties:
+            entityType:
+              type: string
+              minLength: 1
+            entityId:
+              $ref: '#/components/schemas/Id'
+            memberId:
+              $ref: '#/components/schemas/Id'
+            courseId:
+              $ref: '#/components/schemas/Id'
+        source:
+          type: object
+          additionalProperties: false
+          properties:
+            sheet:
+              type: string
+            row:
+              $ref: '#/components/schemas/PositiveSafeInteger'
+            column:
+              type: string
+        detail:
+          type: object
+          additionalProperties: true
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, issues]
+      properties:
+        code:
+          $ref: '#/components/schemas/Id'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+        currentRevision:
+          $ref: '#/components/schemas/SafeInteger'
+    SemesterCourse:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, courseName, capacity, applicationCount, enrollmentCount]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        courseId:
+          $ref: '#/components/schemas/Id'
+        courseName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        capacity:
+          oneOf:
+            - $ref: '#/components/schemas/SafeInteger'
+            - type: 'null'
+        applicationCount:
+          $ref: '#/components/schemas/SafeInteger'
+        enrollmentCount:
+          $ref: '#/components/schemas/SafeInteger'
+    SemesterContext:
+      type: object
+      additionalProperties: false
+      required: [semester, order, allocationInputRevision, semesterCourses, readyForAutoAllocation, issues]
+      properties:
+        semester:
+          $ref: '#/components/schemas/NamedResource'
+        order:
+          oneOf:
+            - $ref: '#/components/schemas/PositiveSafeInteger'
+            - type: 'null'
+        allocationInputRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        semesterCourses:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemesterCourse'
+        readyForAutoAllocation:
+          type: boolean
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+    SemesterCourseInput:
+      type: object
+      additionalProperties: false
+      required: [courseName, capacity]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        courseName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        capacity:
+          description: 새 강좌를 추가할 때는 0 이상의 정수가 필수다. 기존 강좌의 미정 값은 유지할 수 있다.
+          oneOf:
+            - $ref: '#/components/schemas/SafeInteger'
+            - type: 'null'
+    UpdateSemesterContextRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, name, order, semesterCourses]
+      properties:
+        expectedRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        order:
+          description: null이면 기존 순서를 유지하고, 기존 순서도 없으면 자동 지정한다.
+          oneOf:
+            - $ref: '#/components/schemas/PositiveSafeInteger'
+            - type: 'null'
+        semesterCourses:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemesterCourseInput'
+    CreateSemesterRequest:
+      type: object
+      additionalProperties: false
+      required: [name, order]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        order:
+          description: null이면 기존 학기의 가장 큰 순서 다음 값으로 자동 지정한다.
+          oneOf:
+            - $ref: '#/components/schemas/PositiveSafeInteger'
+            - type: 'null'
+    MoveSemesterRequest:
+      type: object
+      additionalProperties: false
+      required: [direction, expectedOrder, adjacentSemesterId]
+      properties:
+        direction:
+          type: string
+          enum: [UP, DOWN]
+          description: 최신 학기부터 표시한 목록에서 위 또는 아래로 한 칸 이동한다.
+        expectedOrder:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        adjacentSemesterId:
+          $ref: '#/components/schemas/Id'
+    ApplicationChoiceInput:
+      type: object
+      additionalProperties: false
+      required: [courseName, preference]
+      properties:
+        courseName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        preference:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+    CreateApplicationsBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CreateApplicationRequest'
+    CreateEnrollmentsBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [semesterName, memberName, courseName]
+            properties:
+              semesterName:
+                type: string
+                minLength: 1
+                maxLength: 200
+              memberName:
+                type: string
+                minLength: 1
+                maxLength: 200
+              courseName:
+                type: string
+                minLength: 1
+                maxLength: 200
+    ApplicationsBatchResult:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Application'
+    EnrollmentsBatchResult:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Enrollment'
+    CreateApplicationRequest:
+      type: object
+      additionalProperties: false
+      required: [semesterName, memberName, applicationOrder, choices]
+      properties:
+        semesterName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        memberName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        applicationOrder:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ApplicationChoiceInput'
+    UpdateApplicationRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateApplicationRequest'
+        - type: object
+          required: [expectedRevision]
+          properties:
+            expectedRevision:
+              $ref: '#/components/schemas/SafeInteger'
+    ApplicationChoice:
+      type: object
+      additionalProperties: false
+      required: [id, semesterCourseId, courseName, preference]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        semesterCourseId:
+          $ref: '#/components/schemas/Id'
+        courseName:
+          type: string
+          minLength: 1
+        preference:
+          oneOf:
+            - $ref: '#/components/schemas/PositiveSafeInteger'
+            - type: 'null'
+    Application:
+      type: object
+      additionalProperties: false
+      required: [id, semesterId, memberId, semesterName, memberName, applicationOrder, applicationOrderStatus, orderResolution, revision, choices]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        semesterId:
+          $ref: '#/components/schemas/Id'
+        memberId:
+          $ref: '#/components/schemas/Id'
+        semesterName:
+          type: string
+          minLength: 1
+        memberName:
+          type: string
+          minLength: 1
+        applicationOrder:
+          oneOf:
+            - $ref: '#/components/schemas/PositiveSafeInteger'
+            - type: 'null'
+        applicationOrderStatus:
+          enum: [NORMAL, CONFLICT, MISSING, INVALID]
+        orderResolution:
+          enum: [SOURCE_AGREED, ADMIN_CONFIRMED, UNRESOLVED]
+        revision:
+          $ref: '#/components/schemas/SafeInteger'
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApplicationChoice'
+    ApplicationList:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Application'
+        page:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        limit:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        total:
+          $ref: '#/components/schemas/SafeInteger'
+    Enrollment:
+      type: object
+      additionalProperties: false
+      required: [id, semesterCourseId, memberId, semesterName, courseName, memberName, exceptionAcknowledgement, revision]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        semesterCourseId:
+          $ref: '#/components/schemas/Id'
+        memberId:
+          $ref: '#/components/schemas/Id'
+        semesterName:
+          type: string
+          minLength: 1
+        courseName:
+          type: string
+          minLength: 1
+        memberName:
+          type: string
+          minLength: 1
+        exceptionAcknowledgement:
+          oneOf:
+            - $ref: '#/components/schemas/Acknowledgement'
+            - type: 'null'
+        revision:
+          $ref: '#/components/schemas/SafeInteger'
+    EnrollmentList:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Enrollment'
+        page:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        limit:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        total:
+          $ref: '#/components/schemas/SafeInteger'
+    EnrollmentPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [action, semesterName, memberName, courseName]
+      properties:
+        action:
+          enum: [CREATE, UPDATE, DELETE]
+        enrollmentId:
+          $ref: '#/components/schemas/Id'
+        expectedRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        semesterName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        memberName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        courseName:
+          type: string
+          minLength: 1
+          maxLength: 200
+    PreparedAction:
+      type: object
+      additionalProperties: false
+      required: [preparedActionToken, warningDigest, storeRevision, storeEpoch, expiresAt, issues]
+      properties:
+        preparedActionToken:
+          type: string
+          minLength: 1
+        warningDigest:
+          type: string
+          minLength: 1
+        storeRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        storeEpoch:
+          $ref: '#/components/schemas/Id'
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+    PreparedEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [preparedActionToken, acknowledgedWarningDigest]
+      properties:
+        preparedActionToken:
+          type: string
+          minLength: 1
+        acknowledgedWarningDigest:
+          type: string
+          minLength: 1
+        acknowledgementNote:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    Acknowledgement:
+      type: object
+      additionalProperties: false
+      required: [warningDigest, note, acknowledgedAt]
+      properties:
+        warningDigest:
+          type: string
+          minLength: 1
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        acknowledgedAt:
+          $ref: '#/components/schemas/Timestamp'
+    ImportUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [file, kind, mode]
+      properties:
+        file:
+          type: string
+          format: binary
+        kind:
+          enum: [APPLICATIONS, ENROLLMENTS]
+        mode:
+          enum: [MERGE_KEEP_EXISTING, REPLACE_APPLICATION]
+    ImportPreview:
+      type: object
+      additionalProperties: false
+      required: [previewId, kind, mode, storeRevision, storeEpoch, expiresAt, warningDigest, sourceRowCount, insertCandidates, identicalRows, conflicts, issues, contextChanges, applications, enrollments]
+      properties:
+        previewId:
+          $ref: '#/components/schemas/Id'
+        kind:
+          enum: [APPLICATIONS, ENROLLMENTS]
+        mode:
+          enum: [MERGE_KEEP_EXISTING, REPLACE_APPLICATION]
+        storeRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        storeEpoch:
+          $ref: '#/components/schemas/Id'
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
+        warningDigest:
+          type: string
+          minLength: 1
+        sourceRowCount:
+          $ref: '#/components/schemas/SafeInteger'
+        insertCandidates:
+          $ref: '#/components/schemas/SafeInteger'
+        identicalRows:
+          $ref: '#/components/schemas/SafeInteger'
+        conflicts:
+          $ref: '#/components/schemas/SafeInteger'
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+        contextChanges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportContextChange'
+        applications:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        enrollments:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    ImportContextChange:
+      type: object
+      additionalProperties: false
+      required: [entity, semesterName, field, fileValue, existingValue, status, sourceRefs]
+      properties:
+        entity:
+          enum: [SEMESTER, SEMESTER_COURSE]
+        semesterName:
+          type: string
+        courseName:
+          type: string
+        field:
+          enum: [order, capacity]
+        fileValue:
+          oneOf:
+            - $ref: '#/components/schemas/SafeInteger'
+            - type: 'null'
+        existingValue:
+          oneOf:
+            - $ref: '#/components/schemas/SafeInteger'
+            - type: 'null'
+        status:
+          enum: [NEW, IDENTICAL, EXISTING_CONFLICT, MISSING, INVALID, SOURCE_CONFLICT]
+        sourceRefs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [sheet, row]
+            properties:
+              sheet:
+                type: string
+              row:
+                $ref: '#/components/schemas/PositiveSafeInteger'
+    ImportStageRequest:
+      type: object
+      additionalProperties: false
+      required: [storeRevision, storeEpoch]
+      properties:
+        storeRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        storeEpoch:
+          $ref: '#/components/schemas/Id'
+    ImportCommitRequest:
+      type: object
+      additionalProperties: false
+      required: [storeRevision, storeEpoch, warningDigest, resolutions]
+      properties:
+        storeRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        storeEpoch:
+          $ref: '#/components/schemas/Id'
+        warningDigest:
+          type: string
+          minLength: 1
+        resolutions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportResolution'
+    ImportResolution:
+      type: object
+      additionalProperties: false
+      required: [entity, action]
+      properties:
+        entity:
+          enum: [APPLICATION, ENROLLMENT, SEMESTER, SEMESTER_COURSE]
+        action:
+          enum: [KEEP_EXISTING, REPLACE_APPLICATION, CONFIRM_APPLICATION_ORDER, APPLY_FILE_VALUE, ACKNOWLEDGE_WARNING]
+        field:
+          enum: [order, capacity]
+        semesterName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        memberName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        courseName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        applicationOrder:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        warningDigest:
+          type: string
+          minLength: 1
+        acknowledgementNote:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ImportRawRow:
+      type: object
+      additionalProperties: false
+      required: [sheet, row, cells]
+      properties:
+        sheet:
+          type: string
+          minLength: 1
+          maxLength: 100
+        row:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        cells:
+          type: object
+          additionalProperties:
+            type: [string, 'null']
+    ImportReceipt:
+      type: object
+      additionalProperties: false
+      required: [receiptId, importBatchId, previewId, storeEpoch, idempotencyKey, requestHash, inserted, updated, skipped, committedAt]
+      properties:
+        receiptId:
+          $ref: '#/components/schemas/Id'
+        importBatchId:
+          $ref: '#/components/schemas/Id'
+        previewId:
+          $ref: '#/components/schemas/Id'
+        storeEpoch:
+          $ref: '#/components/schemas/Id'
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 200
+        requestHash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        inserted:
+          $ref: '#/components/schemas/SafeInteger'
+        updated:
+          $ref: '#/components/schemas/SafeInteger'
+        skipped:
+          $ref: '#/components/schemas/SafeInteger'
+        committedAt:
+          $ref: '#/components/schemas/Timestamp'
+    ImportBatch:
+      type: object
+      additionalProperties: false
+      required: [id, kind, templateVersion, fileHash, importedAt, status, rawRows, resolutions, receipt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        kind:
+          enum: [APPLICATIONS, ENROLLMENTS]
+        templateVersion:
+          type: string
+          minLength: 1
+        fileHash:
+          type: string
+          minLength: 1
+        importedAt:
+          $ref: '#/components/schemas/Timestamp'
+        status:
+          enum: [STAGED, APPLIED]
+        rawRows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportRawRow'
+        resolutions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportResolution'
+        receipt:
+          oneOf:
+            - $ref: '#/components/schemas/ImportReceipt'
+            - type: 'null'
+    PolicySettings:
+      type: object
+      additionalProperties: false
+      required: [preferenceMode, fallbackMode]
+      properties:
+        preferenceMode:
+          enum: [NEW_FIRST, RANK_FIRST]
+        fallbackMode:
+          const: MAX_CARDINALITY_PRIORITIZED
+    AllocationPolicy:
+      type: object
+      additionalProperties: false
+      required: [policyId, policyVersion, name, settings, description]
+      properties:
+        policyId:
+          $ref: '#/components/schemas/Id'
+        policyVersion:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          minLength: 1
+        settings:
+          $ref: '#/components/schemas/PolicySettings'
+        description:
+          type: string
+          minLength: 1
+    CreateAllocationDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [semesterId, mode, policyId, policyVersion, policySettings]
+      properties:
+        semesterId:
+          $ref: '#/components/schemas/Id'
+        mode:
+          enum: [AUTO, MANUAL]
+        policyId:
+          $ref: '#/components/schemas/Id'
+        policyVersion:
+          $ref: '#/components/schemas/Id'
+        policySettings:
+          $ref: '#/components/schemas/PolicySettings'
+        replayFromDraftId:
+          $ref: '#/components/schemas/Id'
+    AllocationDraftSummary:
+      type: object
+      additionalProperties: false
+      required: [id, semesterId, status, revision, mode, policyId, policyVersion, engineVersion, createdAt, updatedAt, enrollmentReportDownloadedAt, enrollmentReportIsCurrent]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        semesterId:
+          $ref: '#/components/schemas/Id'
+        status:
+          enum: [DRAFT, FINALIZED, ARCHIVED]
+        revision:
+          $ref: '#/components/schemas/SafeInteger'
+        mode:
+          enum: [AUTO, MANUAL]
+        policyId:
+          $ref: '#/components/schemas/Id'
+        policyVersion:
+          $ref: '#/components/schemas/Id'
+        engineVersion:
+          $ref: '#/components/schemas/Id'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+        enrollmentReportDownloadedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        enrollmentReportIsCurrent:
+          type: boolean
+    AllocationDraftList:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocationDraftSummary'
+        page:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        limit:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        total:
+          $ref: '#/components/schemas/SafeInteger'
+    AllocationPreferenceAttempt:
+      type: object
+      additionalProperties: false
+      required: [choiceIdAtGeneration, semesterCourseId, courseNameAtGeneration, preference, decision, reasonCode]
+      properties:
+        choiceIdAtGeneration:
+          $ref: '#/components/schemas/Id'
+        semesterCourseId:
+          $ref: '#/components/schemas/Id'
+        courseNameAtGeneration:
+          type: string
+          minLength: 1
+          maxLength: 200
+        preference:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        decision:
+          enum: [SELECTED, REJECTED, NOT_EVALUATED]
+        reasonCode:
+          $ref: '#/components/schemas/Id'
+    AllocationFallbackDetail:
+      type: object
+      additionalProperties: false
+      required: [stageCandidateSemesterCourseIds, selectedSemesterCourseId, reasonCode, totalAssignedInStage]
+      properties:
+        stageCandidateSemesterCourseIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+        selectedSemesterCourseId:
+          oneOf:
+            - $ref: '#/components/schemas/Id'
+            - type: 'null'
+        reasonCode:
+          $ref: '#/components/schemas/Id'
+        totalAssignedInStage:
+          $ref: '#/components/schemas/SafeInteger'
+    AllocationAutoReasonDetail:
+      type: object
+      additionalProperties: false
+      required: [preferenceAttempts, fallback]
+      properties:
+        preferenceAttempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocationPreferenceAttempt'
+        fallback:
+          oneOf:
+            - $ref: '#/components/schemas/AllocationFallbackDetail'
+            - type: 'null'
+    AllocationFinalReasonDetail:
+      type: object
+      additionalProperties: false
+      required: [note]
+      properties:
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    AllocationDraftItem:
+      type: object
+      additionalProperties: false
+      required: [id, memberId, memberNameAtGeneration, autoDecision, autoSemesterCourseId, autoReasonCode, autoReasonDetail, finalDecision, finalSemesterCourseId, finalReasonCode, finalReasonDetail]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        memberId:
+          $ref: '#/components/schemas/Id'
+        memberNameAtGeneration:
+          type: string
+          minLength: 1
+        autoDecision:
+          enum: [SELECTED, REJECTED, NOT_EVALUATED]
+        autoSemesterCourseId:
+          oneOf:
+            - $ref: '#/components/schemas/Id'
+            - type: 'null'
+        autoReasonCode:
+          type: string
+          minLength: 1
+        autoReasonDetail:
+          $ref: '#/components/schemas/AllocationAutoReasonDetail'
+        finalDecision:
+          enum: [SELECTED, REJECTED]
+        finalSemesterCourseId:
+          oneOf:
+            - $ref: '#/components/schemas/Id'
+            - type: 'null'
+        finalReasonCode:
+          type: [string, 'null']
+        finalReasonDetail:
+          oneOf:
+            - $ref: '#/components/schemas/AllocationFinalReasonDetail'
+            - type: 'null'
+    AllocationDraftDetail:
+      type: object
+      additionalProperties: false
+      required: [draft, studentResults, applicationSnapshot, existingEnrollments, courseSummary, isStale, inputChanges, issues]
+      properties:
+        draft:
+          $ref: '#/components/schemas/AllocationDraftSummary'
+        studentResults:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocationDraftItem'
+        applicationSnapshot:
+          type: object
+          required: [applications, choices, semesterCourses]
+          properties:
+            applications:
+              type: array
+              items:
+                type: object
+                required: [id, applicationOrder]
+                properties:
+                  id:
+                    $ref: '#/components/schemas/Id'
+                  applicationOrder:
+                    oneOf:
+                      - type: integer
+                        minimum: 1
+                      - type: 'null'
+            choices:
+              type: array
+              items:
+                type: object
+                required: [applicationId, semesterCourseId, preference]
+                properties:
+                  applicationId:
+                    $ref: '#/components/schemas/Id'
+                  semesterCourseId:
+                    $ref: '#/components/schemas/Id'
+                  preference:
+                    oneOf:
+                      - type: integer
+                        minimum: 1
+                      - type: 'null'
+            semesterCourses:
+              type: array
+              items:
+                type: object
+                required: [id, courseName]
+                properties:
+                  id:
+                    $ref: '#/components/schemas/Id'
+                  courseName:
+                    type: string
+        existingEnrollments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Enrollment'
+        courseSummary:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        isStale:
+          type: boolean
+        inputChanges:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+    AddDraftItemRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedDraftRevision, memberId, finalDecision, finalSemesterCourseId, finalReasonCode, finalReasonDetail]
+      properties:
+        expectedDraftRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        memberId:
+          $ref: '#/components/schemas/Id'
+        finalDecision:
+          enum: [SELECTED, REJECTED]
+        finalSemesterCourseId:
+          oneOf:
+            - $ref: '#/components/schemas/Id'
+            - type: 'null'
+        finalReasonCode:
+          type: [string, 'null']
+        finalReasonDetail:
+          oneOf:
+            - $ref: '#/components/schemas/AllocationFinalReasonDetail'
+            - type: 'null'
+    UpdateDraftItemRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedDraftRevision, finalDecision, finalSemesterCourseId, finalReasonCode, finalReasonDetail]
+      properties:
+        expectedDraftRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        finalDecision:
+          enum: [SELECTED, REJECTED]
+        finalSemesterCourseId:
+          oneOf:
+            - $ref: '#/components/schemas/Id'
+            - type: 'null'
+        finalReasonCode:
+          type: [string, 'null']
+        finalReasonDetail:
+          oneOf:
+            - $ref: '#/components/schemas/AllocationFinalReasonDetail'
+            - type: 'null'
+      allOf:
+        - if:
+            properties:
+              finalDecision:
+                const: SELECTED
+            required: [finalDecision]
+          then:
+            properties:
+              finalSemesterCourseId:
+                $ref: '#/components/schemas/Id'
+          else:
+            properties:
+              finalSemesterCourseId:
+                type: 'null'
+    ExpectedDraftRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedDraftRevision]
+      properties:
+        expectedDraftRevision:
+          $ref: '#/components/schemas/SafeInteger'
+    FinalizationPreview:
+      allOf:
+        - $ref: '#/components/schemas/PreparedAction'
+        - type: object
+          required: [draftRevision, enrollments, courseSummary]
+          properties:
+            draftRevision:
+              $ref: '#/components/schemas/SafeInteger'
+            enrollments:
+              type: array
+              items:
+                $ref: '#/components/schemas/Enrollment'
+            courseSummary:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+    FinalizeDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [preparedActionToken, expectedDraftRevision, acknowledgedWarningDigest, acknowledgementNote]
+      properties:
+        preparedActionToken:
+          type: string
+          minLength: 1
+        expectedDraftRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        acknowledgedWarningDigest:
+          type: string
+          minLength: 1
+        acknowledgementNote:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    FinalizationReceipt:
+      type: object
+      additionalProperties: false
+      required: [receiptId, draftId, createdEnrollmentIds, createdCount, finalizedAt]
+      properties:
+        receiptId:
+          $ref: '#/components/schemas/Id'
+        draftId:
+          $ref: '#/components/schemas/Id'
+        createdEnrollmentIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+        createdCount:
+          $ref: '#/components/schemas/SafeInteger'
+        finalizedAt:
+          $ref: '#/components/schemas/Timestamp'
+    Backup:
+      type: object
+      additionalProperties: false
+      required: [id, createdAt, storeRevision, storeEpoch, databaseVersion, status, sizeBytes, digest]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        storeRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        storeEpoch:
+          type: string
+        databaseVersion:
+          type: string
+        status:
+          type: string
+          enum: [READY, OLDER, NEWER, INVALID]
+        sizeBytes:
+          $ref: '#/components/schemas/SafeInteger'
+        digest:
+          type: string
+          minLength: 1
+    RestorePreview:
+      allOf:
+        - $ref: '#/components/schemas/PreparedAction'
+        - type: object
+          required: [backupStoreRevision, backupStoreEpoch]
+          properties:
+            backupStoreRevision:
+              $ref: '#/components/schemas/SafeInteger'
+            backupStoreEpoch:
+              $ref: '#/components/schemas/Id'
+    RestoreRequest:
+      type: object
+      additionalProperties: false
+      required: [preparedActionToken, acknowledgedWarningDigest, acknowledgementNote]
+      properties:
+        preparedActionToken:
+          type: string
+          minLength: 1
+        acknowledgedWarningDigest:
+          type: string
+          minLength: 1
+        acknowledgementNote:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    RestoreReceipt:
+      type: object
+      additionalProperties: false
+      required: [receiptId, previousBackupId, storeRevision, storeEpoch, restoredAt]
+      properties:
+        receiptId:
+          $ref: '#/components/schemas/Id'
+        previousBackupId:
+          $ref: '#/components/schemas/Id'
+        storeRevision:
+          $ref: '#/components/schemas/SafeInteger'
+        storeEpoch:
+          $ref: '#/components/schemas/Id'
+        restoredAt:
+          $ref: '#/components/schemas/Timestamp'

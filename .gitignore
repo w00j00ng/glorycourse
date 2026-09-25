@@ -1,0 +1,9 @@
+node_modules/
+.redocly/
+coverage/
+*.log
+.document-drafts/
+.data/
+dist/
+.worktrees/
+/docs/superpowers/

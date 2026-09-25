@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glorycourse 수강 관리</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#home" data-view-target="home" aria-label="Glorycourse 홈으로 이동">
+      <p class="eyebrow">LOCAL COURSE OPERATIONS</p>
+      <h1>Glorycourse</h1>
+    </a>
+    <div class="runtime" aria-label="실행 상태">
+      <span class="status-dot" aria-hidden="true"></span>
+      <div><strong id="save-status">연결 중</strong><small id="data-directory">자료 위치 확인 중</small></div>
+      <button class="secondary" id="open-data-folder" type="button" disabled>자료 폴더 열기</button>
+      <button class="secondary" id="shutdown" type="button" disabled>프로그램 종료</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidebar" aria-label="주요 메뉴">
+      <p class="nav-label">업무</p>
+      <button class="nav-item active" data-view-target="home" type="button">홈</button>
+      <button class="nav-item" data-view-target="catalog" type="button">학기·강좌 관리</button>
+      <button class="nav-item" data-view-target="applications" type="button">수강신청</button>
+      <button class="nav-item" data-view-target="drafts" type="button">배정초안</button>
+      <button class="nav-item" data-view-target="enrollments" type="button">수강이력</button>
+      <button class="nav-item" data-view-target="backups" type="button">자료 관리</button>
+      <p class="notice">이름이 같으면 같은 사람으로 처리됩니다. 동명이인은 식별 가능한 이름을 사용하세요.</p>
+    </nav>
+
+    <main>
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+      <section id="home-view" class="view">
+        <div class="page-heading">
+          <div><p class="eyebrow">HOME</p><h2>업무 대시보드</h2><p>현재 학기의 준비 상태와 다음 업무를 확인합니다.</p></div>
+        </div>
+        <section class="next-task-card" aria-labelledby="dashboard-next-title">
+          <div><span>다음 할 일</span><h3 id="dashboard-next-title">자료 확인 중</h3><p id="dashboard-next-description">현재 학기 상태를 확인하고 있습니다.</p></div>
+          <button class="primary" id="dashboard-next-action" data-view-target="catalog" type="button">업무 화면으로 이동</button>
+        </section>
+        <div class="summary-grid dashboard-summary" aria-label="현재 학기 요약">
+          <article><span>현재 학기</span><strong id="dashboard-semester">없음</strong><small>학기 순서가 가장 큰 학기</small></article>
+          <article><span>개설 강좌</span><strong id="dashboard-course-count">0</strong><small>현재 학기</small></article>
+          <article><span>수강신청 인원</span><strong id="dashboard-application-count">0</strong><small>현재 학기</small></article>
+          <article><span>배정초안</span><strong id="dashboard-draft-status">없음</strong><small>가장 최근 초안</small></article>
+          <article><span>확정 수강이력</span><strong id="dashboard-enrollment-count">0</strong><small>현재 학기 인원</small></article>
+        </div>
+        <section class="dashboard-section" aria-labelledby="dashboard-progress-title">
+          <h3 id="dashboard-progress-title">전체 업무 진행 단계</h3>
+          <ol id="dashboard-progress" class="dashboard-progress"></ol>
+        </section>
+        <section class="dashboard-section" aria-labelledby="dashboard-workflow-title">
+          <h3 id="dashboard-workflow-title">이용 방법</h3>
+          <div id="dashboard-workflow" class="workflow-grid"></div>
+        </section>
+      </section>
+
+      <section id="applications-view" class="view" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">APPLICATIONS</p><h2>수강신청</h2><p>학생별 신청 묶음과 희망 순위를 관리합니다.</p></div>
+          <div class="heading-actions"><button class="secondary" id="application-template" type="button">신청 양식</button><button class="secondary import-open" data-kind="APPLICATIONS" type="button">Excel 업로드</button><button class="secondary" id="application-export" type="button">현황 다운로드</button><button class="primary" id="new-application" type="button">신청 등록</button><button class="secondary help-button" data-help="applications" type="button" aria-label="수강신청 사용 방법" title="사용 방법">?</button></div>
+        </div>
+        <div class="summary-grid" aria-label="신청 요약">
+          <article><span>신청자</span><strong id="application-count">0</strong><small>학생 묶음</small></article>
+          <article><span>희망 강좌</span><strong id="choice-count">0</strong><small>현재 페이지</small></article>
+        </div>
+        <div class="toolbar">
+          <label>학기<select id="application-semester-filter"><option value="">전체</option></select></label>
+          <label>회원명<input id="application-member-search" type="search" placeholder="회원명 일부"></label>
+          <label>강좌명<select id="application-course-filter"><option value="">전체</option></select></label>
+          <label>정렬<select id="application-sort"><option value="ORDER_ASC">신청순서 낮은 순</option><option value="ORDER_DESC">신청순서 높은 순</option><option value="NAME_ASC">회원명 가나다순</option><option value="NAME_DESC">회원명 역순</option></select></label>
+          <button class="secondary" id="refresh-applications" type="button">새로고침</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>회원명</th><th>학기</th><th>신청순서</th><th>희망 강좌</th><th>상태</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <tbody id="application-rows"></tbody>
+          </table>
+          <p id="application-empty" class="empty">등록된 신청이 없습니다.</p>
+        </div>
+        <nav class="pagination" aria-label="수강신청 페이지"><label class="page-size">페이지당 표시<select id="application-page-size"><option value="10">10건</option><option value="20">20건</option><option value="50" selected>50건</option></select></label><button class="secondary" id="application-previous-page" type="button">이전</button><span id="application-page-status">총 0건</span><button class="secondary" id="application-next-page" type="button">다음</button></nav>
+      </section>
+
+      <section id="enrollments-view" class="view" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">ENROLLMENTS</p><h2>수강이력</h2><p>직접 등록 전 예외와 경고를 미리 확인합니다.</p></div>
+          <div class="heading-actions"><button class="secondary" id="enrollment-template" type="button">이력 양식</button><button class="secondary import-open" data-kind="ENROLLMENTS" type="button">Excel 업로드</button><button class="secondary" id="enrollment-export" type="button">현황 다운로드</button><button class="primary" id="new-enrollment" type="button">이력 등록</button><button class="secondary help-button" data-help="enrollments" type="button" aria-label="수강이력 사용 방법" title="사용 방법">?</button></div>
+        </div>
+        <section class="task-callout" id="enrollment-report-task" aria-labelledby="enrollment-report-task-title" hidden>
+          <div><strong id="enrollment-report-task-title">현재 학기 수강이력을 확인하세요.</strong><p id="enrollment-report-task-description"></p></div>
+          <button class="primary" id="complete-enrollment-report" type="button">현재 학기 현황 다운로드</button>
+        </section>
+        <div class="summary-grid" aria-label="수강이력 요약">
+          <article><span>조회된 이력</span><strong id="enrollment-count">0</strong><small>확정 기록</small></article>
+        </div>
+        <div class="toolbar">
+          <label>학기<select id="enrollment-semester-filter"><option value="">전체</option></select></label>
+          <label>회원명<input id="enrollment-member-search" type="search" placeholder="회원명 일부"></label>
+          <label>강좌명<select id="enrollment-course-filter"><option value="">전체</option></select></label>
+          <button class="secondary" id="refresh-enrollments" type="button">새로고침</button>
+          <button class="danger" id="delete-semester-enrollments" type="button" disabled>선택 학기 이력 전체 삭제</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>학기</th><th>회원명</th><th>강좌</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <tbody id="enrollment-rows"></tbody>
+          </table>
+          <p id="enrollment-empty" class="empty">등록된 수강이력이 없습니다.</p>
+        </div>
+        <nav class="pagination" aria-label="수강이력 페이지"><button class="secondary" id="enrollment-previous-page" type="button">이전</button><span id="enrollment-page-status">총 0건</span><button class="secondary" id="enrollment-next-page" type="button">다음</button></nav>
+      </section>
+
+      <section id="drafts-view" class="view" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">ALLOCATION DRAFTS</p><h2>배정초안</h2><p>자동 결과와 관리자 최종 결정을 나누어 검토한 뒤 확정합니다.</p></div>
+          <div class="heading-actions"><button class="secondary" id="refresh-drafts" type="button">새로고침</button><button class="primary" id="new-draft" type="button">초안 생성</button><button class="secondary help-button" data-help="drafts" type="button" aria-label="배정초안 사용 방법" title="사용 방법">?</button></div>
+        </div>
+        <div class="summary-grid" aria-label="배정초안 요약">
+          <article><span>진행 중인 초안</span><strong id="draft-count">0</strong><small>확정 전 초안</small></article>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>학기</th><th>방식</th><th>정책</th><th>마지막 변경</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <tbody id="draft-rows"></tbody>
+          </table>
+          <p id="draft-empty" class="empty">생성된 배정초안이 없습니다.</p>
+        </div>
+        <nav class="pagination" aria-label="배정초안 페이지"><button class="secondary" id="draft-previous-page" type="button">이전</button><span id="draft-page-status">총 0건</span><button class="secondary" id="draft-next-page" type="button">다음</button></nav>
+      </section>
+
+      <section id="catalog-view" class="view" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">SEMESTERS &amp; COURSES</p><h2>학기·강좌 관리</h2><p>학기를 등록한 뒤 해당 학기의 강좌와 정원을 준비합니다.</p></div>
+          <div class="heading-actions"><button class="secondary" id="refresh-catalog" type="button">새로고침</button><button class="secondary help-button" data-help="catalog" type="button" aria-label="학기·강좌 관리 사용 방법" title="사용 방법">?</button></div>
+        </div>
+        <nav class="catalog-tabs" aria-label="학기·강좌 관리 화면">
+          <button class="secondary active" data-catalog-tab="semesters" type="button" aria-pressed="true">학기 관리</button>
+          <button class="secondary" data-catalog-tab="courses" type="button" aria-pressed="false">개설 강좌 관리</button>
+        </nav>
+        <section id="catalog-semesters-panel" aria-label="학기 관리">
+          <div class="catalog-course-heading"><h3>학기 목록</h3><button class="primary" id="new-semester" type="button">학기 추가</button></div>
+          <p class="form-help" id="semester-order-help">위로·아래로 버튼을 누르거나 학기 행에 초점을 둔 뒤 키보드 ↑/↓로 순서를 바꾸세요. 새 학기는 맨 위에 추가됩니다.</p>
+          <div class="table-wrap">
+            <table><thead><tr><th>학기명</th><th>순서</th><th><span class="sr-only">작업</span></th></tr></thead><tbody id="catalog-semester-rows"></tbody></table>
+            <p id="catalog-semester-empty" class="empty">등록된 학기가 없습니다. 학기를 먼저 추가하세요.</p>
+          </div>
+          <form id="semester-form" hidden>
+            <h3>선택한 학기 수정</h3>
+            <div class="form-grid catalog-fields">
+              <label>학기명<input name="name" maxlength="200" required></label>
+            </div>
+            <div class="dialog-actions"><button class="danger" id="delete-semester" type="button">학기 삭제</button><button class="primary" type="submit">학기 정보 저장</button></div>
+          </form>
+        </section>
+        <section id="catalog-courses-panel" aria-label="개설 강좌 관리" hidden>
+          <div class="toolbar"><label>관리할 학기<select id="catalog-semester"><option value="">학기를 선택하세요.</option></select></label></div>
+          <p id="catalog-empty" class="empty">등록된 학기가 없습니다. 학기를 먼저 추가하세요.</p>
+          <form id="catalog-form" hidden>
+          <div class="catalog-course-heading"><h3>개설 강좌</h3><div class="heading-actions"><button class="secondary" id="copy-catalog-courses" type="button">이전 학기에서 가져오기</button><button class="secondary" id="add-catalog-course" type="button">여러 강좌 추가</button></div></div>
+          <p class="form-help">강좌명 변경은 이 강좌를 사용하는 모든 학기와 수강이력에 반영됩니다. 과거 명칭을 유지하려면 새 강좌를 추가하세요.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>강좌명</th><th>정원</th><th>사용 현황</th><th><span class="sr-only">작업</span></th></tr></thead>
+              <tbody id="catalog-course-rows"></tbody>
+            </table>
+            <p id="catalog-course-empty" class="empty">개설 강좌가 없습니다.</p>
+          </div>
+          <div class="dialog-actions"><button class="primary" type="submit">강좌 정보 저장</button></div>
+          </form>
+        </section>
+      </section>
+
+      <section id="backups-view" class="view" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">BACKUP &amp; RESTORE</p><h2>자료 관리</h2><p>현재 자료를 백업하거나 검증된 백업 파일로 복원합니다.</p></div>
+          <div class="heading-actions"><button class="secondary" id="refresh-backups" type="button">새로고침</button><button class="secondary" id="create-backup" type="button">현재 자료 백업</button><button class="danger" id="open-restore" type="button">백업 파일 복원</button><button class="secondary help-button" data-help="backups" type="button" aria-label="자료 관리 사용 방법" title="사용 방법">?</button></div>
+        </div>
+        <div class="summary-grid" aria-label="백업 요약">
+          <article><span>저장된 백업</span><strong id="backup-count">0</strong><small>SQLite 백업 파일</small></article>
+          <article><span>최근 백업</span><strong id="latest-backup">없음</strong><small>자료 폴더의 backups</small></article>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>생성 시각</th><th>자료 버전</th><th>크기</th><th>SHA-256</th></tr></thead>
+            <tbody id="backup-rows"></tbody>
+          </table>
+          <p id="backup-empty" class="empty">생성된 백업이 없습니다.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="dialog-message" class="message dialog-message" role="alert" aria-live="assertive" hidden></div>
+
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">HELP</p><h2 id="help-title">사용 방법</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <p id="help-summary"></p>
+      <ol id="help-steps" class="help-steps"></ol>
+      <p id="help-note" class="help-note"></p>
+      <div class="dialog-actions"><button class="primary" type="submit">확인</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="application-dialog">
+    <form id="application-form">
+      <div class="dialog-heading"><div><p class="eyebrow">APPLICATION</p><h2 id="application-dialog-title">신청 등록</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <div id="application-entry-rows"></div>
+      <button id="add-application-entry" class="secondary" type="button">신청 행 추가</button>
+      <p class="form-help">한 번에 최대 100건을 등록합니다. 모든 행이 올바를 때 함께 저장되며 새 이름은 저장할 때 생성됩니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">전체 저장</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="application-template-dialog">
+    <form id="application-template-form">
+      <div class="dialog-heading"><div><p class="eyebrow">APPLICATION TEMPLATE</p><h2>신청 양식 다운로드</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <label>학기<select name="semesterId" required></select></label>
+      <p id="application-template-summary" class="form-help">학기를 선택하면 양식에 포함할 강좌를 확인합니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">양식 다운로드</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="semester-create-dialog">
+    <form id="semester-create-form">
+      <div class="dialog-heading"><div><p class="eyebrow">NEW SEMESTER</p><h2>학기 추가</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <div class="form-grid">
+        <label>학기명<input name="name" maxlength="200" required></label>
+      </div>
+      <p class="form-help">새 학기는 가장 최근 순서로 추가됩니다. 다른 위치에 넣으려면 추가 후 학기 목록의 아래로 버튼을 사용하세요.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">학기 추가</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="catalog-copy-dialog">
+    <form id="catalog-copy-form">
+      <div class="dialog-heading"><div><p class="eyebrow">COPY COURSES</p><h2>이전 학기 강좌 가져오기</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <label>가져올 학기<select name="sourceSemesterId" required></select></label>
+      <fieldset>
+        <legend>복사할 강좌</legend>
+        <div id="catalog-copy-course-list" class="catalog-copy-course-list"></div>
+        <p id="catalog-copy-empty" class="empty">가져올 학기를 선택하세요.</p>
+      </fieldset>
+      <p class="form-help">선택한 강좌와 정원을 현재 편집 목록에 추가합니다. 정원이 없는 이전 학기 강좌는 정원을 입력한 뒤 저장하세요. 같은 이름의 강좌는 중복 추가하지 않습니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">선택 강좌 추가</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="catalog-add-dialog">
+    <form id="catalog-add-form">
+      <div class="dialog-heading"><div><p class="eyebrow">ADD COURSES</p><h2>여러 강좌 추가</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <label>강좌 목록<textarea name="courses" rows="10" required placeholder="창세기, 10&#10;마태복음, 20&#10;마가복음"></textarea></label>
+      <p class="form-help">한 줄에 강좌명과 정원을 쉼표로 구분해 입력하세요. 정원은 필수이며 0도 입력할 수 있습니다. Excel의 강좌명·정원 두 열을 그대로 붙여넣을 수도 있습니다.</p>
+      <ul id="catalog-add-errors" class="warning-list" hidden></ul>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">목록에 추가</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="enrollment-dialog">
+    <form id="enrollment-form">
+      <div class="dialog-heading"><div><p class="eyebrow">ENROLLMENT</p><h2 id="enrollment-dialog-title">이력 등록</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <div id="enrollment-entry-rows"></div>
+      <button id="add-enrollment-entry" class="secondary" type="button">이력 행 추가</button>
+      <p class="form-help">최대 100건의 중복·재수강·정원 경고를 함께 확인한 뒤 모두 저장합니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">검토 후 저장</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="warning-dialog">
+    <form id="warning-form">
+      <div class="dialog-heading"><div><p class="eyebrow">REVIEW REQUIRED</p><h2>경고 확인</h2></div></div>
+      <ul id="warning-list" class="warning-list"></ul>
+      <label>확인 메모<textarea name="note" rows="3" maxlength="2000" required placeholder="검토한 내용을 기록하세요."></textarea></label>
+      <div class="dialog-actions"><button class="secondary" id="cancel-warning" type="button">취소</button><button class="danger" type="submit">확인하고 저장</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="import-dialog">
+    <form id="import-form">
+      <div class="dialog-heading"><div><p class="eyebrow">EXCEL IMPORT</p><h2 id="import-dialog-title">Excel 검토</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <input name="kind" type="hidden">
+      <div class="form-grid">
+        <label>xlsx 파일<input name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
+        <label id="import-mode-field">신청 반영 방식<select name="mode"><option value="MERGE_KEEP_EXISTING">기존 희망 유지</option><option value="REPLACE_APPLICATION">파일 내용으로 교체</option></select></label>
+      </div>
+      <p class="form-help">검토만으로 업무 자료는 바뀌지 않습니다. 원본 보관과 실제 반영을 다음 단계에서 선택합니다.</p>
+      <div class="dialog-actions" id="import-preview-action"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">파일 검토</button></div>
+      <section id="import-preview" hidden>
+        <div class="import-state"><span class="badge">PREVIEW</span><strong id="import-preview-status">아직 저장되지 않음</strong></div>
+        <div class="summary-grid import-summary">
+          <article><span>원본 행</span><strong id="import-source-count">0</strong></article>
+          <article><span>추가 후보</span><strong id="import-insert-count">0</strong></article>
+          <article><span>동일 자료</span><strong id="import-identical-count">0</strong></article>
+          <article><span>충돌</span><strong id="import-conflict-count">0</strong></article>
+        </div>
+        <h3>검토 항목</h3>
+        <ul id="import-issues" class="warning-list"></ul>
+        <h3>반영 후보</h3>
+        <div id="import-candidates" class="import-candidates"></div>
+        <div id="import-resolutions" class="import-resolutions"></div>
+        <div class="dialog-actions"><button class="primary" id="commit-import" type="button">업무 자료에 반영</button></div>
+      </section>
+    </form>
+  </dialog>
+
+  <dialog id="draft-create-dialog">
+    <form id="draft-create-form">
+      <div class="dialog-heading"><div><p class="eyebrow">NEW DRAFT</p><h2>배정초안 생성</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <div class="form-grid">
+        <label>학기<select name="semesterId" required></select></label>
+        <label>생성 방식<select name="mode"><option value="AUTO">자동 배정</option><option value="MANUAL">수동 초안</option></select></label>
+        <label>배정 정책<select name="policy" required></select></label>
+      </div>
+      <p id="draft-policy-description" class="form-help"></p>
+      <p id="draft-readiness" class="form-help">학기를 선택하면 자동 배정 준비 상태를 확인합니다.</p>
+      <p class="form-help">기존 확정 인원은 좌석을 먼저 사용합니다. 동률은 저장된 seed와 비균등 고정 규칙으로 결정되며 균등 추첨이 아닙니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">초안 생성</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="draft-dialog" class="wide-dialog">
+    <form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">DRAFT REVIEW</p><h2 id="draft-dialog-title">배정초안</h2><p id="draft-dialog-meta" class="form-help"></p></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <div id="draft-stale" class="message error" hidden>초안 생성 뒤 원본 자료가 변경되었습니다. 현재 초안을 확정하지 말고 새 초안을 검토하세요.</div>
+      <div class="draft-toolbar">
+        <label>결과 검색<input id="draft-search" type="search" placeholder="회원, 자동·최종 강좌"></label>
+        <label>결과 필터<select id="draft-result-filter"><option value="ALL">전체</option><option value="PREFERENCE_ALLOCATED">희망 배정</option><option value="RANDOM_FALLBACK">대체 배정</option><option value="AUTO_REJECTED">자동 미배정</option><option value="MANUAL_CHANGED">관리자 변경</option></select></label>
+        <label>보기<select id="draft-grouping"><option value="STUDENT">학생별</option><option value="COURSE">강좌별</option></select></label>
+        <label>정렬<select id="draft-sort"><option value="ORDER_ASC">신청순서 낮은 순</option><option value="ORDER_DESC">신청순서 높은 순</option><option value="NAME_ASC">회원명 가나다순</option><option value="NAME_DESC">회원명 역순</option></select></label>
+        <span id="draft-filter-count" class="form-help">0 / 0명</span>
+        <span id="draft-readonly" class="badge warning" hidden>읽기 전용</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th class="draft-order">신청순서</th><th>회원</th><th>초안 생성 당시 신청</th><th>자동 결과</th><th>자동 사유</th><th>최종 결정</th><th><span class="sr-only">작업</span></th></tr></thead>
+          <tbody id="draft-item-rows"></tbody>
+        </table>
+        <p id="draft-item-empty" class="empty">검토할 학생이 없습니다.</p>
+      </div>
+      <fieldset id="draft-add-item">
+        <legend>신청 없는 회원 추가</legend>
+        <div class="form-grid"><label>회원<select id="draft-add-member"></select></label><label>배정 강좌<select id="draft-add-course"></select></label></div>
+        <div class="dialog-actions compact"><button class="secondary" id="add-draft-item" type="button">선택 회원 추가</button></div>
+      </fieldset>
+      <p class="form-help">최종 결정의 저장 버튼을 누르면 바로 저장됩니다. 닫은 뒤 다시 열어 계속 검토할 수 있습니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">닫기</button><button class="primary" id="preview-finalization" type="button">확정</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="finalize-dialog">
+    <form id="finalize-form">
+      <div class="dialog-heading"><div><p class="eyebrow">FINAL REVIEW</p><h2>배정 확정 검토</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <div class="summary-grid import-summary">
+        <article><span>이번 추가</span><strong id="finalize-add-count">0</strong></article>
+        <article><span>검토 항목</span><strong id="finalize-issue-count">0</strong></article>
+      </div>
+      <h3>강좌별 확정 결과</h3>
+      <div id="finalize-courses" class="import-candidates"></div>
+      <h3>경고와 오류</h3>
+      <ul id="finalize-issues" class="warning-list"></ul>
+      <label>확인 메모<textarea name="note" rows="3" maxlength="2000" required placeholder="확정 결과를 검토한 내용을 기록하세요."></textarea></label>
+      <p class="form-help">자료가 바뀌거나 검토 유효 시간이 지나면 새 미리보기가 필요합니다.</p>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="danger" id="finalize-draft" type="submit">검토 내용으로 확정</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="restore-dialog">
+    <form id="restore-form">
+      <div class="dialog-heading"><div><p class="eyebrow">RESTORE REVIEW</p><h2>백업 파일 복원</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <label>백업 SQLite 파일<input name="file" type="file" accept=".sqlite,application/vnd.sqlite3" required></label>
+      <p class="form-help">파일을 먼저 검증합니다. 검토만으로 현재 자료는 바뀌지 않습니다.</p>
+      <section id="restore-preview" hidden>
+        <div class="summary-grid import-summary">
+          <article><span>현재 자료 버전</span><strong id="restore-current-revision">0</strong></article>
+          <article><span>백업 자료 버전</span><strong id="restore-backup-revision">0</strong></article>
+        </div>
+        <h3>복원 영향</h3>
+        <ul id="restore-issues" class="warning-list"></ul>
+        <label>확인 메모<textarea name="note" rows="3" maxlength="2000" placeholder="백업 이후 자료가 사라짐을 확인한 내용을 기록하세요."></textarea></label>
+      </section>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="danger" id="restore-submit" type="submit">파일 검토</button></div>
+    </form>
+  </dialog>
+
+  <datalist id="semester-options"></datalist>
+  <datalist id="member-options"></datalist>
+  <datalist id="course-options"></datalist>
+  <template id="application-entry-template"><fieldset class="manual-entry">
+    <legend>신청</legend>
+    <div class="form-grid">
+      <label>학기명<input name="semesterName" list="semester-options" required maxlength="200" autocomplete="off"></label>
+      <label>회원명<input name="memberName" list="member-options" required maxlength="200" autocomplete="off"></label>
+      <label>신청순서<input name="applicationOrder" type="number" min="1" step="1" required></label>
+    </div>
+    <fieldset><legend>희망 강좌</legend><div class="choice-fields"></div><button class="secondary add-choice" type="button">희망 추가</button></fieldset>
+    <button class="secondary remove-entry" type="button">신청 행 제거</button>
+  </fieldset></template>
+  <template id="enrollment-entry-template"><fieldset class="manual-entry">
+    <legend>이력</legend>
+    <div class="form-grid">
+      <label>학기명<input name="semesterName" list="semester-options" required maxlength="200" autocomplete="off"></label>
+      <label>회원명<input name="memberName" list="member-options" required maxlength="200" autocomplete="off"></label>
+      <label>강좌명<select name="courseId"></select></label>
+      <label class="new-course-name">새 강좌명<input name="newCourseName" maxlength="200" autocomplete="off"></label>
+    </div>
+    <button class="secondary remove-entry" type="button">이력 행 제거</button>
+  </fieldset></template>
+  <template id="choice-template"><div class="choice-row"><label>강좌명<input name="courseName" list="course-options" required maxlength="200" autocomplete="off"></label><label>희망순위<input name="preference" type="number" min="1" step="1" required></label><button class="icon-button remove-choice" type="button" aria-label="희망 강좌 삭제">×</button></div></template>
+  <dialog id="shutdown-dialog" aria-labelledby="shutdown-title">
+    <form method="dialog">
+      <h2 id="shutdown-title">프로그램을 종료할까요?</h2>
+      <p>저장하지 않은 입력은 사라집니다. 다른 탭에서 사용 중인 화면도 함께 종료됩니다.</p>
+      <p>이미 접수한 저장 작업은 완료한 뒤 종료합니다.</p>
+      <div class="dialog-actions">
+        <button class="secondary" type="submit" autofocus>계속 사용</button>
+        <button class="danger" id="confirm-shutdown" type="button">종료</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "meta": { "storeEpoch": "epoch-1", "storeRevision": 0 },
+  "semesters": [],
+  "members": [],
+  "courses": [],
+  "semesterCourses": [],
+  "applications": [],
+  "applicationChoices": [],
+  "enrollments": [],
+  "allocationDrafts": [],
+  "allocationDraftItems": [{
+    "id": "item-1",
+    "draftId": "draft-1",
+    "memberId": "member-1",
+    "sourceApplicationId": null,
+    "memberNameAtGeneration": "홍길동",
+    "autoSemesterCourseId": null,
+    "autoDecision": "NOT_EVALUATED",
+    "autoReasonCode": "MANUAL_ONLY",
+    "autoReasonDetail": { "preferenceAttempts": [], "fallback": null },
+    "finalSemesterCourseId": null,
+    "finalDecision": "SELECTED",
+    "finalReasonCode": "MANUAL_INCLUDED",
+    "finalReasonDetail": { "note": "관리자 추가" },
+    "updatedAt": "2026-09-22T00:00:00.000Z"
+  }],
+  "importBatches": [],
+  "finalizationReceipts": [],
+  "restoreReceipts": []
+}

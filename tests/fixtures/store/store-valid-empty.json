@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "storeEpoch": "epoch-1",
+    "storeRevision": 0
+  },
+  "semesters": [],
+  "members": [],
+  "courses": [],
+  "semesterCourses": [],
+  "applications": [],
+  "applicationChoices": [],
+  "enrollments": [],
+  "allocationDrafts": [],
+  "allocationDraftItems": [],
+  "importBatches": [],
+  "finalizationReceipts": [],
+  "restoreReceipts": []
+}

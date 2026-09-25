@@ -1,0 +1,532 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glorycourse.local/schema/store-schema.json",
+  "title": "Glorycourse store",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meta", "semesters", "members", "courses", "semesterCourses", "applications", "applicationChoices", "enrollments", "allocationDrafts", "allocationDraftItems", "finalizationReceipts", "importBatches", "restoreReceipts"],
+  "properties": {
+    "meta": { "$ref": "#/$defs/meta" },
+    "semesters": { "type": "array", "items": { "$ref": "#/$defs/semester" } },
+    "members": { "type": "array", "items": { "$ref": "#/$defs/member" } },
+    "courses": { "type": "array", "items": { "$ref": "#/$defs/course" } },
+    "semesterCourses": { "type": "array", "items": { "$ref": "#/$defs/semesterCourse" } },
+    "applications": { "type": "array", "items": { "$ref": "#/$defs/application" } },
+    "applicationChoices": { "type": "array", "items": { "$ref": "#/$defs/applicationChoice" } },
+    "enrollments": { "type": "array", "items": { "$ref": "#/$defs/enrollment" } },
+    "allocationDrafts": { "type": "array", "items": { "$ref": "#/$defs/allocationDraft" } },
+    "allocationDraftItems": { "type": "array", "items": { "$ref": "#/$defs/allocationDraftItem" } },
+    "finalizationReceipts": { "type": "array", "items": { "$ref": "#/$defs/finalizationReceiptRecord" } },
+    "importBatches": { "type": "array", "items": { "$ref": "#/$defs/importBatch" } },
+    "restoreReceipts": { "type": "array", "items": { "$ref": "#/$defs/restoreReceipt" } }
+  },
+  "$defs": {
+    "finalizationReceiptRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "requestHash", "semesterId", "receipt", "enrollmentReportDownloadedAt", "enrollmentReportStoreRevision"],
+      "properties": {
+        "idempotencyKey": { "$ref": "#/$defs/id" },
+        "requestHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "semesterId": { "$ref": "#/$defs/id" },
+        "receipt": { "$ref": "#/$defs/finalizationReceipt" },
+        "enrollmentReportDownloadedAt": { "$ref": "#/$defs/nullableTimestamp" },
+        "enrollmentReportStoreRevision": { "oneOf": [{ "$ref": "#/$defs/safeInteger" }, { "type": "null" }] }
+      }
+    },
+    "restoreReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "requestHash", "receiptId", "previousBackupId", "storeRevision", "storeEpoch", "restoredAt"],
+      "properties": {
+        "idempotencyKey": { "$ref": "#/$defs/id" },
+        "requestHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "receiptId": { "$ref": "#/$defs/id" },
+        "previousBackupId": { "$ref": "#/$defs/id" },
+        "storeRevision": { "$ref": "#/$defs/safeInteger" },
+        "storeEpoch": { "$ref": "#/$defs/id" },
+        "restoredAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "safeInteger": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "positiveSafeInteger": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "nullableTimestamp": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+    "timestamps": {
+      "type": "object",
+      "required": ["createdAt", "updatedAt"],
+      "properties": {
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["storeEpoch", "storeRevision"],
+      "properties": {
+        "storeEpoch": { "$ref": "#/$defs/id" },
+        "storeRevision": { "$ref": "#/$defs/safeInteger" }
+      }
+    },
+    "semester": {
+      "allOf": [
+        { "$ref": "#/$defs/timestamps" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "nameKey", "order", "allocationInputRevision", "createdAt", "updatedAt"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "nameKey": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "order": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] },
+            "allocationInputRevision": { "$ref": "#/$defs/safeInteger" },
+            "createdAt": { "$ref": "#/$defs/timestamp" },
+            "updatedAt": { "$ref": "#/$defs/timestamp" }
+          }
+        }
+      ]
+    },
+    "namedEntity": {
+      "allOf": [
+        { "$ref": "#/$defs/timestamps" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "nameKey", "createdAt", "updatedAt"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "nameKey": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "createdAt": { "$ref": "#/$defs/timestamp" },
+            "updatedAt": { "$ref": "#/$defs/timestamp" }
+          }
+        }
+      ]
+    },
+    "member": { "$ref": "#/$defs/namedEntity" },
+    "course": { "$ref": "#/$defs/namedEntity" },
+    "semesterCourse": {
+      "allOf": [
+        { "$ref": "#/$defs/timestamps" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "semesterId", "courseId", "capacity", "createdAt", "updatedAt"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "semesterId": { "$ref": "#/$defs/id" },
+            "courseId": { "$ref": "#/$defs/id" },
+            "capacity": { "oneOf": [{ "$ref": "#/$defs/safeInteger" }, { "type": "null" }] },
+            "createdAt": { "$ref": "#/$defs/timestamp" },
+            "updatedAt": { "$ref": "#/$defs/timestamp" }
+          }
+        }
+      ]
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semesterId", "memberId", "applicationOrder", "applicationOrderStatus", "orderResolution", "orderResolutionNote", "revision", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "semesterId": { "$ref": "#/$defs/id" },
+        "memberId": { "$ref": "#/$defs/id" },
+        "applicationOrder": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] },
+        "applicationOrderStatus": { "enum": ["NORMAL", "CONFLICT", "MISSING", "INVALID"] },
+        "orderResolution": { "enum": ["SOURCE_AGREED", "ADMIN_CONFIRMED", "UNRESOLVED"] },
+        "orderResolutionNote": { "type": ["string", "null"], "maxLength": 2000 },
+        "revision": { "$ref": "#/$defs/safeInteger" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "applicationOrderStatus": { "const": "NORMAL" } }, "required": ["applicationOrderStatus"] },
+          "then": {
+            "properties": {
+              "applicationOrder": { "$ref": "#/$defs/positiveSafeInteger" },
+              "orderResolution": { "enum": ["SOURCE_AGREED", "ADMIN_CONFIRMED"] }
+            }
+          },
+          "else": {
+            "properties": {
+              "applicationOrder": { "type": "null" },
+              "orderResolution": { "const": "UNRESOLVED" }
+            }
+          }
+        }
+      ]
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["importBatchId", "sheet", "row"],
+      "properties": {
+        "importBatchId": { "$ref": "#/$defs/id" },
+        "sheet": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "row": { "$ref": "#/$defs/positiveSafeInteger" }
+      }
+    },
+    "applicationChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "applicationId", "semesterCourseId", "preference", "sourceRefs", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "applicationId": { "$ref": "#/$defs/id" },
+        "semesterCourseId": { "$ref": "#/$defs/id" },
+        "preference": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] },
+        "sourceRefs": { "type": "array", "items": { "$ref": "#/$defs/sourceRef" } },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "acknowledgement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["warningDigest", "note", "acknowledgedAt"],
+      "properties": {
+        "warningDigest": { "$ref": "#/$defs/id" },
+        "note": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "acknowledgedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "enrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semesterCourseId", "memberId", "exceptionAcknowledgement", "revision", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "semesterCourseId": { "$ref": "#/$defs/id" },
+        "memberId": { "$ref": "#/$defs/id" },
+        "exceptionAcknowledgement": { "oneOf": [{ "$ref": "#/$defs/acknowledgement" }, { "type": "null" }] },
+        "revision": { "$ref": "#/$defs/safeInteger" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "policySettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preferenceMode", "fallbackMode"],
+      "properties": {
+        "preferenceMode": { "enum": ["NEW_FIRST", "RANK_FIRST"] },
+        "fallbackMode": { "const": "MAX_CARDINALITY_PRIORITIZED" }
+      }
+    },
+    "snapshotSemester": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "order"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "order": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] }
+      }
+    },
+    "snapshotSemesterCourse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "courseId", "courseName", "capacity"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "courseId": { "$ref": "#/$defs/id" },
+        "courseName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "capacity": { "oneOf": [{ "$ref": "#/$defs/safeInteger" }, { "type": "null" }] }
+      }
+    },
+    "snapshotApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "memberId", "memberName", "applicationOrder", "applicationOrderStatus"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "memberId": { "$ref": "#/$defs/id" },
+        "memberName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "applicationOrder": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] },
+        "applicationOrderStatus": { "enum": ["NORMAL", "CONFLICT", "MISSING", "INVALID"] }
+      }
+    },
+    "snapshotChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "applicationId", "semesterCourseId", "preference"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "applicationId": { "$ref": "#/$defs/id" },
+        "semesterCourseId": { "$ref": "#/$defs/id" },
+        "preference": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] }
+      }
+    },
+    "snapshotPastEnrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "memberId", "courseId", "semesterId", "semesterOrder"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "memberId": { "$ref": "#/$defs/id" },
+        "courseId": { "$ref": "#/$defs/id" },
+        "semesterId": { "$ref": "#/$defs/id" },
+        "semesterOrder": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] }
+      }
+    },
+    "snapshotExistingEnrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "memberId", "memberName", "semesterCourseId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "memberId": { "$ref": "#/$defs/id" },
+        "memberName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "semesterCourseId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "inputSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semester", "semesterCourses", "applications", "choices", "relevantPastEnrollments", "existingEnrollments"],
+      "properties": {
+        "semester": { "$ref": "#/$defs/snapshotSemester" },
+        "semesterCourses": { "type": "array", "items": { "$ref": "#/$defs/snapshotSemesterCourse" } },
+        "applications": { "type": "array", "items": { "$ref": "#/$defs/snapshotApplication" } },
+        "choices": { "type": "array", "items": { "$ref": "#/$defs/snapshotChoice" } },
+        "relevantPastEnrollments": { "type": "array", "items": { "$ref": "#/$defs/snapshotPastEnrollment" } },
+        "existingEnrollments": { "type": "array", "items": { "$ref": "#/$defs/snapshotExistingEnrollment" } }
+      }
+    },
+    "finalizationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receiptId", "draftId", "createdEnrollmentIds", "createdCount", "finalizedAt"],
+      "properties": {
+        "receiptId": { "$ref": "#/$defs/id" },
+        "draftId": { "$ref": "#/$defs/id" },
+        "createdEnrollmentIds": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "createdCount": { "$ref": "#/$defs/safeInteger" },
+        "finalizedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "finalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotencyKey", "requestHash", "receipt", "acknowledgedWarnings"],
+      "properties": {
+        "idempotencyKey": { "$ref": "#/$defs/id" },
+        "requestHash": { "$ref": "#/$defs/id" },
+        "receipt": { "$ref": "#/$defs/finalizationReceipt" },
+        "acknowledgedWarnings": { "type": "array", "items": { "$ref": "#/$defs/finalizationWarning" } }
+      }
+    },
+    "finalizationWarning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "severity", "blockingStages", "acknowledgementStages", "subject", "source", "detail", "note", "acknowledgedAt"],
+      "properties": {
+        "code": { "$ref": "#/$defs/id" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "severity": { "const": "WARNING" },
+        "blockingStages": { "type": "array", "prefixItems": [{ "const": "FINALIZE" }], "items": false, "minItems": 1, "maxItems": 1 },
+        "acknowledgementStages": { "type": "array", "prefixItems": [{ "const": "FINALIZE" }], "items": false, "minItems": 1, "maxItems": 1 },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entityType"],
+          "properties": {
+            "entityType": { "$ref": "#/$defs/id" },
+            "entityId": { "$ref": "#/$defs/id" },
+            "memberId": { "$ref": "#/$defs/id" },
+            "courseId": { "$ref": "#/$defs/id" }
+          }
+        },
+        "source": { "type": "object", "additionalProperties": false },
+        "detail": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "changeCode": { "$ref": "#/$defs/id" } }
+        },
+        "note": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "acknowledgedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "allocationDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "semesterId", "status", "revision", "mode", "policyId", "policyVersion", "engineVersion", "policySettings", "randomSeed", "sourceRevision", "inputFingerprint", "inputSnapshot", "createdAt", "updatedAt", "finalizedAt", "enrollmentReportDownloadedAt", "enrollmentReportStoreRevision", "finalization"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "semesterId": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["DRAFT", "FINALIZED", "ARCHIVED"] },
+        "revision": { "$ref": "#/$defs/safeInteger" },
+        "mode": { "enum": ["AUTO", "MANUAL"] },
+        "policyId": { "$ref": "#/$defs/id" },
+        "policyVersion": { "$ref": "#/$defs/id" },
+        "engineVersion": { "$ref": "#/$defs/id" },
+        "policySettings": { "$ref": "#/$defs/policySettings" },
+        "randomSeed": { "$ref": "#/$defs/id" },
+        "sourceRevision": { "$ref": "#/$defs/safeInteger" },
+        "inputFingerprint": { "$ref": "#/$defs/id" },
+        "inputSnapshot": { "$ref": "#/$defs/inputSnapshot" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" },
+        "finalizedAt": { "$ref": "#/$defs/nullableTimestamp" },
+        "enrollmentReportDownloadedAt": { "$ref": "#/$defs/nullableTimestamp" },
+        "enrollmentReportStoreRevision": { "oneOf": [{ "$ref": "#/$defs/safeInteger" }, { "type": "null" }] },
+        "finalization": { "oneOf": [{ "$ref": "#/$defs/finalization" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "FINALIZED" } }, "required": ["status"] },
+          "then": {
+            "properties": {
+              "finalizedAt": { "$ref": "#/$defs/timestamp" },
+              "finalization": { "$ref": "#/$defs/finalization" }
+            }
+          },
+          "else": { "properties": { "finalizedAt": { "type": "null" }, "finalization": { "type": "null" } } }
+        }
+      ]
+    },
+    "preferenceAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["choiceIdAtGeneration", "semesterCourseId", "courseNameAtGeneration", "preference", "decision", "reasonCode"],
+      "properties": {
+        "choiceIdAtGeneration": { "$ref": "#/$defs/id" },
+        "semesterCourseId": { "$ref": "#/$defs/id" },
+        "courseNameAtGeneration": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "preference": { "$ref": "#/$defs/positiveSafeInteger" },
+        "decision": { "enum": ["SELECTED", "REJECTED", "NOT_EVALUATED"] },
+        "reasonCode": { "$ref": "#/$defs/id" }
+      }
+    },
+    "fallbackDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stageCandidateSemesterCourseIds", "selectedSemesterCourseId", "reasonCode", "totalAssignedInStage"],
+      "properties": {
+        "stageCandidateSemesterCourseIds": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "selectedSemesterCourseId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "reasonCode": { "$ref": "#/$defs/id" },
+        "totalAssignedInStage": { "$ref": "#/$defs/safeInteger" }
+      }
+    },
+    "autoReasonDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preferenceAttempts", "fallback"],
+      "properties": {
+        "preferenceAttempts": { "type": "array", "items": { "$ref": "#/$defs/preferenceAttempt" } },
+        "fallback": { "oneOf": [{ "$ref": "#/$defs/fallbackDetail" }, { "type": "null" }] }
+      }
+    },
+    "allocationDraftItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "draftId", "memberId", "sourceApplicationId", "memberNameAtGeneration", "autoSemesterCourseId", "autoDecision", "autoReasonCode", "autoReasonDetail", "finalSemesterCourseId", "finalDecision", "finalReasonCode", "finalReasonDetail", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "draftId": { "$ref": "#/$defs/id" },
+        "memberId": { "$ref": "#/$defs/id" },
+        "sourceApplicationId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "memberNameAtGeneration": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "autoSemesterCourseId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "autoDecision": { "enum": ["SELECTED", "REJECTED", "NOT_EVALUATED"] },
+        "autoReasonCode": { "$ref": "#/$defs/id" },
+        "autoReasonDetail": { "$ref": "#/$defs/autoReasonDetail" },
+        "finalSemesterCourseId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "finalDecision": { "enum": ["SELECTED", "REJECTED"] },
+        "finalReasonCode": { "type": ["string", "null"], "maxLength": 200 },
+        "finalReasonDetail": { "oneOf": [{ "$ref": "#/$defs/finalReasonDetail" }, { "type": "null" }] },
+        "updatedAt": { "$ref": "#/$defs/timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "autoDecision": { "const": "SELECTED" } }, "required": ["autoDecision"] },
+          "then": { "properties": { "autoSemesterCourseId": { "$ref": "#/$defs/id" } } },
+          "else": { "properties": { "autoSemesterCourseId": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "finalDecision": { "const": "SELECTED" } }, "required": ["finalDecision"] },
+          "then": { "properties": { "finalSemesterCourseId": { "$ref": "#/$defs/id" } } },
+          "else": { "properties": { "finalSemesterCourseId": { "type": "null" } } }
+        }
+      ]
+    },
+    "finalReasonDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["note"],
+      "properties": { "note": { "type": "string", "minLength": 1, "maxLength": 2000 } }
+    },
+    "rawRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sheet", "row", "cells"],
+      "properties": {
+        "sheet": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "row": { "$ref": "#/$defs/positiveSafeInteger" },
+        "cells": { "type": "object", "additionalProperties": { "type": ["string", "null"] } }
+      }
+    },
+    "importReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receiptId", "importBatchId", "previewId", "storeEpoch", "idempotencyKey", "requestHash", "inserted", "updated", "skipped", "committedAt"],
+      "properties": {
+        "receiptId": { "$ref": "#/$defs/id" },
+        "importBatchId": { "$ref": "#/$defs/id" },
+        "previewId": { "$ref": "#/$defs/id" },
+        "storeEpoch": { "$ref": "#/$defs/id" },
+        "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "requestHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "inserted": { "$ref": "#/$defs/safeInteger" },
+        "updated": { "$ref": "#/$defs/safeInteger" },
+        "skipped": { "$ref": "#/$defs/safeInteger" },
+        "committedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "importResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity", "action"],
+      "properties": {
+        "entity": { "enum": ["APPLICATION", "ENROLLMENT", "SEMESTER", "SEMESTER_COURSE"] },
+        "action": { "enum": ["KEEP_EXISTING", "REPLACE_APPLICATION", "CONFIRM_APPLICATION_ORDER", "APPLY_FILE_VALUE", "ACKNOWLEDGE_WARNING"] },
+        "field": { "enum": ["order", "capacity"] },
+        "semesterName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "memberName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "courseName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "applicationOrder": { "$ref": "#/$defs/positiveSafeInteger" },
+        "warningDigest": { "$ref": "#/$defs/id" },
+        "acknowledgementNote": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "importBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "templateVersion", "fileHash", "importedAt", "status", "rawRows", "resolutions", "receipt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["APPLICATIONS", "ENROLLMENTS"] },
+        "templateVersion": { "$ref": "#/$defs/id" },
+        "fileHash": { "$ref": "#/$defs/id" },
+        "importedAt": { "$ref": "#/$defs/timestamp" },
+        "status": { "enum": ["STAGED", "APPLIED"] },
+        "rawRows": { "type": "array", "items": { "$ref": "#/$defs/rawRow" } },
+        "resolutions": { "type": "array", "items": { "$ref": "#/$defs/importResolution" } },
+        "receipt": { "oneOf": [{ "$ref": "#/$defs/importReceipt" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "APPLIED" } }, "required": ["status"] },
+          "then": { "properties": { "receipt": { "$ref": "#/$defs/importReceipt" } } },
+          "else": { "properties": { "receipt": { "type": "null" } } }
+        }
+      ]
+    }
+  },
+  "$comment": "Composite uniqueness, cross-entity references, same-semester relationships, immutable snapshots, and idempotency receipt lookup are service-level invariants."
+}

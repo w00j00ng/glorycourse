@@ -1,0 +1,30 @@
+{
+  "targetVersion": 1790336872,
+  "migrations": [
+    {
+      "version": 1790294400,
+      "name": "1790294400_init.sql",
+      "checksum": "7ecdada91e71075095cdf0e09e9787f3f78e81c96348fb171abdfcf369cb2c6f"
+    },
+    {
+      "version": 1790314390,
+      "name": "1790314390_restore_receipts.sql",
+      "checksum": "83bd13e73097234ae966c33ed47f4a7026ff70de6232dcb77c38b2308d7763b0"
+    },
+    {
+      "version": 1790319873,
+      "name": "1790319873_drop_enrollment_draft_source.sql",
+      "checksum": "029fb4483506a798dc6204d2b8a0cc90d465ca03fb01d5f1e62a784422a2242e"
+    },
+    {
+      "version": 1790332153,
+      "name": "1790332153_add_enrollment_report_revision.sql",
+      "checksum": "0cfeb188733fb06332728b21ea3967bfeaf1e4cf6b602a23129bccfda46b7f28"
+    },
+    {
+      "version": 1790336872,
+      "name": "1790336872_detach_finalization_receipts.sql",
+      "checksum": "09405bd16280ee8005e04949ccdfb141e2422bc8e95e4c7ff1aa160053113589"
+    }
+  ]
+}
