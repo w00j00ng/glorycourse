@@ -64,7 +64,7 @@ DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `
 - 페이지별 도움말과 대시보드 업무 설명은 `frontend/help-content.js`의 `PAGE_HELP`를 공유한다. 필수 진행 단계인 `PROGRESS_WORKFLOW`에는 선택 기능인 백업을 포함하지 않는다.
 - 현재 학기 정렬과 다음 할 일 판단은 `frontend/dashboard-view.js`의 순수 함수다. 빈 자료, 설정 중, 신청 접수, 초안 검토, 확정과 현황 다운로드 상태를 사용자 입력·기대 안내 표로 검증한다.
 - 업무 완료는 일반 `GET /enrollments/export`가 아니라 `POST /semesters/{id}/enrollment-report`로 기록한다. 파일 생성 시점과 저장 시점의 자료가 같아야 하며, 상세 규칙은 [계약 결정 기록](contract-decisions.md)에 있다.
-- 사용자가 보는 버튼·양식·완료 조건을 변경하면 [사용 설명서](usage.md)와 [README](../README.md)도 맞춘다. 현재 소스에 있는 기능과 공개된 배포본의 기능을 구별한다.
+- 사용자가 보는 버튼·양식·완료 조건을 변경하면 [사용 설명서](usage.md), [문제 해결](troubleshooting.md), [README](../README.md)도 맞춘다. `npm run docs:html`은 같은 Markdown 원본에서 배포용 오프라인 HTML을 `dist/guide-preview`에 생성한다. 현재 소스에 있는 기능과 공개된 배포본의 기능을 구별한다.
 
 ## 백업과 복원
 
