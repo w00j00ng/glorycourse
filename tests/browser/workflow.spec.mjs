@@ -416,7 +416,7 @@ test('an administrator registers applications, reviews allocation, and sees save
   await page.locator('[data-catalog-tab="courses"]').click();
   await page.locator('#catalog-semester').selectOption({ label: '2026 가을' });
   await page.locator('#add-catalog-course').click();
-  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 2');
+  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 3');
   await page.locator('#catalog-add-form [type="submit"]').click();
   await page.locator('#catalog-form [type="submit"]').click();
   await expect(page.locator('#catalog-course-rows tr')).toHaveAttribute('data-id', /.+/);
@@ -459,6 +459,19 @@ test('an administrator registers applications, reviews allocation, and sees save
   await page.locator('#draft-create-form [type="submit"]').click();
   await expect(page.locator('#draft-item-rows tr')).toHaveCount(2);
   await expect(page.locator('#draft-item-rows tr').first()).toContainText('김가나 수정');
+  const changedRow = page.locator('#draft-item-rows tr').filter({ hasText: '김가나 수정' });
+  await changedRow.getByRole('combobox', { name: '김가나 수정 최종 배정' }).selectOption('');
+  await changedRow.getByRole('button', { name: '저장' }).click();
+  await expect(changedRow).toHaveClass(/draft-row-changed/);
+  await expect(changedRow.getByRole('combobox', { name: '김가나 수정 최종 배정' })).toHaveValue('');
+  await changedRow.getByRole('button', { name: '자동 복원' }).click();
+  await expect(changedRow).not.toHaveClass(/draft-row-changed/);
+  await expect(changedRow.getByRole('combobox', { name: '김가나 수정 최종 배정' })).not.toHaveValue('');
+  await page.locator('#draft-add-member').selectOption({ label: '임시 회원' });
+  await page.locator('#draft-add-course').selectOption({ label: '창세기' });
+  await page.locator('#add-draft-item').click();
+  await expect(page.locator('#draft-item-rows tr')).toHaveCount(3);
+  await expect(page.locator('#draft-item-rows')).toContainText('임시 회원');
   await page.locator('#preview-finalization').click();
   await page.locator('#finalize-form [name="note"]').fill('   ');
   const rejected = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/finalize') && response.status() === 422);
@@ -471,9 +484,10 @@ test('an administrator registers applications, reviews allocation, and sees save
   await expect(page.locator('#draft-rows tr')).toHaveCount(0);
 
   await page.getByRole('button', { name: '수강이력', exact: true }).click();
-  await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(3);
   await expect(page.locator('#enrollment-rows')).toContainText('김가나 수정');
   await expect(page.locator('#enrollment-rows')).toContainText('박다라');
+  await expect(page.locator('#enrollment-rows')).toContainText('임시 회원');
   await expect(page.locator('#enrollment-report-task')).toBeVisible();
   const [enrollmentReport] = await Promise.all([
     page.waitForEvent('download'),
@@ -483,12 +497,12 @@ test('an administrator registers applications, reviews allocation, and sees save
   await expect(page.locator('#enrollment-report-task')).toBeHidden();
   await page.getByRole('link', { name: 'Glorycourse 홈으로 이동' }).click();
   await expect(page.getByRole('heading', { name: '업무 대시보드' })).toBeVisible();
-  await expect(page.locator('#dashboard-enrollment-count')).toHaveText('2');
+  await expect(page.locator('#dashboard-enrollment-count')).toHaveText('3');
   await expect(page.locator('#dashboard-next-title')).toHaveText('현재 학기 업무가 완료되었습니다');
   await page.getByRole('button', { name: '수강이력', exact: true }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: '수강이력' })).toBeVisible();
-  await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(3);
   await page.getByRole('button', { name: '수강이력 사용 방법' }).click();
   await expect(page.locator('#help-dialog')).toBeVisible();
   await expect(page.locator('#help-dialog')).toContainText('수강신청이나 배정초안이 없어도');

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
 import { createDraftsPage } from '../../frontend/drafts-page.js';
+import { createDraftDetail } from '../../frontend/draft-detail.js';
 import { createEnrollmentsPage } from '../../frontend/enrollments-page.js';
 import { createImportsPage } from '../../frontend/imports-page.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
@@ -138,10 +139,10 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
           return { items: items.slice((page - 1) * limit, page * limit), page, limit, total: items.length };
         },
       });
-      const functions = ['loadCatalogItems', 'loadCatalogs', 'fillSelect', 'fillFilterSelect', 'fillDatalist', 'fillDraftAddFields'].map(appFunction).join('\n');
-      vm.runInContext(`${functions}\nglobalThis.load = loadCatalogs; globalThis.fillMembers = fillDraftAddFields;`, context);
+      const functions = ['loadCatalogItems', 'loadCatalogs', 'fillSelect', 'fillFilterSelect', 'fillDatalist'].map(appFunction).join('\n');
+      vm.runInContext(`${functions}\nglobalThis.load = loadCatalogs; globalThis.fillSelect = fillSelect;`, context);
       await context.load();
-      context.fillMembers();
+      createDraftDetail({ state: context.state, byId: context.byId, fillSelect: context.fillSelect }).fillAddFields();
 
       for (const [name, items] of Object.entries(catalogs)) {
         assert.equal(context.state[name].length, count, `${name}: complete catalog`);

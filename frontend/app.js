@@ -1,17 +1,9 @@
-import {
-  describeAllocationEvidence,
-  draftApplicationSummaries,
-  draftDecisionChanged,
-  draftItemPage,
-  filterDraftItems,
-  reasonLabel,
-  sortDraftItems,
-} from './draft-view.js';
 import { applicationSemesterFilterValue, choiceSummary, paginationView, viewFromHash } from './list-view.js';
 import { reportFilename, templateFilename } from './download-name.js';
 import { orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
 import { createDraftsPage } from './drafts-page.js';
+import { createDraftDetail } from './draft-detail.js';
 import { createBackupsPage } from './backups-page.js';
 import { createFinalizationPage } from './finalization-page.js';
 import { createApplicationsPage } from './applications-page.js';
@@ -186,122 +178,10 @@ const actionsCell = (...actions) => {
 
 const reviewWarnings = createWarningDialog({ byId, showMessage });
 
-const showDraft = async (detail, context) => {
-  const changedDraft = state.draft?.draft.id !== detail.draft.id;
-  state.draft = detail;
-  state.draftContext = context;
-  state.draftApplicationSummaries = draftApplicationSummaries(detail.applicationSnapshot);
-  if (changedDraft) {
-    state.pagination['draft-item'].page = 1;
-    byId('draft-search').value = '';
-    byId('draft-result-filter').value = 'ALL';
-    byId('draft-grouping').value = 'STUDENT';
-    byId('draft-sort').value = 'ORDER_ASC';
-  }
-  byId('draft-dialog-title').textContent = `${context.semester.name} 배정초안`;
-  byId('draft-dialog-meta').textContent = `${detail.draft.mode} · ${policyName(detail.draft.policyId, detail.draft.policyVersion)} · revision ${detail.draft.revision}`;
-  byId('draft-stale').hidden = !detail.isStale;
-  const readonly = detail.draft.status !== 'DRAFT';
-  byId('draft-stale').textContent = readonly
-    ? '이 화면은 초안 생성 당시 자료를 보여주며 현재 수강 자료와 차이가 있습니다.'
-    : '초안 생성 뒤 원본 자료가 변경되었습니다. 현재 초안을 확정하지 말고 새 초안을 검토하세요.';
-  byId('draft-readonly').hidden = !readonly;
-  byId('draft-readonly').textContent = `${detail.draft.status} · 읽기 전용`;
-  byId('draft-add-item').hidden = readonly;
-  byId('preview-finalization').hidden = readonly;
-  fillDraftAddFields();
-  renderDraftItems();
-  if (!byId('draft-dialog').open) byId('draft-dialog').showModal();
-};
-
-const renderDraftItems = () => {
-  const detail = state.draft;
-  if (!detail) return;
-  const readonly = detail.draft.status !== 'DRAFT';
-  const courseView = byId('draft-grouping').value === 'COURSE';
-  const items = sortDraftItems(filterDraftItems(detail.studentResults, {
-    query: byId('draft-search').value,
-    result: byId('draft-result-filter').value,
-    courseName: draftCourseName,
-  }), { applications: state.draftApplicationSummaries, courseView, courseName: draftCourseName, sort: byId('draft-sort').value });
-  const { items: visibleItems, ...pagination } = draftItemPage(items, state.pagination['draft-item'].page, PAGE_LIMIT);
-  state.pagination['draft-item'] = pagination;
-  renderPagination('draft-item');
-  byId('draft-item-rows').replaceChildren(...visibleItems.map((item) => {
-    const row = document.createElement('tr');
-    row.classList.toggle('draft-row-changed', draftDecisionChanged(item));
-    const finalSelect = document.createElement('select');
-    finalSelect.setAttribute('aria-label', `${item.memberNameAtGeneration} 최종 배정`);
-    fillSelect(finalSelect, item.finalDecision === 'SELECTED'
-      ? [{ id: item.finalSemesterCourseId, name: draftCourseName(item.finalSemesterCourseId) }] : [], '제외');
-    finalSelect.value = item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : '';
-    finalSelect.disabled = readonly;
-    if (!readonly) finalSelect.addEventListener('focus', () => {
-      const selected = finalSelect.value;
-      fillSelect(finalSelect, state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '제외');
-      finalSelect.value = selected;
-    }, { once: true });
-    const finalCell = document.createElement('td');
-    finalCell.append(finalSelect);
-    const application = state.draftApplicationSummaries.get(item.sourceApplicationId);
-    const orderCell = cell(application ? (application.applicationOrder ?? '미정') : '—');
-    orderCell.className = 'draft-order';
-    const applicationCell = cell(application?.choices ?? '신청 없음');
-    applicationCell.className = 'choices';
-    row.append(
-      orderCell,
-      cell(item.memberNameAtGeneration),
-      applicationCell,
-      cell(item.autoDecision === 'SELECTED' ? draftCourseName(item.autoSemesterCourseId) : item.autoDecision === 'NOT_EVALUATED' ? '자동 결과 없음' : '제외'),
-      draftReasonCell(item),
-      finalCell,
-    );
-    if (readonly) row.append(cell(''));
-    else row.append(actionsCell(
-      ['저장', () => saveDraftItem(item, finalSelect.value)],
-      ...(item.autoDecision === 'NOT_EVALUATED' ? [] : [['자동 복원', () => restoreDraftItem(item)]]),
-    ));
-    return row;
-  }));
-  byId('draft-filter-count').textContent = `${items.length} / ${detail.studentResults.length}명`;
-  byId('draft-item-empty').textContent = detail.studentResults.length && !items.length
-    ? '검색 조건에 맞는 학생이 없습니다.'
-    : '검토할 학생이 없습니다.';
-  byId('draft-item-empty').hidden = items.length !== 0;
-};
-
-const draftReasonCell = (item) => {
-  const td = document.createElement('td');
-  const details = document.createElement('details');
-  const summary = document.createElement('summary');
-  summary.textContent = reasonLabel(item.autoReasonCode);
-  const list = document.createElement('ul');
-  list.className = 'draft-reason-list';
-  details.addEventListener('toggle', () => {
-    if (!details.open || list.childElementCount) return;
-    list.append(...describeAllocationEvidence(item, draftCourseName).map((text) => {
-      const line = document.createElement('li');
-      line.textContent = text;
-      return line;
-    }));
-  });
-  details.append(summary, list);
-  td.append(details);
-  return td;
-};
-
-const fillDraftAddFields = () => {
-  if (!state.draft || !state.draftContext) return;
-  const memberIds = new Set(state.draft.studentResults.map(({ memberId }) => memberId));
-  fillSelect(byId('draft-add-member'), state.members.filter(({ id }) => !memberIds.has(id)), '회원을 선택하세요.');
-  fillSelect(byId('draft-add-course'), state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '강좌를 선택하세요.');
-};
-
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
 const policyName = (policyId, policyVersion) => state.policies.find((policy) => (
   policy.policyId === policyId && policy.policyVersion === policyVersion
 ))?.name ?? `${policyId} ${policyVersion}`;
-const draftCourseName = (id) => id ? state.draftContext?.semesterCourses.find((course) => course.id === id)?.courseName ?? id : '제외';
 const fillSelect = (select, items, placeholder) => {
   const empty = document.createElement('option');
   empty.value = '';
@@ -377,6 +257,13 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   renderPagination(name);
   return result.items;
 };
+
+const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseName } = createDraftDetail({
+  state, byId, fillSelect, cell, actionsCell, policyName,
+  renderPagination: (name) => renderPagination(name),
+  saveDraftItem: (item, courseId) => saveDraftItem(item, courseId),
+  restoreDraftItem: (item) => restoreDraftItem(item),
+});
 
 const { load: loadDrafts, openCreate: openDraftCreate, showPolicyDescription,
   showReadiness: showDraftReadiness, openDraft, submitDraft, saveDraftItem,

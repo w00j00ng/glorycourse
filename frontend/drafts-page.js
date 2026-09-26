@@ -10,7 +10,7 @@ import { draftFinalSelection } from './draft-view.js';
  *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<any>,
  *   run: (action: () => Promise<any>, success?: string) => Promise<any>,
- *   showDraft: (detail: any, context: any) => Promise<void>,
+ *   showDraft: (detail: any, context: any) => Promise<void> | void,
  *   showMessage: (message: string, error?: boolean) => void,
  *   fillSelect: (select: HTMLSelectElement, items: { id: string, name: string }[], placeholder: string) => void,
  *   loadPaged: (name: string, path: string, filters: string, pagination: { page: number, limit: number, total: number }) => Promise<DraftSummary[]>,
