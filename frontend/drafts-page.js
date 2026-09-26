@@ -6,19 +6,20 @@ import { issueText } from './issue-view.js';
  * @param {{
  *   state: { drafts: DraftSummary[], semesters: { id: string, name: string }[], policies: DraftPolicy[], pagination: { draft: { page: number, limit: number, total: number } } },
  *   byId: (id: string) => any,
- *   api: (path: string) => Promise<unknown>,
+ *   api: (path: string, options?: RequestInit) => Promise<any>,
+ *   run: (action: () => Promise<any>, success?: string) => Promise<any>,
+ *   showDraft: (detail: any, context: any) => Promise<void>,
  *   fillSelect: (select: HTMLSelectElement, items: { id: string, name: string }[], placeholder: string) => void,
  *   loadPaged: (name: string, path: string, filters: string, pagination: { page: number, limit: number, total: number }) => Promise<DraftSummary[]>,
  *   cell: (text: string) => HTMLElement,
  *   actionsCell: (...actions: [string, () => void | Promise<void>, string?][]) => HTMLElement,
  *   resourceName: (items: { id: string, name: string }[], id: string) => string,
  *   policyName: (id: string, version: string) => string,
- *   openDraft: (id: string) => Promise<void>,
- *   deleteDraft: (draft: DraftSummary) => Promise<void>,
  * }} dependencies
  */
-export const createDraftsPage = ({ state, byId, api, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName, openDraft, deleteDraft }) => {
+export const createDraftsPage = ({ state, byId, api, run, showDraft, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
   let readinessRequest = 0;
+  let draftOpenRequest = 0;
 
   const render = () => {
     byId('draft-rows').replaceChildren(...state.drafts.map((item) => {
@@ -45,6 +46,54 @@ export const createDraftsPage = ({ state, byId, api, fillSelect, loadPaged, cell
     if (state.pagination.draft !== pagination) return;
     state.drafts = items;
     render();
+  };
+
+  /** @param {DraftSummary} item */
+  const deleteDraft = async (item) => {
+    if (!window.confirm('이 배정초안을 삭제할까요? 수강이력은 삭제되지 않습니다.')) return;
+    draftOpenRequest++;
+    await run(() => api(`/allocation-drafts/${item.id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ expectedDraftRevision: item.revision }),
+    }), '배정초안을 삭제했습니다.');
+    await load();
+  };
+
+  /** @param {SubmitEvent} event */
+  const submitDraft = async (event) => {
+    event.preventDefault();
+    const form = /** @type {HTMLFormElement & { elements: HTMLFormControlsCollection & {
+     *   policy: HTMLSelectElement, semesterId: HTMLSelectElement, mode: HTMLSelectElement
+     * } }} */ (event.currentTarget);
+    const policy = state.policies.find((item) => (
+      `${item.policyId}\n${item.policyVersion}` === form.elements.policy.value
+    ));
+    if (!policy) return;
+    const request = ++draftOpenRequest;
+    const detail = await run(() => api('/allocation-drafts', {
+      method: 'POST',
+      body: JSON.stringify({
+        semesterId: form.elements.semesterId.value,
+        mode: form.elements.mode.value,
+        policyId: policy.policyId,
+        policyVersion: policy.policyVersion,
+        policySettings: policy.settings,
+      }),
+    }), '배정초안을 생성했습니다.');
+    byId('draft-create-dialog').close();
+    await load();
+    const context = await api(`/semesters/${detail.draft.semesterId}/context`);
+    if (request === draftOpenRequest) await showDraft(detail, context);
+  };
+
+  /** @param {string} id */
+  const openDraft = async (id) => {
+    const request = ++draftOpenRequest;
+    const detail = await api(`/allocation-drafts/${id}`);
+    if (request !== draftOpenRequest) return;
+    const context = await api(`/semesters/${detail.draft.semesterId}/context`);
+    if (request !== draftOpenRequest) return;
+    await showDraft(detail, context);
   };
 
   const showPolicyDescription = () => {
@@ -93,5 +142,5 @@ export const createDraftsPage = ({ state, byId, api, fillSelect, loadPaged, cell
       : `자동 배정 준비 필요: ${issueNames.join(', ')} · 기존 확정 ${total}명`;
   };
 
-  return { load, openCreate, showPolicyDescription, showReadiness };
+  return { load, openCreate, showPolicyDescription, showReadiness, openDraft, deleteDraft, submitDraft };
 };

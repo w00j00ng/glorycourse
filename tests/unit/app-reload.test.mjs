@@ -180,7 +180,6 @@ test('keeps the latest draft list and page when earlier requests finish later', 
       const { load } = createDraftsPage({
         state: context.state, byId: (id) => nodes[id], loadPaged: context.loadPaged,
         cell: () => ({}), actionsCell: () => ({}), resourceName: () => '', policyName: () => '',
-        openDraft: async () => {}, deleteDraft: async () => {},
       });
       const earlier = load();
       context.state.pagination.draft.page = 1;
@@ -230,6 +229,64 @@ test('shows readiness only for the semester currently chosen in the draft form',
   await showReadiness();
   assert.equal(readiness.textContent, '학기를 선택하면 자동 배정 준비 상태를 확인합니다.');
   assert.equal(pending.length, 4);
+});
+
+test('opening another draft keeps the latest selection when an older context finishes later', async () => {
+  const pending = [];
+  const shown = [];
+  const { openDraft } = createDraftsPage({
+    state: { drafts: [], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 0 } } },
+    api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+    showDraft: async (detail, context) => shown.push([detail.draft.id, context.semester.name]),
+  });
+
+  const earlier = openDraft('earlier');
+  pending[0].resolve({ draft: { id: 'earlier', semesterId: 'first' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const latest = openDraft('latest');
+  pending[2].resolve({ draft: { id: 'latest', semesterId: 'second' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  pending[3].resolve({ semester: { name: '두 번째 학기' } });
+  await latest;
+  pending[1].resolve({ semester: { name: '첫 번째 학기' } });
+  await earlier;
+
+  assert.deepEqual(shown, [['latest', '두 번째 학기']]);
+});
+
+test('draft deletion asks for confirmation and refreshes only after deleting the selected revision', async () => {
+  const previousWindow = globalThis.window;
+  const confirmations = [false, true];
+  globalThis.window = { confirm: () => confirmations.shift() };
+  try {
+    const requests = [];
+    const draft = { id: 'draft-1', revision: 7 };
+    const nodes = {
+      'draft-rows': { replaceChildren() {} },
+      'draft-empty': { hidden: true },
+      'draft-count': { textContent: '1' },
+    };
+    const { deleteDraft } = createDraftsPage({
+      state: { drafts: [draft], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 1 } } },
+      byId: (id) => nodes[id],
+      api: async (path, options) => { requests.push({ path, options }); },
+      run: (action) => action(),
+      loadPaged: async (_name, _path, _filters, pagination) => { pagination.total = 0; return []; },
+    });
+
+    await deleteDraft(draft);
+    assert.equal(requests.length, 0);
+    assert.equal(nodes['draft-count'].textContent, '1');
+    await deleteDraft(draft);
+    assert.deepEqual(requests, [{
+      path: '/allocation-drafts/draft-1',
+      options: { method: 'DELETE', body: JSON.stringify({ expectedDraftRevision: 7 }) },
+    }]);
+    assert.equal(nodes['draft-empty'].hidden, false);
+    assert.equal(nodes['draft-count'].textContent, '0');
+  } finally {
+    globalThis.window = previousWindow;
+  }
 });
 
 test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
