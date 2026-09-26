@@ -50,12 +50,12 @@ test('reloads saved records using the catalog and filters shown to the user', as
       },
       byId: (id) => nodes[id],
       api: async (path) => {
-        if (path.startsWith('/semesters?')) return { items: [newSemester, oldSemester] };
+        if (path.startsWith('/semesters?')) return { items: [newSemester, oldSemester], page: 1, limit: 200, total: 2 };
         if (path.endsWith('/enrollment-report')) {
           reportSemester = path.split('/')[2];
           return { finalized: false };
         }
-        return { items: [] };
+        return { items: [], page: 1, limit: 200, total: 0 };
       },
       loadPaged: async (name, _path, filter) => {
         queries.push({ name, filter });
@@ -69,7 +69,7 @@ test('reloads saved records using the catalog and filters shown to the user', as
       crypto: { randomUUID: () => 'idempotency-key' },
     });
     const functions = [
-      'loadApplications', 'loadEnrollments', 'loadCatalogs', 'submitApplication', 'submitEnrollment', 'commitImport',
+      'loadApplications', 'loadEnrollments', 'loadCatalogItems', 'loadCatalogs', 'submitApplication', 'submitEnrollment', 'commitImport',
     ].map(appFunction).join('\n');
     vm.runInContext(`${functions}\nconst enrollmentCourseName = () => 'Course';\nglobalThis.save = ${request.action};`, context);
     await context.save({ preventDefault() {}, currentTarget: { dataset: {}, querySelector: () => submit } });
@@ -81,6 +81,65 @@ test('reloads saved records using the catalog and filters shown to the user', as
       assert.equal(context.state.applications[0].semesterId, request.expectedSemester, request.action);
     }
     if (request.expectedReport) assert.equal(reportSemester, request.expectedReport, request.action);
+  }
+});
+
+test('keeps all catalog choices beyond 200 records and preserves the selected filters', async () => {
+  for (const count of [0, 200, 201, 401]) {
+    for (const touched of [false, true]) {
+      const catalogs = Object.fromEntries(['semesters', 'members', 'courses'].map((name) => [name,
+        Array.from({ length: count }, (_, index) => ({ id: `${name}-${index + 1}`, name: `${name} ${index + 1}`, order: index + 1 })),
+      ]));
+      const selectedSemester = count ? `semesters-${Math.max(1, count - 1)}` : '';
+      const selectedCourse = count ? `courses-${count}` : '';
+      const select = (value = '') => ({
+        value, options: [],
+        replaceChildren(...options) { this.options = options; this.value = options[0]?.value ?? ''; },
+      });
+      const nodes = {
+        'semester-options': select(), 'member-options': select(), 'course-options': select(),
+        'application-semester-filter': select(selectedSemester), 'application-course-filter': select(selectedCourse),
+        'enrollment-semester-filter': select(selectedSemester), 'enrollment-course-filter': select(selectedCourse),
+        'draft-add-member': select(), 'draft-add-course': select(),
+      };
+      const requested = [];
+      const context = vm.createContext({
+        state: {
+          semesters: [], members: [], courses: [], applicationSemesterFilterTouched: touched,
+          pagination: { application: { page: 2 } },
+          draft: { studentResults: [{ memberId: 'members-1' }] }, draftContext: { semesterCourses: [] },
+        },
+        byId: (id) => nodes[id], document: { createElement: () => ({}) },
+        orderSemesters, applicationSemesterFilterValue,
+        api: async (path) => {
+          const url = new URL(path, 'http://localhost');
+          const items = catalogs[url.pathname.slice(1)];
+          const page = Number(url.searchParams.get('page') ?? 1);
+          const limit = Number(url.searchParams.get('limit'));
+          requested.push({ path: url.pathname, page });
+          return { items: items.slice((page - 1) * limit, page * limit), page, limit, total: items.length };
+        },
+      });
+      const functions = ['loadCatalogItems', 'loadCatalogs', 'fillSelect', 'fillFilterSelect', 'fillDatalist', 'fillDraftAddFields'].map(appFunction).join('\n');
+      vm.runInContext(`${functions}\nglobalThis.load = loadCatalogs; globalThis.fillMembers = fillDraftAddFields;`, context);
+      await context.load();
+      context.fillMembers();
+
+      for (const [name, items] of Object.entries(catalogs)) {
+        assert.equal(context.state[name].length, count, `${name}: complete catalog`);
+        assert.equal(nodes[`${name.slice(0, -1)}-options`].options.length, count, `${name}: all suggestions`);
+        assert.deepEqual(requested.filter(({ path }) => path === `/${name}`).map(({ page }) => page),
+          Array.from({ length: Math.max(1, Math.ceil(count / 200)) }, (_, index) => index + 1));
+        if (count) assert.ok(context.state[name].some(({ id }) => id === items.at(-1).id), `${name}: last record`);
+      }
+      assert.equal(nodes['application-semester-filter'].value, touched ? selectedSemester : count ? `semesters-${count}` : '');
+      assert.equal(nodes['enrollment-semester-filter'].value, selectedSemester);
+      assert.equal(nodes['application-course-filter'].value, selectedCourse);
+      assert.equal(nodes['enrollment-course-filter'].value, selectedCourse);
+      assert.equal(nodes['draft-add-member'].options.length, Math.max(0, count - 1) + 1);
+      if (count) assert.equal(nodes['draft-add-member'].options.at(-1).value, `members-${count}`);
+      assert.equal(context.state.pagination.application.page, !touched && count > 1 ? 1 : 2);
+    }
   }
 });
 

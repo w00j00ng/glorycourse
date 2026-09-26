@@ -1482,16 +1482,25 @@ const fillSelect = (select, items, placeholder) => {
   }));
 };
 
+const loadCatalogItems = async (path) => {
+  const items = [];
+  for (let page = 1; ; page++) {
+    const result = await api(`${path}?page=${page}&limit=200`);
+    items.push(...result.items);
+    if (result.page * result.limit >= result.total) return items;
+  }
+};
+
 const loadCatalogs = async () => {
   const [semesters, members, courses] = await Promise.all([
-    api('/semesters?limit=200'), api('/members?limit=200'), api('/courses?limit=200'),
+    loadCatalogItems('/semesters'), loadCatalogItems('/members'), loadCatalogItems('/courses'),
   ]);
-  state.semesters = orderSemesters(semesters.items);
-  state.members = members.items;
-  state.courses = courses.items;
+  state.semesters = orderSemesters(semesters);
+  state.members = members;
+  state.courses = courses;
   fillDatalist('semester-options', state.semesters);
-  fillDatalist('member-options', members.items);
-  fillDatalist('course-options', courses.items);
+  fillDatalist('member-options', members);
+  fillDatalist('course-options', courses);
   const applicationSemester = byId('application-semester-filter');
   const previousSemesterId = applicationSemester.value;
   fillFilterSelect('application-semester-filter', state.semesters);
@@ -1499,9 +1508,9 @@ const loadCatalogs = async () => {
     state.semesters, applicationSemester.value, state.applicationSemesterFilterTouched,
   );
   if (applicationSemester.value !== previousSemesterId) state.pagination.application.page = 1;
-  fillFilterSelect('application-course-filter', courses.items);
+  fillFilterSelect('application-course-filter', courses);
   fillFilterSelect('enrollment-semester-filter', state.semesters);
-  fillFilterSelect('enrollment-course-filter', courses.items);
+  fillFilterSelect('enrollment-course-filter', courses);
 };
 
 const fillFilterSelect = (id, items) => {
