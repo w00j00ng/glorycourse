@@ -52,7 +52,7 @@ npm start
 
 DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `schema_migrations`로 관리한다. 업무 자료는 JSON 문서가 아니라 명시 컬럼과 자식 테이블에 저장한다. 실행 전에 이력을 확인하고, 미적용 SQL이 있으면 `update-backups/`에 SQLite 백업을 만든 뒤 한 트랜잭션으로 적용한다. `npm run migrations:manifest`로 manifest를 갱신하고 `npm run migrations:check`로 검증한다. 미배포 개발용 `db.json` 및 이력 테이블이 없는 SQLite DB는 자동 이전하지 않는다.
 
-일반 저장은 직전 상태와 후보를 비교해 변경된 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성·백업 복원은 전체 교체 경로를 사용한다. 메모리의 전체 후보 복제·검증·비교 비용은 여전히 자료량에 비례한다.
+일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성·백업 복원은 전체 교체 경로를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색과 `Store.read()`의 전체 복제는 자료량에 비례할 수 있다.
 
 1. 기존 최대 버전보다 큰 Unix 초 timestamp로 새 `.sql` 파일을 추가한다. 이미 배포한 파일의 이름·내용은 수정하거나 삭제하지 않는다.
 2. SQL은 UTF-8 BOM 없이 LF 줄바꿈으로 작성한다. 트랜잭션은 실행기가 관리하므로 `BEGIN`·`COMMIT`이나 `schema_migrations` 직접 변경문을 넣지 않는다.

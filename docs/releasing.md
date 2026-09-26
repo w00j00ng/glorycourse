@@ -4,7 +4,7 @@
 
 ## 현재 검증 범위
 
-Windows용 ZIP은 로컬에서 생성하고 별도 임시 폴더에 추출해 검증한다. 기존에 기록된 2026-09-25 [Portable release 실행](https://github.com/w00j00ng/glorycourse/actions/runs/36091456318)은 Windows 2022 x64, macOS 15 arm64, Ubuntu 24.04 x64 패키지 검증 결과다. 이 과거 결과가 새 커밋의 검증을 대신하지 않는다. 실제 GUI 첫 실행은 별도 검증 대상이다. 특히 Mac은 서명·공증 없는 시험 배포이며 일반 고객용 정식 지원으로 전환하기 전에 Finder/Gatekeeper 검증이 필요하다.
+Windows용 ZIP은 로컬에서 생성하고 별도 임시 폴더에 추출해 검증한다. 태그를 push한 뒤에는 **그 태그의** Portable release 실행에서 Windows 2022 x64, macOS 15 arm64, Ubuntu 24.04 x64 패키지 검증 결과를 확인한다. CI의 실행기 검증만으로 일반 사용자 PC의 GUI 첫 실행이 확인되지는 않는다. Mac/Linux는 README에 시험 배포 대상으로 표시하고, Mac은 서명·공증과 Finder/Gatekeeper 검증 전까지 정식 지원으로 안내하지 않는다.
 
 ## 배포 전 로컬 확인
 
@@ -28,8 +28,8 @@ npm run test:package
 1. 배포할 변경과 사용 설명서를 검토·커밋·push한다. `package.json`과 lockfile의 버전을 맞추고 공개할 커밋을 확정한다.
 2. Actions의 **Portable release**를 수동 실행하면 세 OS 빌드와 검증만 수행한다. 테스트용 artifact는 workflow 실행 화면에서 내려받는다.
 3. 공개할 커밋에 버전과 같은 `v0.1.0` 형식의 태그를 만들어 push한다. 세 OS 검증이 전부 통과하면 **초안 Release**와 압축 파일 3개, `SHA256SUMS`를 만든다. 태그와 버전이 다르면 실패한다.
-4. 해당 초안의 파일을 일반 사용자 환경으로 내려받아 아래 점검표를 수행한다. Windows 11, macOS 15 Apple Silicon, Ubuntu 24.04 GNOME에서 각기 확인한다. macOS 서명·공증과 조직 정책은 별도 조건이다.
-5. 검증 상태와 변경 내용을 Release 본문에 기록하고 관리자가 **Publish release**를 누른다. 정식 버전만 latest로 지정한다. 미검증 버전은 초안 또는 사전 배포 상태로 유지한다.
+4. 해당 초안의 파일을 일반 사용자 환경으로 내려받아 아래 점검표를 수행한다. Windows의 시작·종료와 브라우저 열기를 확인하고, Mac/Linux를 직접 확인하지 못했다면 시험 배포 및 미검증 범위를 Release 본문에 명시한다. Mac 서명·공증과 조직 정책은 별도 조건이다.
+5. Windows 검증과 세 OS 패키지 CI가 통과하면 확인한 범위와 변경 내용을 Release 본문에 기록하고 **Publish release**를 누른다. README의 `latest` 다운로드 링크는 사전 배포가 아닌 공개 Release가 있어야 동작한다. Windows 첫 실행을 확인하지 못한 버전은 초안 또는 사전 배포로 유지한다.
 
 자동화는 공개된 Release를 덮어쓰지 않는다. 같은 태그를 재실행할 때는 아직 초안인 경우에만 파일을 교체한다. 배포 권한은 초안 생성 job에만 부여한다. 개인 토큰을 소스에 넣지 않고 GitHub의 기본 `GITHUB_TOKEN`을 사용한다.
 

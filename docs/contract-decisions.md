@@ -10,7 +10,7 @@
 
 ## C-02 세부 저장 구조
 
-`schema/store-schema.json`이 서비스가 만드는 관계형 상태의 논리 계약이다. SQLite의 `store_meta`와 업무 테이블은 모든 값을 명시 컬럼에 저장하고, 반복·중첩 값은 부모 FK와 `position`을 가진 자식 테이블에 저장한다. 범용 전체 저장 DTO와 JSON `document` 컬럼은 사용하지 않는다. 한 업무 명령의 전체 후보는 한 SQLite 트랜잭션으로 반영한다. DB 스키마는 `schema/migrations/`의 Unix timestamp SQL과 `schema_migrations`로 관리한다. 백업은 SQLite 파일이며, 미배포 개발용 `db.json`은 자동 이전하지 않는다.
+`schema/store-schema.json`이 서비스가 만드는 관계형 상태의 논리 계약이다. SQLite의 `store_meta`와 업무 테이블은 모든 값을 명시 컬럼에 저장하고, 반복·중첩 값은 부모 FK와 `position`을 가진 자식 테이블에 저장한다. 범용 전체 저장 DTO와 JSON `document` 컬럼은 사용하지 않는다. 한 업무 명령에서 변경된 행은 한 SQLite 트랜잭션으로 반영한다. DB 스키마는 `schema/migrations/`의 Unix timestamp SQL과 `schema_migrations`로 관리한다. 백업은 SQLite 파일이며, 미배포 개발용 `db.json`은 자동 이전하지 않는다.
 
 일반 명령은 직전 자료와 다른 행 및 변경된 자식 자료만 저장한다. 수정되지 않은 가져오기 원본과 배정 스냅샷을 다시 기록하지 않는다. 트랜잭션을 시작한 뒤 DB의 epoch·revision이 직전 자료와 같은지 확인하며, 전체 교체는 초기화·복원에 한정한다. UNIQUE 값 교환에 사용하는 임시 값은 트랜잭션 안에서만 존재하고 커밋 시 FK·고유성 제약을 만족해야 한다.
 
