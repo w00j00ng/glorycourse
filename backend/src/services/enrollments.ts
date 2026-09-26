@@ -1,26 +1,19 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
-import { StoreEpochConflictError, StoreRevisionConflictError, type Store, type DatabaseState } from '../storage/store.ts';
+import {
+  StoreEpochConflictError,
+  StoreRevisionConflictError,
+  type DatabaseState,
+  type EnrollmentRecord as Enrollment,
+  type NamedRecord as Named,
+  type SemesterCourseRecord as SemesterCourse,
+  type SemesterRecord as Semester,
+  type Store,
+} from '../storage/store.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 
 type Action = 'CREATE' | 'UPDATE' | 'DELETE';
-type Timestamped = { createdAt: string; updatedAt: string };
-type Named = Timestamped & { id: string; name: string; nameKey: string };
-type Semester = Named & { order: number | null; allocationInputRevision: number };
-type SemesterCourse = Timestamped & {
-  id: string;
-  semesterId: string;
-  courseId: string;
-  capacity: number | null;
-};
-export type Acknowledgement = { warningDigest: string; note: string; acknowledgedAt: string };
-type Enrollment = Timestamped & {
-  id: string;
-  semesterCourseId: string;
-  memberId: string;
-  exceptionAcknowledgement: Acknowledgement | null;
-  revision: number;
-};
+export type Acknowledgement = NonNullable<Enrollment['exceptionAcknowledgement']>;
 type PreviewInput = {
   action: Action;
   enrollmentId?: string;
@@ -51,15 +44,12 @@ type TokenPayload = {
 type BatchInput = Pick<PreviewInput, 'semesterName' | 'memberName' | 'courseName'>;
 type BatchTokenPayload = Omit<TokenPayload, 'input'> & { kind: 'BATCH_CREATE'; inputs: BatchInput[] };
 
-export type EnrollmentView = {
-  id: string;
-  semesterCourseId: string;
-  memberId: string;
+export type EnrollmentView = Pick<Enrollment,
+  'id' | 'semesterCourseId' | 'memberId' | 'exceptionAcknowledgement' | 'revision'
+> & {
   semesterName: string;
   courseName: string;
   memberName: string;
-  exceptionAcknowledgement: Acknowledgement | null;
-  revision: number;
 };
 
 export type EnrollmentListFilters = {
@@ -713,10 +703,8 @@ const resolveSemesterCourse = (
   return created;
 };
 
-const semesters = (data: DatabaseState): Semester[] => data.semesters as unknown as Semester[];
-const members = (data: DatabaseState): Named[] => data.members as unknown as Named[];
-const courses = (data: DatabaseState): Named[] => data.courses as unknown as Named[];
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => (
-  data.semesterCourses as unknown as SemesterCourse[]
-);
-const enrollments = (data: DatabaseState): Enrollment[] => data.enrollments as unknown as Enrollment[];
+const semesters = (data: DatabaseState): Semester[] => data.semesters;
+const members = (data: DatabaseState): Named[] => data.members;
+const courses = (data: DatabaseState): Named[] => data.courses;
+const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
+const enrollments = (data: DatabaseState): Enrollment[] => data.enrollments;

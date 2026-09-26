@@ -1,32 +1,13 @@
-import type { Store, DatabaseState } from '../storage/store.ts';
+import type {
+  ApplicationChoiceRecord as Choice,
+  ApplicationRecord as Application,
+  DatabaseState,
+  NamedRecord as Named,
+  SemesterCourseRecord as SemesterCourse,
+  SemesterRecord as Semester,
+  Store,
+} from '../storage/store.ts';
 import { nextSemesterOrder } from './semester-order.ts';
-
-type Timestamped = { createdAt: string; updatedAt: string };
-type Named = Timestamped & { id: string; name: string; nameKey: string };
-type Semester = Named & { order: number | null; allocationInputRevision: number };
-type SemesterCourse = Timestamped & {
-  id: string;
-  semesterId: string;
-  courseId: string;
-  capacity: number | null;
-};
-type Application = Timestamped & {
-  id: string;
-  semesterId: string;
-  memberId: string;
-  applicationOrder: number;
-  applicationOrderStatus: 'NORMAL';
-  orderResolution: 'SOURCE_AGREED';
-  orderResolutionNote: null;
-  revision: number;
-};
-type Choice = Timestamped & {
-  id: string;
-  applicationId: string;
-  semesterCourseId: string;
-  preference: number;
-  sourceRefs: [];
-};
 
 export type ApplicationInput = {
   semesterName: string;
@@ -35,17 +16,12 @@ export type ApplicationInput = {
   choices: { courseName: string; preference: number }[];
 };
 
-export type ApplicationView = {
-  id: string;
-  semesterId: string;
-  memberId: string;
+export type ApplicationView = Pick<Application,
+  'id' | 'semesterId' | 'memberId' | 'applicationOrder' | 'applicationOrderStatus' | 'orderResolution' | 'revision'
+> & {
   semesterName: string;
   memberName: string;
-  applicationOrder: number;
-  applicationOrderStatus: 'NORMAL';
-  orderResolution: 'SOURCE_AGREED';
-  revision: number;
-  choices: { id: string; semesterCourseId: string; courseName: string; preference: number }[];
+  choices: (Pick<Choice, 'id' | 'semesterCourseId' | 'preference'> & { courseName: string })[];
 };
 
 export type ApplicationListFilters = {
@@ -661,12 +637,10 @@ const semesterById = (data: DatabaseState, id: string): Semester => {
   return semester;
 };
 
-const semesters = (data: DatabaseState): Semester[] => data.semesters as unknown as Semester[];
-const members = (data: DatabaseState): Named[] => data.members as unknown as Named[];
-const courses = (data: DatabaseState): Named[] => data.courses as unknown as Named[];
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => (
-  data.semesterCourses as unknown as SemesterCourse[]
-);
-const applications = (data: DatabaseState): Application[] => data.applications as unknown as Application[];
-const choices = (data: DatabaseState): Choice[] => data.applicationChoices as unknown as Choice[];
+const semesters = (data: DatabaseState): Semester[] => data.semesters;
+const members = (data: DatabaseState): Named[] => data.members;
+const courses = (data: DatabaseState): Named[] => data.courses;
+const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
+const applications = (data: DatabaseState): Application[] => data.applications;
+const choices = (data: DatabaseState): Choice[] => data.applicationChoices;
 const enrollments = (data: DatabaseState): DatabaseState['enrollments'] => data.enrollments;
