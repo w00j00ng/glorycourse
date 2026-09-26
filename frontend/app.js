@@ -151,28 +151,6 @@ const loadApplications = async () => {
   renderApplications();
 };
 
-const renderApplications = () => {
-  const body = byId('application-rows');
-  body.replaceChildren(...state.applications.map((item) => {
-    const row = document.createElement('tr');
-    row.append(
-      cell(item.memberName),
-      cell(item.semesterName),
-      cell(String(item.applicationOrder)),
-      choicesCell(item.choices),
-      badgeCell(item.applicationOrderStatus === 'NORMAL' ? '정상' : item.applicationOrderStatus, item.applicationOrderStatus !== 'NORMAL'),
-      actionsCell(
-        ['수정', () => openApplication(item)],
-        ['삭제', () => deleteApplication(item), 'delete'],
-      ),
-    );
-    return row;
-  }));
-  byId('application-empty').hidden = state.applications.length !== 0;
-  byId('application-count').textContent = String(state.pagination.application.total);
-  byId('choice-count').textContent = String(state.applications.reduce((total, item) => total + item.choices.length, 0));
-};
-
 const loadEnrollments = async () => {
   const pagination = state.pagination.enrollment = { ...state.pagination.enrollment };
   const items = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'), pagination);
@@ -1320,10 +1298,14 @@ const fillSelect = (select, items, placeholder) => {
 };
 
 const {
+  renderApplications,
   showTemplateSummary: showApplicationTemplateSummary,
   openTemplate: openApplicationTemplate,
   downloadTemplate: downloadApplicationTemplate,
-} = createApplicationsPage({ state, byId, api, fillSelect, showMessage, run, download });
+} = createApplicationsPage({
+  state, byId, api, fillSelect, showMessage, run, download,
+  cell, choicesCell, badgeCell, actionsCell, openApplication, deleteApplication,
+});
 
 const loadCatalogItems = async (path) => {
   const items = [];

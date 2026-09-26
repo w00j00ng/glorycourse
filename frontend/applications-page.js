@@ -1,9 +1,32 @@
 import { templateFilename } from './download-name.js';
 
+/** @typedef {{ memberName: string, semesterName: string, applicationOrder: number | null, applicationOrderStatus: string, choices: unknown[] }} ApplicationRow */
 /**
- * @param {{ state: { semesters: { id: string, name: string }[] }, byId: (id: string) => any, api: (path: string) => Promise<unknown>, fillSelect: (select: any, items: { id: string, name: string }[], placeholder: string) => void, showMessage: (message: string, error?: boolean) => void, run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>, download: (path: string, filename: string) => Promise<unknown> }} dependencies
+ * @param {{ state: { semesters: { id: string, name: string }[], applications: ApplicationRow[], pagination: { application: { total: number } } }, byId: (id: string) => any, api: (path: string) => Promise<unknown>, fillSelect: (select: any, items: { id: string, name: string }[], placeholder: string) => void, showMessage: (message: string, error?: boolean) => void, run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>, download: (path: string, filename: string) => Promise<unknown>, cell: (text: string) => any, choicesCell: (choices: unknown[]) => any, badgeCell: (text: string, warning: boolean) => any, actionsCell: (...actions: any[]) => any, openApplication: (item: ApplicationRow) => void, deleteApplication: (item: ApplicationRow) => Promise<void> }} dependencies
  */
-export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessage, run, download }) => {
+export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessage, run, download, cell, choicesCell, badgeCell, actionsCell, openApplication, deleteApplication }) => {
+  const renderApplications = () => {
+    const body = byId('application-rows');
+    body.replaceChildren(...state.applications.map((item) => {
+      const row = document.createElement('tr');
+      row.append(
+        cell(item.memberName),
+        cell(item.semesterName),
+        cell(String(item.applicationOrder)),
+        choicesCell(item.choices),
+        badgeCell(item.applicationOrderStatus === 'NORMAL' ? '정상' : item.applicationOrderStatus, item.applicationOrderStatus !== 'NORMAL'),
+        actionsCell(
+          ['수정', () => openApplication(item)],
+          ['삭제', () => deleteApplication(item), 'delete'],
+        ),
+      );
+      return row;
+    }));
+    byId('application-empty').hidden = state.applications.length !== 0;
+    byId('application-count').textContent = String(state.pagination.application.total);
+    byId('choice-count').textContent = String(state.applications.reduce((total, item) => total + item.choices.length, 0));
+  };
+
   const showTemplateSummary = async () => {
     const form = byId('application-template-form');
     const semesterId = form.elements.semesterId.value;
@@ -42,5 +65,5 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     byId('application-template-dialog').close();
   };
 
-  return { showTemplateSummary, openTemplate, downloadTemplate };
+  return { renderApplications, showTemplateSummary, openTemplate, downloadTemplate };
 };
