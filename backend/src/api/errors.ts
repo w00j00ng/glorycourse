@@ -69,9 +69,11 @@ const mapError = (error: unknown): { status: number; code: string; message: stri
     || name.includes('IdempotencyConflict')
     || name.includes('ReadOnly')
   ) return { status: 409, code: 'CONFLICT', message: '현재 상태와 요청이 충돌합니다.' };
+  if (name.endsWith('AcknowledgementError')) {
+    return { status: 422, code: 'UNPROCESSABLE', message: '확인 메모를 입력하고 검토한 경고 내용을 다시 확인하세요.' };
+  }
   if (
     name.includes('Validation')
-    || name.includes('Acknowledgement')
     || name.includes('UnsupportedEngine')
     || name.endsWith('ConflictError')
   ) return { status: 422, code: 'UNPROCESSABLE', message: '업무 규칙을 만족하지 못했습니다.' };

@@ -126,6 +126,34 @@ test('an administrator reviews a completed application template before importing
   await expect(page.locator('#application-rows')).toContainText('양식 회원');
 });
 
+test('an administrator registers multiple historical enrollments without applications or catalog setup', async ({ page, app }) => {
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#new-enrollment').click();
+  await page.locator('#add-enrollment-entry').click();
+  for (const [index, memberName, courseName] of [[0, '김가나', '창세기'], [1, '박다라', '마태복음']]) {
+    const row = page.locator('#enrollment-entry-rows > fieldset').nth(index);
+    await row.locator('[name="semesterName"]').fill('과거 학기');
+    await row.locator('[name="memberName"]').fill(memberName);
+    await row.locator('[name="newCourseName"]').fill(courseName);
+  }
+  await page.locator('#enrollment-form [type="submit"]').click();
+  await expect(page.locator('#warning-dialog')).toBeVisible();
+  await expect(page.locator('#warning-list')).toContainText('학기 순서');
+  await expect(page.locator('#warning-list')).toContainText('정원');
+  await page.locator('#warning-form [name="note"]').fill('과거 이력의 학기와 강좌 정보를 확인했습니다.');
+  await page.locator('#warning-form [type="submit"]').click();
+  await expect(page.locator('#enrollment-dialog')).toBeHidden();
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+  await expect(page.locator('#enrollment-rows')).toContainText('김가나');
+  await expect(page.locator('#enrollment-rows')).toContainText('박다라');
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await expect(page.locator('#catalog-semester-rows')).toContainText('과거 학기');
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#catalog-semester').selectOption({ label: '과거 학기' });
+  await expect(page.locator('#catalog-course-rows [name="courseName"]')).toHaveCount(2);
+  expect((await page.locator('#catalog-course-rows [name="courseName"]').evaluateAll((inputs) => inputs.map((input) => input.value))).sort()).toEqual(['마태복음', '창세기']);
+});
+
 test('an administrator registers applications, reviews allocation, and sees saved enrollment history', async ({ page, app }) => {
   await expect(page.getByRole('heading', { name: '업무 대시보드' })).toBeVisible();
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
@@ -163,6 +191,12 @@ test('an administrator registers applications, reviews allocation, and sees save
   await expect(page.locator('#draft-item-rows tr')).toHaveCount(2);
   await expect(page.locator('#draft-item-rows tr').first()).toContainText('김가나');
   await page.locator('#preview-finalization').click();
+  await page.locator('#finalize-form [name="note"]').fill('   ');
+  const rejected = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/finalize') && response.status() === 422);
+  await page.locator('#finalize-draft').click();
+  await rejected;
+  await expect(page.locator('#finalize-dialog')).toBeVisible();
+  await expect(page.locator('#finalize-dialog #dialog-message')).toContainText('확인 메모를 입력하고');
   await page.locator('#finalize-form [name="note"]').fill('신청과 정원을 확인했습니다.');
   await page.locator('#finalize-draft').click();
   await expect(page.locator('#draft-rows tr')).toHaveCount(0);

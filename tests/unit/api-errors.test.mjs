@@ -32,3 +32,19 @@ test('tells the user to review again when a preview expired or became stale', ()
 test('keeps an ordinary revision conflict distinct from preview expiry', () => {
   assert.equal(responseFor('RevisionConflictError').body.code, 'CONFLICT');
 });
+
+test('tells the user how to correct rejected acknowledgement notes', () => {
+  for (const name of [
+    'EnrollmentAcknowledgementError', 'FinalizationAcknowledgementError',
+    'ImportAcknowledgementError', 'RecoveryAcknowledgementError',
+  ]) {
+    assert.deepEqual(responseFor(name), {
+      status: 422,
+      body: {
+        code: 'UNPROCESSABLE',
+        message: '확인 메모를 입력하고 검토한 경고 내용을 다시 확인하세요.',
+        issues: [],
+      },
+    });
+  }
+});
