@@ -296,6 +296,24 @@ export class Store {
     return { meta, semesters, members, courses, semesterCourses, enrollments };
   }
 
+  draftListData(): Pick<DatabaseState, 'meta' | 'allocationDrafts'> {
+    const { meta, allocationDrafts } = this.data;
+    return { meta, allocationDrafts };
+  }
+
+  draftDetailData(): Pick<DatabaseState,
+    'meta' | 'semesters' | 'members' | 'courses' | 'semesterCourses' |
+    'applications' | 'applicationChoices' | 'enrollments' | 'allocationDrafts' | 'allocationDraftItems'> {
+    const {
+      meta, semesters, members, courses, semesterCourses, applications, applicationChoices,
+      enrollments, allocationDrafts, allocationDraftItems,
+    } = this.data;
+    return {
+      meta, semesters, members, courses, semesterCourses, applications, applicationChoices,
+      enrollments, allocationDrafts, allocationDraftItems,
+    };
+  }
+
   write<T>(
     options: { expectedRevision?: number; expectedEpoch?: string },
     command: (candidate: DatabaseState) => T | Promise<T>,
