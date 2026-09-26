@@ -1,5 +1,7 @@
+/** @param {string} value */
 const nameKey = (value) => value.trim().normalize('NFC');
 
+/** @param {string[]} existingCourseNames @param {{ courseName: string, capacity: number | null }[]} selectedCourses */
 export const copySemesterCourses = (existingCourseNames, selectedCourses) => {
   const existing = new Set(existingCourseNames.map(nameKey));
   return selectedCourses
@@ -12,8 +14,11 @@ export const copySemesterCourses = (existingCourseNames, selectedCourses) => {
     .map(({ courseName, capacity }) => ({ courseName, capacity }));
 };
 
+/** @param {unknown} value */
 export const parseSemesterCourses = (value) => {
+  /** @type {{ courseName: string, capacity: number }[]} */
   const courses = [];
+  /** @type {string[]} */
   const errors = [];
   String(value ?? '').replace(/\r/g, '').split('\n').forEach((raw, index) => {
     if (!raw.trim()) return;

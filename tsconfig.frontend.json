@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "allowImportingTsExtensions": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true
+  },
+  "include": [
+    "frontend/backups-page.js",
+    "frontend/catalog-view.js",
+    "frontend/dashboard-page.js",
+    "frontend/draft-view.js",
+    "frontend/download-name.js",
+    "frontend/issue-view.js",
+    "frontend/list-view.js"
+  ]
+}
