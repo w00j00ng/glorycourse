@@ -99,6 +99,24 @@ test('version returns only the committed epoch and revision across writes and re
   assert.deepEqual(store.version(), { storeEpoch: 'restored', storeRevision: 0 });
 });
 
+test('catalog and import-batch reads follow saved changes without exposing another collection', async () => {
+  const initial = emptyStore();
+  initial.members.push(member('member-a'));
+  initial.importBatches.push({
+    id: 'batch-a', kind: 'APPLICATIONS', templateVersion: '1', fileHash: 'hash',
+    importedAt: '2026-09-22T00:00:00.000Z', status: 'STAGED', rawRows: [], resolutions: [], receipt: null,
+  });
+  const store = await Store.open(new MemoryAdapter(initial), emptyStore());
+
+  assert.deepEqual(store.catalog('members').map(({ name }) => name), ['member-a']);
+  assert.equal(store.getImportBatch('batch-a')?.status, 'STAGED');
+  assert.equal(store.getImportBatch('missing'), undefined);
+
+  await store.write({}, (candidate) => { candidate.members.push(member('member-b')); });
+  assert.deepEqual(store.catalog('members').map(({ name }) => name), ['member-a', 'member-b']);
+  assert.equal(store.getImportBatch('batch-a')?.id, 'batch-a');
+});
+
 test('restoring one changed member keeps unrelated SQLite rows untouched', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-restore-rows-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

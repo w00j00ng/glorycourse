@@ -9,7 +9,7 @@ import { FinalizationService } from '../services/finalization.ts';
 import { ImportCommitService } from '../services/import-commit.ts';
 import { ImportPreviewService, type ImportMode, type ImportPreview } from '../services/import-preview.ts';
 import { publicBackup, RecoveryService } from '../services/recovery.ts';
-import type { Store, DatabaseState } from '../storage/store.ts';
+import type { Store } from '../storage/store.ts';
 import { HttpError } from './errors.ts';
 import { parseMultipart } from './multipart.ts';
 import type { ApiHandler, ApiRequest, ApiResponse } from '../server.ts';
@@ -82,7 +82,7 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
 
     if (request.method === 'GET' && ['/semesters', '/members', '/courses'].includes(path)) {
       const key = path.slice(1) as 'semesters' | 'members' | 'courses';
-      return ok(page(named(store.read(), key), request, ({ name }) => name));
+      return ok(page(named(store.catalog(key), key), request, ({ name }) => name));
     }
 
     const semester = match(path, /^\/semesters\/([^/]+)$/);
@@ -295,7 +295,7 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
     const importBatch = match(path, /^\/import-batches\/([^/]+)$/);
     if (importBatch) {
       if (request.method !== 'GET') return methodNotAllowed();
-      const batch = (store.read().importBatches as Array<{ id: string }>).find(({ id }) => id === importBatch[1]);
+      const batch = store.getImportBatch(importBatch[1]);
       if (!batch) throw new HttpError(404, 'NOT_FOUND', '대상을 찾을 수 없습니다.');
       return ok(structuredClone(batch));
     }
@@ -489,10 +489,9 @@ const match = (path: string, pattern: RegExp): RegExpMatchArray | null => {
 };
 
 const named = (
-  data: DatabaseState,
+  items: ReadonlyArray<NamedResource & { order?: number | null; createdAt: string }>,
   key: 'semesters' | 'members' | 'courses',
 ): Array<NamedResource | SemesterResource> => {
-  const items = data[key] as Array<NamedResource & { order?: number | null; createdAt: string }>;
   const ordered = key === 'semesters'
     ? [...items].sort((left, right) => (
       (right.order ?? 0) - (left.order ?? 0)

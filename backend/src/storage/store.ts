@@ -256,6 +256,14 @@ export class Store {
     return this.data.meta;
   }
 
+  catalog<K extends 'semesters' | 'members' | 'courses'>(key: K): Readonly<DatabaseState[K]> {
+    return this.data[key];
+  }
+
+  getImportBatch(id: string): Readonly<ImportBatchRecord> | undefined {
+    return this.data.importBatches.find((batch) => batch.id === id);
+  }
+
   write<T>(
     options: { expectedRevision?: number; expectedEpoch?: string },
     command: (candidate: DatabaseState) => T | Promise<T>,
