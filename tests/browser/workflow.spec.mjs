@@ -118,6 +118,35 @@ test('an administrator deselects a semester and moves it with the keyboard', asy
   await expect(page.locator('#catalog-semester-rows')).not.toContainText('2026 봄 수정');
 });
 
+test('an administrator copies selected courses from a previous semester', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('2026 봄');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#add-catalog-course').click();
+  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 10\n마태복음, 20');
+  await page.locator('#catalog-add-form [type="submit"]').click();
+  await page.locator('#catalog-form [type="submit"]').click();
+  await expect(page.locator('#catalog-course-rows tr')).toHaveCount(2);
+
+  await page.locator('[data-catalog-tab="semesters"]').click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('2026 가을');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#copy-catalog-courses').click();
+  await page.locator('#catalog-copy-form [name="sourceSemesterId"]').selectOption({ label: '2026 봄' });
+  await expect(page.locator('#catalog-copy-course-list label')).toHaveCount(2);
+  await page.locator('#catalog-copy-course-list label').nth(1).locator('input').uncheck();
+  await page.locator('#catalog-copy-form [type="submit"]').click();
+  await expect(page.locator('#catalog-course-rows tr')).toHaveCount(1);
+  await expect(page.locator('#catalog-course-rows [name="courseName"]')).toHaveValue('창세기');
+  await expect(page.locator('#catalog-course-rows [name="capacity"]')).toHaveValue('10');
+  await page.locator('#catalog-form [type="submit"]').click();
+  await expect(page.locator('#catalog-course-rows tr')).toHaveAttribute('data-id', /.+/);
+});
+
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();

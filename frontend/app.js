@@ -400,55 +400,6 @@ const addCatalogCourses = (event) => {
   showMessage(`강좌 ${added.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
 };
 
-const openCatalogCopy = () => {
-  const form = byId('catalog-copy-form');
-  form.reset();
-  state.catalogCopyCourses = [];
-  fillSelect(
-    form.elements.sourceSemesterId,
-    state.semesters.filter(({ id }) => id !== state.catalogContext?.semester.id),
-    '가져올 학기를 선택하세요.',
-  );
-  byId('catalog-copy-course-list').replaceChildren();
-  byId('catalog-copy-empty').textContent = '가져올 학기를 선택하세요.';
-  byId('catalog-copy-empty').hidden = false;
-  byId('catalog-copy-dialog').showModal();
-};
-
-const loadCatalogCopyCourses = async () => {
-  const sourceSemesterId = byId('catalog-copy-form').elements.sourceSemesterId.value;
-  const list = byId('catalog-copy-course-list');
-  if (!sourceSemesterId) {
-    state.catalogCopyCourses = [];
-    list.replaceChildren();
-    byId('catalog-copy-empty').textContent = '가져올 학기를 선택하세요.';
-    byId('catalog-copy-empty').hidden = false;
-    return;
-  }
-  state.catalogCopyCourses = [];
-  list.replaceChildren();
-  byId('catalog-copy-empty').textContent = '강좌를 불러오는 중입니다.';
-  byId('catalog-copy-empty').hidden = false;
-  const context = await api(`/semesters/${sourceSemesterId}/context`);
-  if (byId('catalog-copy-form').elements.sourceSemesterId.value !== sourceSemesterId) return;
-  state.catalogCopyCourses = context.semesterCourses;
-  list.replaceChildren(...context.semesterCourses.map((course) => {
-    const label = document.createElement('label');
-    label.className = 'catalog-copy-course';
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.name = 'courseId';
-    checkbox.value = course.id;
-    checkbox.checked = true;
-    const text = document.createElement('span');
-    text.textContent = `${course.courseName} · 정원 ${course.capacity ?? '미정'}`;
-    label.append(checkbox, text);
-    return label;
-  }));
-  byId('catalog-copy-empty').textContent = '이 학기에 개설된 강좌가 없습니다.';
-  byId('catalog-copy-empty').hidden = context.semesterCourses.length !== 0;
-};
-
 const copyCatalogCourses = (event) => {
   event.preventDefault();
   const selectedIds = new Set([...event.currentTarget.querySelectorAll('[name="courseId"]:checked')].map(({ value }) => value));
@@ -1136,7 +1087,8 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   return result.items;
 };
 
-const { loadCatalogManagement, createSemester, submitSemester, deleteSemester } = createCatalogPage({
+const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,
+  openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
   state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell,
 });
 

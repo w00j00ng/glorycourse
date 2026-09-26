@@ -2,7 +2,7 @@
 /** @typedef {ReturnType<import('../backend/src/services/applications.ts').ApplicationService['getSemesterContext']>} CatalogContext */
 /**
  * @param {{
- *   state: { semesters: Semester[], selectedSemesterId: string | null, movingSemester: boolean, catalogContext: CatalogContext | null, catalogRequest?: symbol },
+ *   state: { semesters: Semester[], selectedSemesterId: string | null, movingSemester: boolean, catalogContext: CatalogContext | null, catalogRequest?: symbol, catalogCopyCourses: CatalogContext['semesterCourses'], catalogCopyRequest?: symbol },
  *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<unknown>,
  *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
@@ -129,6 +129,57 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     await loadCatalogManagement();
   };
 
+  const openCatalogCopy = () => {
+    const form = byId('catalog-copy-form');
+    form.reset();
+    state.catalogCopyRequest = Symbol();
+    state.catalogCopyCourses = [];
+    fillSelect(
+      form.elements.sourceSemesterId,
+      state.semesters.filter(({ id }) => id !== state.catalogContext?.semester.id),
+      '가져올 학기를 선택하세요.',
+    );
+    byId('catalog-copy-course-list').replaceChildren();
+    byId('catalog-copy-empty').textContent = '가져올 학기를 선택하세요.';
+    byId('catalog-copy-empty').hidden = false;
+    byId('catalog-copy-dialog').showModal();
+  };
+
+  const loadCatalogCopyCourses = async () => {
+    const request = state.catalogCopyRequest = Symbol();
+    const sourceSemesterId = byId('catalog-copy-form').elements.sourceSemesterId.value;
+    const list = byId('catalog-copy-course-list');
+    if (!sourceSemesterId) {
+      state.catalogCopyCourses = [];
+      list.replaceChildren();
+      byId('catalog-copy-empty').textContent = '가져올 학기를 선택하세요.';
+      byId('catalog-copy-empty').hidden = false;
+      return;
+    }
+    state.catalogCopyCourses = [];
+    list.replaceChildren();
+    byId('catalog-copy-empty').textContent = '강좌를 불러오는 중입니다.';
+    byId('catalog-copy-empty').hidden = false;
+    const context = /** @type {CatalogContext} */ (await api(`/semesters/${sourceSemesterId}/context`));
+    if (state.catalogCopyRequest !== request) return;
+    state.catalogCopyCourses = context.semesterCourses;
+    list.replaceChildren(...context.semesterCourses.map((course) => {
+      const label = document.createElement('label');
+      label.className = 'catalog-copy-course';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.name = 'courseId';
+      checkbox.value = course.id;
+      checkbox.checked = true;
+      const text = document.createElement('span');
+      text.textContent = `${course.courseName} · 정원 ${course.capacity ?? '미정'}`;
+      label.append(checkbox, text);
+      return label;
+    }));
+    byId('catalog-copy-empty').textContent = '이 학기에 개설된 강좌가 없습니다.';
+    byId('catalog-copy-empty').hidden = context.semesterCourses.length !== 0;
+  };
+
   /** @param {string} id */
   const selectSemesterRow = async (id) => {
     if (state.selectedSemesterId === id) {
@@ -169,5 +220,5 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
   };
 
   return { loadCatalogManagement, renderSemesterRows, selectSemesterRow, moveSemester,
-    createSemester, submitSemester, deleteSemester };
+    createSemester, submitSemester, deleteSemester, openCatalogCopy, loadCatalogCopyCourses };
 };

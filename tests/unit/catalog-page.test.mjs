@@ -164,3 +164,47 @@ test('the semester editor keeps the newest selection when an older detail reques
     }
   } finally { globalThis.document = previousDocument; }
 });
+
+test('copying courses keeps the latest source list after choosing A, B, then A again', async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = { createElement: () => ({ children: [], append(...children) { this.children.push(...children); } }) };
+  try {
+    const source = { value: 'a' };
+    const list = { children: [], replaceChildren(...children) { this.children = children; } };
+    const empty = { textContent: '', hidden: false };
+    const nodes = { 'catalog-copy-form': { elements: { sourceSemesterId: source }, reset() { source.value = ''; } },
+      'catalog-copy-course-list': list, 'catalog-copy-empty': empty,
+      'catalog-copy-dialog': { showModal() {} } };
+    const state = { catalogCopyCourses: [], semesters: [], catalogContext: null };
+    const pending = [];
+    const page = createCatalogPage({
+      state, byId: (id) => nodes[id],
+      api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+      fillSelect: () => {},
+    });
+
+    const firstA = page.loadCatalogCopyCourses();
+    source.value = 'b';
+    const B = page.loadCatalogCopyCourses();
+    source.value = 'a';
+    const latestA = page.loadCatalogCopyCourses();
+    pending[2].resolve({ semesterCourses: [{ id: 'new', courseName: '창세기', capacity: 10 }] });
+    await latestA;
+    pending[0].resolve({ semesterCourses: [{ id: 'old', courseName: '마태복음', capacity: 20 }] });
+    pending[1].resolve({ semesterCourses: [{ id: 'other', courseName: '마가복음', capacity: 30 }] });
+    await Promise.all([firstA, B]);
+
+    assert.deepEqual(state.catalogCopyCourses.map(({ id }) => id), ['new']);
+    assert.equal(list.children.length, 1);
+    assert.match(list.children[0].children[1].textContent, /창세기/);
+    assert.equal(empty.hidden, true);
+
+    source.value = 'a';
+    const oldDialogRequest = page.loadCatalogCopyCourses();
+    page.openCatalogCopy();
+    pending[3].resolve({ semesterCourses: [{ id: 'stale', courseName: '출애굽기', capacity: 40 }] });
+    await oldDialogRequest;
+    assert.deepEqual(state.catalogCopyCourses, []);
+    assert.equal(list.children.length, 0);
+  } finally { globalThis.document = previousDocument; }
+});
