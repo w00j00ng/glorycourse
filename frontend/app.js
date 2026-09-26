@@ -418,48 +418,6 @@ const copyCatalogCourses = (event) => {
   showMessage(`강좌 ${copied.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
 };
 
-const submitCatalog = async (event) => {
-  event.preventDefault();
-  const context = state.catalogContext;
-  if (!context || context.semester.id !== byId('catalog-semester').value) return;
-  const updated = await run(() => api(`/semesters/${context.semester.id}/context`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      expectedRevision: context.allocationInputRevision,
-      name: context.semester.name,
-      order: context.order,
-      semesterCourses: [...byId('catalog-course-rows').children].map((row) => ({
-        ...(row.dataset.id ? { id: row.dataset.id } : {}),
-        courseName: row.querySelector('[name="courseName"]').value,
-        capacity: row.querySelector('[name="capacity"]').value === ''
-          ? null
-          : Number(row.querySelector('[name="capacity"]').value),
-      })),
-    }),
-  }), '강좌 정보를 저장했습니다.');
-  await loadCatalogs();
-  await loadCatalogManagement(updated.semester.id);
-};
-
-const deleteSemesterCourse = async (course) => {
-  const context = state.catalogContext;
-  if (!context || course.enrollmentCount > 0) return;
-  const warning = course.applicationCount > 0
-    ? `수강신청 ${course.applicationCount}건에서 ${course.courseName} 선택을 제거합니다.\n다른 희망 강좌가 없는 신청은 신청 전체가 삭제됩니다.`
-    : `${course.courseName} 강좌를 이 학기에서 삭제할까요?`;
-  if (!window.confirm(`${warning}\n기존 배정초안은 변경된 자료로 표시됩니다.\n저장하지 않은 다른 변경사항은 취소됩니다.`)) return;
-  const query = new URLSearchParams({
-    expectedRevision: String(context.allocationInputRevision),
-    confirmApplications: String(course.applicationCount > 0),
-  });
-  await run(() => api(
-    `/semesters/${context.semester.id}/courses/${course.id}?${query}`,
-    { method: 'DELETE' },
-  ), '개설 강좌를 삭제했습니다.');
-  await loadCatalogs();
-  await loadCatalogManagement(context.semester.id);
-};
-
 const openEnrollment = (item) => {
   const form = byId('enrollment-form');
   form.reset();
@@ -1105,7 +1063,7 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
 };
 
 const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,
-  openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
+  submitCatalog, deleteSemesterCourse, openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
   state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell,
 });
 

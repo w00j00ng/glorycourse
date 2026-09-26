@@ -147,6 +147,26 @@ test('an administrator copies selected courses from a previous semester', async 
   await expect(page.locator('#catalog-course-rows tr')).toHaveAttribute('data-id', /.+/);
 });
 
+test('an administrator saves and deletes an unused semester course', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('강좌 관리 학기');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#add-catalog-course').click();
+  await page.locator('#catalog-add-form [name="courses"]').fill('마태복음, 3');
+  await page.locator('#catalog-add-form [type="submit"]').click();
+  await page.locator('#catalog-form [type="submit"]').click();
+  await expect(page.locator('#catalog-course-rows tr')).toHaveCount(1);
+  await expect(page.locator('#catalog-course-rows [name="courseName"]')).toHaveValue('마태복음');
+
+  page.once('dialog', (dialog) => { void dialog.accept(); });
+  await page.locator('#catalog-course-rows tr').getByRole('button', { name: '삭제' }).click();
+  await expect(page.locator('#catalog-course-rows tr')).toHaveCount(0);
+  await page.locator('#refresh-catalog').click();
+  await expect(page.locator('#catalog-course-rows tr')).toHaveCount(0);
+});
+
 test('a late catalog refresh does not hide a semester added afterward', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();

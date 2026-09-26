@@ -129,6 +129,50 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     await loadCatalogManagement();
   };
 
+  /** @param {SubmitEvent} event */
+  const submitCatalog = async (event) => {
+    event.preventDefault();
+    const context = state.catalogContext;
+    if (!context || context.semester.id !== byId('catalog-semester').value) return;
+    const updated = /** @type {CatalogContext} */ (await run(() => api(`/semesters/${context.semester.id}/context`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        expectedRevision: context.allocationInputRevision,
+        name: context.semester.name,
+        order: context.order,
+        semesterCourses: [...byId('catalog-course-rows').children].map((row) => ({
+          ...(row.dataset.id ? { id: row.dataset.id } : {}),
+          courseName: row.querySelector('[name="courseName"]').value,
+          capacity: row.querySelector('[name="capacity"]').value === ''
+            ? null
+            : Number(row.querySelector('[name="capacity"]').value),
+        })),
+      }),
+    }), '강좌 정보를 저장했습니다.'));
+    await loadCatalogs();
+    await loadCatalogManagement(updated.semester.id);
+  };
+
+  /** @param {CatalogContext['semesterCourses'][number]} course */
+  const deleteSemesterCourse = async (course) => {
+    const context = state.catalogContext;
+    if (!context || course.enrollmentCount > 0) return;
+    const warning = course.applicationCount > 0
+      ? `수강신청 ${course.applicationCount}건에서 ${course.courseName} 선택을 제거합니다.\n다른 희망 강좌가 없는 신청은 신청 전체가 삭제됩니다.`
+      : `${course.courseName} 강좌를 이 학기에서 삭제할까요?`;
+    if (!window.confirm(`${warning}\n기존 배정초안은 변경된 자료로 표시됩니다.\n저장하지 않은 다른 변경사항은 취소됩니다.`)) return;
+    const query = new URLSearchParams({
+      expectedRevision: String(context.allocationInputRevision),
+      confirmApplications: String(course.applicationCount > 0),
+    });
+    await run(() => api(
+      `/semesters/${context.semester.id}/courses/${course.id}?${query}`,
+      { method: 'DELETE' },
+    ), '개설 강좌를 삭제했습니다.');
+    await loadCatalogs();
+    await loadCatalogManagement(context.semester.id);
+  };
+
   const openCatalogCopy = () => {
     const form = byId('catalog-copy-form');
     form.reset();
@@ -220,5 +264,6 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
   };
 
   return { loadCatalogManagement, renderSemesterRows, selectSemesterRow, moveSemester,
-    createSemester, submitSemester, deleteSemester, openCatalogCopy, loadCatalogCopyCourses };
+    createSemester, submitSemester, deleteSemester, submitCatalog, deleteSemesterCourse,
+    openCatalogCopy, loadCatalogCopyCourses };
 };
