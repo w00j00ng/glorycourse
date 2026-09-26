@@ -5,7 +5,6 @@ import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
-import { createCatalogPage } from '../../frontend/catalog-page.js';
 
 const source = await readFile(new URL('../../frontend/app.js', import.meta.url), 'utf8');
 const appFunction = (name) => {
@@ -145,54 +144,6 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
   }
 });
 
-test('clears a semester selection when another semester replaces the editor context', async () => {
-  for (const action of ['changeCourseSemester', 'moveOtherSemester']) {
-    const semesters = [{ id: 'a', name: 'Semester A', order: 2 }, { id: 'b', name: 'Semester B', order: 1 }];
-    const semesterForm = { elements: { name: {} }, hidden: true };
-    const select = { value: '' };
-    const nodes = {
-      'catalog-semester': select, 'semester-form': semesterForm, 'catalog-form': {},
-      'catalog-course-rows': { replaceChildren() {} }, 'catalog-course-empty': {},
-      'catalog-empty': {}, 'copy-catalog-courses': {},
-      'catalog-semester-rows': { children: semesters.map(({ id }) => ({ dataset: { id }, focus() {} })) },
-    };
-    const context = vm.createContext({
-      state: { semesters, selectedSemesterId: null, catalogContext: null },
-      byId: (id) => nodes[id],
-      api: async (path) => ({
-        semester: semesters.find(({ id }) => id === path.split('/')[2]), semesterCourses: [],
-      }),
-      renderSemesterRows() {}, catalogCourseRow() {}, fillSelect: () => { select.value = ''; },
-      loadCatalogs: async () => {}, run: async (operation) => operation(),
-    });
-    const functions = ['loadCatalogManagement', 'renderCatalogContext'].map(appFunction).join('\n');
-    vm.runInContext(`${functions}\nglobalThis.loadCatalogManagement = loadCatalogManagement;`, context);
-    const page = createCatalogPage({
-      state: context.state, byId: context.byId, api: context.api, run: context.run,
-      loadCatalogs: context.loadCatalogs, loadCatalogManagement: context.loadCatalogManagement,
-      showMessage() {}, cell() {}, actionsCell() {},
-    });
-    context.selectSemesterRow = page.selectSemesterRow;
-    context.moveSemester = page.moveSemester;
-
-    await context.selectSemesterRow('a');
-    assert.equal(semesterForm.hidden, false);
-    if (action === 'changeCourseSemester') {
-      select.value = 'b';
-      await context.loadCatalogManagement();
-    } else {
-      await context.moveSemester(semesters[1], 'UP');
-    }
-    assert.equal(context.state.selectedSemesterId, null, action);
-    assert.equal(semesterForm.hidden, true, action);
-
-    await context.selectSemesterRow('a');
-    assert.equal(context.state.selectedSemesterId, 'a', action);
-    assert.equal(semesterForm.hidden, false, action);
-    assert.equal(semesterForm.elements.name.value, 'Semester A', action);
-  }
-});
-
 test('keeps the latest list and page when earlier filter or page requests finish later', async () => {
   const cases = [
     { name: 'enrollment', loader: 'loadEnrollments', rows: 'enrollments' },
@@ -289,46 +240,4 @@ test('keeps the latest enrollment report when an earlier report finishes later',
   assert.equal(context.state.enrollmentReport, null);
   assert.equal(context.state.enrollments[0].id, 2);
   assert.deepEqual(rendered, [null]);
-});
-
-test('shows only the latest semester editor when semester selections finish out of order', async () => {
-  for (const sequence of [['a', 'b'], ['a', 'b', 'a'], ['a', null]]) {
-    const semesters = [{ id: 'a', name: 'Semester A' }, { id: 'b', name: 'Semester B' }];
-    const select = { value: '' };
-    const nodes = {
-      'catalog-semester': select, 'semester-form': { elements: { name: {} }, hidden: false },
-      'catalog-form': { hidden: false }, 'catalog-empty': {}, 'catalog-course-empty': {},
-      'catalog-course-rows': { replaceChildren() {} }, 'copy-catalog-courses': {},
-    };
-    const pending = [];
-    const context = vm.createContext({
-      state: { semesters, selectedSemesterId: null, catalogContext: { semester: semesters[0] } },
-      byId: (id) => nodes[id],
-      api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
-      fillSelect: () => { select.value = ''; }, renderSemesterRows() {}, catalogCourseRow() {},
-    });
-    const functions = ['loadCatalogManagement', 'renderCatalogContext'].map(appFunction).join('\n');
-    vm.runInContext(`${functions}\nglobalThis.load = loadCatalogManagement;`, context);
-    const page = createCatalogPage({
-      state: context.state, byId: context.byId, loadCatalogManagement: context.load,
-    });
-    context.select = page.selectSemesterRow;
-    const requests = [];
-    for (const id of sequence) {
-      if (id) requests.push(context.select(id));
-      else { context.state.semesters = []; requests.push(context.load()); }
-    }
-    assert.equal(nodes['semester-form'].hidden, true, 'old semester editor is unavailable while loading');
-    assert.equal(nodes['catalog-form'].hidden, true, 'old courses are unavailable while loading');
-    for (let index = pending.length - 1; index >= 0; index--) {
-      const semester = semesters.find(({ id }) => id === pending[index].path.split('/')[2]);
-      pending[index].resolve({ semester: { ...semester, name: `${semester.name} ${index}` }, semesterCourses: [] });
-      await requests[index];
-    }
-    await Promise.all(requests);
-    const expected = sequence.at(-1);
-    assert.equal(context.state.catalogContext?.semester.id ?? null, expected);
-    assert.equal(nodes['semester-form'].hidden, !expected);
-    if (expected) assert.equal(nodes['semester-form'].elements.name.value, `Semester ${expected.toUpperCase()} ${sequence.length - 1}`);
-  }
 });

@@ -1,18 +1,20 @@
 /** @typedef {import('../backend/src/storage/store.ts').SemesterRecord} Semester */
+/** @typedef {ReturnType<import('../backend/src/services/applications.ts').ApplicationService['getSemesterContext']>} CatalogContext */
 /**
  * @param {{
- *   state: { semesters: Semester[], selectedSemesterId: string | null, movingSemester: boolean },
- *   byId: (id: string) => HTMLElement,
+ *   state: { semesters: Semester[], selectedSemesterId: string | null, movingSemester: boolean, catalogContext: CatalogContext | null, catalogRequest?: symbol },
+ *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<unknown>,
  *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
  *   showMessage: (message: string, error?: boolean) => void,
  *   loadCatalogs: () => Promise<void>,
- *   loadCatalogManagement: (id?: string) => Promise<void>,
+ *   fillSelect: (select: HTMLSelectElement, items: Semester[], placeholder: string) => void,
+ *   catalogCourseRow: (course: CatalogContext['semesterCourses'][number]) => HTMLElement,
  *   cell: (text: string | number) => HTMLElement,
  *   actionsCell: (...actions: [string, () => void | Promise<void>, string?][]) => HTMLElement,
  * }} dependencies
  */
-export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCatalogs, loadCatalogManagement, cell, actionsCell }) => {
+export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell }) => {
   const renderSemesterRows = () => {
     const ordered = state.semesters.filter(({ order }) => order !== null);
     byId('catalog-semester-rows').replaceChildren(...state.semesters.map((semester) => {
@@ -43,6 +45,41 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
       return row;
     }));
     byId('catalog-semester-empty').hidden = state.semesters.length !== 0;
+  };
+
+  /** @param {CatalogContext} context */
+  const renderCatalogContext = (context) => {
+    state.catalogContext = context;
+    const semesterForm = byId('semester-form');
+    semesterForm.hidden = state.selectedSemesterId !== context.semester.id;
+    semesterForm.elements.name.value = context.semester.name;
+    byId('catalog-form').hidden = false;
+    byId('catalog-course-rows').replaceChildren(...context.semesterCourses.map(catalogCourseRow));
+    byId('catalog-course-empty').hidden = context.semesterCourses.length !== 0;
+    byId('catalog-empty').hidden = true;
+    byId('copy-catalog-courses').disabled = !state.semesters.some(({ id }) => id !== context.semester.id);
+  };
+
+  /** @param {string} [preferredId] */
+  const loadCatalogManagement = async (preferredId) => {
+    const request = state.catalogRequest = Symbol();
+    const select = byId('catalog-semester');
+    const preferred = preferredId || select.value || state.catalogContext?.semester.id;
+    const selected = state.semesters.find(({ id }) => id === preferred)?.id || state.semesters[0]?.id;
+    state.catalogContext = null;
+    byId('semester-form').hidden = true;
+    byId('catalog-form').hidden = true;
+    if (state.selectedSemesterId !== selected) state.selectedSemesterId = null;
+    fillSelect(select, state.semesters, '학기를 선택하세요.');
+    renderSemesterRows();
+    if (!selected) {
+      byId('catalog-empty').hidden = false;
+      return;
+    }
+    select.value = selected;
+    const context = /** @type {CatalogContext} */ (await api(`/semesters/${selected}/context`));
+    if (state.catalogRequest !== request) return;
+    renderCatalogContext(context);
   };
 
   /** @param {string} id */
@@ -84,5 +121,5 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     }
   };
 
-  return { renderSemesterRows, selectSemesterRow, moveSemester };
+  return { loadCatalogManagement, renderSemesterRows, selectSemesterRow, moveSemester };
 };

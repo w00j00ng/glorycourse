@@ -358,18 +358,6 @@ const catalogCourseRow = (course = {}) => {
   return row;
 };
 
-const renderCatalogContext = (context) => {
-  state.catalogContext = context;
-  const semesterForm = byId('semester-form');
-  semesterForm.hidden = state.selectedSemesterId !== context.semester.id;
-  semesterForm.elements.name.value = context.semester.name;
-  byId('catalog-form').hidden = false;
-  byId('catalog-course-rows').replaceChildren(...context.semesterCourses.map(catalogCourseRow));
-  byId('catalog-course-empty').hidden = context.semesterCourses.length !== 0;
-  byId('catalog-empty').hidden = true;
-  byId('copy-catalog-courses').disabled = !state.semesters.some(({ id }) => id !== context.semester.id);
-};
-
 const setCatalogTab = (tab) => {
   byId('catalog-semesters-panel').hidden = tab !== 'semesters';
   byId('catalog-courses-panel').hidden = tab !== 'courses';
@@ -477,27 +465,6 @@ const copyCatalogCourses = (event) => {
   byId('catalog-copy-dialog').close();
   const skipped = selected.length - copied.length;
   showMessage(`강좌 ${copied.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
-};
-
-const loadCatalogManagement = async (preferredId) => {
-  const request = state.catalogRequest = Symbol();
-  const select = byId('catalog-semester');
-  const preferred = preferredId || select.value || state.catalogContext?.semester.id;
-  const selected = state.semesters.find(({ id }) => id === preferred)?.id || state.semesters[0]?.id;
-  state.catalogContext = null;
-  byId('semester-form').hidden = true;
-  byId('catalog-form').hidden = true;
-  if (state.selectedSemesterId !== selected) state.selectedSemesterId = null;
-  fillSelect(select, state.semesters, '학기를 선택하세요.');
-  renderSemesterRows();
-  if (!selected) {
-    byId('catalog-empty').hidden = false;
-    return;
-  }
-  select.value = selected;
-  const context = await api(`/semesters/${selected}/context`);
-  if (state.catalogRequest !== request) return;
-  renderCatalogContext(context);
 };
 
 const createSemester = async (event) => {
@@ -1217,8 +1184,8 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   return result.items;
 };
 
-const { renderSemesterRows } = createCatalogPage({
-  state, byId, api, run, showMessage, loadCatalogs, loadCatalogManagement, cell, actionsCell,
+const { loadCatalogManagement } = createCatalogPage({
+  state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell,
 });
 
 const {
