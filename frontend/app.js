@@ -467,40 +467,6 @@ const copyCatalogCourses = (event) => {
   showMessage(`강좌 ${copied.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
 };
 
-const createSemester = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const context = await run(() => api('/semesters', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: form.elements.name.value,
-      order: null,
-    }),
-  }), '학기를 추가했습니다.');
-  byId('semester-create-dialog').close();
-  state.selectedSemesterId = context.semester.id;
-  await loadCatalogs();
-  await loadCatalogManagement(context.semester.id);
-};
-
-const submitSemester = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const context = state.catalogContext;
-  if (!context || context.semester.id !== byId('catalog-semester').value) return;
-  const updated = await run(() => api(`/semesters/${context.semester.id}/context`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      expectedRevision: context.allocationInputRevision,
-      name: form.elements.name.value,
-      order: context.order,
-      semesterCourses: context.semesterCourses.map(({ id, courseName, capacity }) => ({ id, courseName, capacity })),
-    }),
-  }), '학기 정보를 저장했습니다.');
-  await loadCatalogs();
-  await loadCatalogManagement(updated.semester.id);
-};
-
 const submitCatalog = async (event) => {
   event.preventDefault();
   const context = state.catalogContext;
@@ -522,20 +488,6 @@ const submitCatalog = async (event) => {
   }), '강좌 정보를 저장했습니다.');
   await loadCatalogs();
   await loadCatalogManagement(updated.semester.id);
-};
-
-const deleteSemester = async () => {
-  const context = state.catalogContext;
-  if (!context) return;
-  if (!window.confirm(`${context.semester.name} 학기를 삭제할까요?\n이 학기의 개설 강좌 ${context.semesterCourses.length}개도 함께 제거됩니다.\n신청·수강이력·배정초안·확정 기록이 있는 학기는 삭제할 수 없습니다.`)) return;
-  await run(() => api(`/semesters/${context.semester.id}?expectedRevision=${context.allocationInputRevision}`, {
-    method: 'DELETE',
-  }), '학기를 삭제했습니다.');
-  state.catalogContext = null;
-  state.selectedSemesterId = null;
-  byId('catalog-semester').value = '';
-  await loadCatalogs();
-  await loadCatalogManagement();
 };
 
 const deleteSemesterCourse = async (course) => {
@@ -1184,7 +1136,7 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   return result.items;
 };
 
-const { loadCatalogManagement } = createCatalogPage({
+const { loadCatalogManagement, createSemester, submitSemester, deleteSemester } = createCatalogPage({
   state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell,
 });
 

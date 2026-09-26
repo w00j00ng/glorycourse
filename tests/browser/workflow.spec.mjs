@@ -107,6 +107,15 @@ test('an administrator deselects a semester and moves it with the keyboard', asy
   await earlier.focus();
   await earlier.press('ArrowUp');
   await expect(page.locator('#catalog-semester-rows tr').first()).toContainText('2026 봄');
+
+  await earlier.getByRole('button', { name: '수정' }).click();
+  await page.locator('#semester-form [name="name"]').fill('2026 봄 수정');
+  await page.locator('#semester-form [type="submit"]').click();
+  await expect(page.locator('#catalog-semester-rows')).toContainText('2026 봄 수정');
+  page.once('dialog', (dialog) => { void dialog.accept(); });
+  await page.locator('#delete-semester').click();
+  await expect(page.locator('#catalog-semester-rows tr')).toHaveCount(1);
+  await expect(page.locator('#catalog-semester-rows')).not.toContainText('2026 봄 수정');
 });
 
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {

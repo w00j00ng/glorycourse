@@ -82,6 +82,53 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     renderCatalogContext(context);
   };
 
+  /** @param {SubmitEvent} event */
+  const createSemester = async (event) => {
+    event.preventDefault();
+    const form = /** @type {HTMLFormElement} */ (event.currentTarget);
+    const context = /** @type {CatalogContext} */ (await run(() => api('/semesters', {
+      method: 'POST',
+      body: JSON.stringify({ name: /** @type {HTMLInputElement} */ (form.elements.namedItem('name')).value, order: null }),
+    }), '학기를 추가했습니다.'));
+    byId('semester-create-dialog').close();
+    state.selectedSemesterId = context.semester.id;
+    await loadCatalogs();
+    await loadCatalogManagement(context.semester.id);
+  };
+
+  /** @param {SubmitEvent} event */
+  const submitSemester = async (event) => {
+    event.preventDefault();
+    const form = /** @type {HTMLFormElement} */ (event.currentTarget);
+    const context = state.catalogContext;
+    if (!context || context.semester.id !== byId('catalog-semester').value) return;
+    const updated = /** @type {CatalogContext} */ (await run(() => api(`/semesters/${context.semester.id}/context`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        expectedRevision: context.allocationInputRevision,
+        name: /** @type {HTMLInputElement} */ (form.elements.namedItem('name')).value,
+        order: context.order,
+        semesterCourses: context.semesterCourses.map(({ id, courseName, capacity }) => ({ id, courseName, capacity })),
+      }),
+    }), '학기 정보를 저장했습니다.'));
+    await loadCatalogs();
+    await loadCatalogManagement(updated.semester.id);
+  };
+
+  const deleteSemester = async () => {
+    const context = state.catalogContext;
+    if (!context) return;
+    if (!window.confirm(`${context.semester.name} 학기를 삭제할까요?\n이 학기의 개설 강좌 ${context.semesterCourses.length}개도 함께 제거됩니다.\n신청·수강이력·배정초안·확정 기록이 있는 학기는 삭제할 수 없습니다.`)) return;
+    await run(() => api(`/semesters/${context.semester.id}?expectedRevision=${context.allocationInputRevision}`, {
+      method: 'DELETE',
+    }), '학기를 삭제했습니다.');
+    state.catalogContext = null;
+    state.selectedSemesterId = null;
+    byId('catalog-semester').value = '';
+    await loadCatalogs();
+    await loadCatalogManagement();
+  };
+
   /** @param {string} id */
   const selectSemesterRow = async (id) => {
     if (state.selectedSemesterId === id) {
@@ -121,5 +168,6 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     }
   };
 
-  return { loadCatalogManagement, renderSemesterRows, selectSemesterRow, moveSemester };
+  return { loadCatalogManagement, renderSemesterRows, selectSemesterRow, moveSemester,
+    createSemester, submitSemester, deleteSemester };
 };
