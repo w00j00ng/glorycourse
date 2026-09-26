@@ -357,10 +357,10 @@ const validateCreateInput = (input: CreateDraftInput): void => {
   requireId(input.policyId, 'policyId');
   requireId(input.policyVersion, 'policyVersion');
   if (!['AUTO', 'MANUAL'].includes(input.mode)) throw new DraftValidationError('mode is invalid');
-  if (!['NEW_FIRST', 'RANK_FIRST'].includes(input.policySettings.preferenceMode)) {
+  if (!['NEW_FIRST', 'RANK_FIRST'].includes(input.policySettings?.preferenceMode)) {
     throw new DraftValidationError('preferenceMode is invalid');
   }
-  if (input.policySettings.fallbackMode !== 'MAX_CARDINALITY_PRIORITIZED') {
+  if (input.policySettings?.fallbackMode !== 'MAX_CARDINALITY_PRIORITIZED') {
     throw new DraftValidationError('fallbackMode is invalid');
   }
   if (input.replayFromDraftId !== undefined) requireId(input.replayFromDraftId, 'replayFromDraftId');

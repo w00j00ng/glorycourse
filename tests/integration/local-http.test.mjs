@@ -115,6 +115,69 @@ test('rejects forged Host, external Origin, missing tokens, and multipart forms 
   assert.equal(runtime.store.read().members.length, 0);
 });
 
+test('returns a readable size error for a streaming upload and accepts the next request', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({
+    dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0,
+    uploadBytes: 8, apiHandler: testApi,
+  });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const result = await new Promise((resolve, reject) => {
+    const request = httpRequest(new URL('/api/v1/test/write', runtime.origin), {
+      method: 'POST',
+      headers: { Origin: runtime.origin, 'X-Glorycourse-Session': session.token },
+    }, (response) => {
+      request.end();
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks)) }));
+    });
+    request.on('error', reject);
+    request.setTimeout(2000, () => request.destroy(new Error('The upload size error was not returned')));
+    // Leave the stream open: the server must reject once the received bytes exceed the limit.
+    request.write('123456789');
+  });
+  assert.equal(result.status, 413);
+  assert.equal(result.body.code, 'PAYLOAD_TOO_LARGE');
+  assert.equal(runtime.store.read().members.length, 0);
+  assert.equal((await call(runtime.origin, '/')).status, 200);
+});
+
+test('rejects non-object JSON as a client error without changing stored data', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({
+    dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0,
+  });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const before = runtime.store.read();
+  for (const path of ['/allocation-drafts', '/allocation-drafts/missing/finalize-preview', '/enrollments/preview', '/semesters', '/applications', '/imports/missing/stage']) {
+    for (const input of [null, [], '잘못된 입력', 1, true]) {
+      const response = await call(runtime.origin, `/api/v1${path}`, {
+        method: 'POST',
+        headers: { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      assert.equal(response.status, 400, `${path}: ${JSON.stringify(input)}`);
+      assert.equal(JSON.parse(response.text).code, 'BAD_REQUEST');
+    }
+  }
+  for (const policySettings of [null, undefined, {}]) {
+    const response = await call(runtime.origin, '/api/v1/allocation-drafts', {
+      method: 'POST',
+      headers: { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ semesterId: 'semester', mode: 'AUTO', policyId: 'course-allocation', policyVersion: '1.0.0', policySettings }),
+    });
+    assert.equal(response.status, 422, `policySettings: ${JSON.stringify(policySettings)}`);
+  }
+  assert.deepEqual(runtime.store.read(), before);
+});
+
 test('persists local data across restart, invalidates the old session, and keeps a single writer', async (t) => {
   const workspace = await localWorkspace(t);
   const first = await startLocalServer({
