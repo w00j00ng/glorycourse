@@ -13,15 +13,16 @@ import { copySemesterCourses, parseSemesterCourses } from './catalog-view.js';
 import { reportFilename, templateFilename } from './download-name.js';
 import { currentSemester, orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
+import { createBackupsPage } from './backups-page.js';
 import { PAGE_HELP } from './help-content.js';
 import { issueText } from './issue-view.js';
 
 const PAGE_LIMIT = 50;
 
 const state = {
-  token: '', applications: [], enrollments: [], drafts: [], backups: [], draft: null, draftContext: null,
+  token: '', applications: [], enrollments: [], drafts: [], draft: null, draftContext: null,
   policies: [], semesters: [], members: [], courses: [], catalogContext: null, catalogCopyCourses: [],
-  importPreview: null, finalization: null, restore: null, enrollmentReport: null, draftApplicationSummaries: null, busy: 0, stopping: false,
+  importPreview: null, finalization: null, enrollmentReport: null, draftApplicationSummaries: null, busy: 0, stopping: false,
   applicationSemesterFilterTouched: false,
   selectedSemesterId: null,
   movingSemester: false,
@@ -248,30 +249,6 @@ const renderDrafts = () => {
   }));
   byId('draft-empty').hidden = state.drafts.length !== 0;
   byId('draft-count').textContent = String(state.pagination.draft.total);
-};
-
-const loadBackups = async () => {
-  const result = await api('/backups');
-  state.backups = result.items;
-  renderBackups();
-};
-
-const renderBackups = () => {
-  byId('backup-rows').replaceChildren(...state.backups.map((item) => {
-    const row = document.createElement('tr');
-    row.append(
-      cell(new Date(item.createdAt).toLocaleString()),
-      cell(item.status === 'INVALID' ? '확인 불가' : item.status === 'NEWER' ? '새 버전 백업' : String(item.storeRevision)),
-      cell(`${Math.ceil(item.sizeBytes / 1024).toLocaleString()} KiB`),
-      cell(item.digest),
-    );
-    return row;
-  }));
-  byId('backup-empty').hidden = state.backups.length !== 0;
-  byId('backup-count').textContent = String(state.backups.length);
-  byId('latest-backup').textContent = state.backups[0]
-    ? new Date(state.backups[0].createdAt).toLocaleDateString()
-    : '없음';
 };
 
 const cell = (text) => {
@@ -1414,75 +1391,6 @@ const finalizeDraft = async (event) => {
   await Promise.all([loadDrafts(), loadEnrollments()]);
 };
 
-const createManualBackup = async () => {
-  const backup = await run(() => api('/backups', { method: 'POST' }), '현재 자료의 백업을 확인했습니다.');
-  await loadBackups();
-  showMessage(`현재 자료는 백업되어 있습니다. 자료 버전 ${backup.storeRevision}`);
-};
-
-const openRestore = () => {
-  const form = byId('restore-form');
-  form.reset();
-  clearRestorePreview();
-  byId('restore-dialog').showModal();
-};
-
-const clearRestorePreview = () => {
-  state.restore = null;
-  byId('restore-preview').hidden = true;
-  byId('restore-form').elements.file.disabled = false;
-  byId('restore-form').elements.note.required = false;
-  byId('restore-submit').textContent = '파일 검토';
-};
-
-const submitRestore = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if (!state.restore) {
-    const file = form.elements.file.files[0];
-    if (!file) return;
-    const preview = await run(() => api('/restores/preview', {
-      method: 'POST', headers: { 'Content-Type': 'application/vnd.sqlite3' }, body: file,
-    }), '백업 파일을 검토했습니다.');
-    state.restore = { preview, idempotencyKey: crypto.randomUUID(), request: null };
-    byId('restore-current-revision').textContent = String(preview.storeRevision);
-    byId('restore-backup-revision').textContent = String(preview.backupStoreRevision);
-    byId('restore-issues').replaceChildren(...preview.issues.map((issue) => {
-      const item = document.createElement('li');
-      item.textContent = issueText(issue);
-      return item;
-    }));
-    byId('restore-preview').hidden = false;
-    form.elements.file.disabled = true;
-    form.elements.note.required = true;
-    byId('restore-submit').textContent = '검토 내용으로 복원';
-    return;
-  }
-  const restore = state.restore;
-  const request = restore.request ??= {
-    preparedActionToken: restore.preview.preparedActionToken,
-    acknowledgedWarningDigest: restore.preview.warningDigest,
-    acknowledgementNote: form.elements.note.value,
-  };
-  let receipt;
-  try {
-    receipt = await run(() => api('/restores', {
-      method: 'POST',
-      headers: { 'Idempotency-Key': restore.idempotencyKey },
-      body: JSON.stringify(request),
-    }), '백업 파일로 자료를 복원했습니다.');
-  } catch (error) {
-    if (error.code === 'UNPROCESSABLE' && restore.request === request) restore.request = null;
-    if (error.code === 'PREVIEW_STALE') clearRestorePreview();
-    throw error;
-  }
-  byId('restore-dialog').close();
-  state.restore = null;
-  await loadCatalogs();
-  await Promise.all([loadApplications(), loadEnrollments(), loadDrafts(), loadBackups()]);
-  showMessage(`자료를 복원했습니다. 자료 버전 ${receipt.storeRevision}`);
-};
-
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
 const policyName = (policyId, policyVersion) => state.policies.find((policy) => (
   policy.policyId === policyId && policy.policyVersion === policyVersion
@@ -1560,6 +1468,16 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   renderPagination(name);
   return result.items;
 };
+
+const {
+  load: loadBackups, createManualBackup, openRestore, clearRestorePreview, submitRestore,
+} = createBackupsPage({
+  api, byId, run, showMessage, cell,
+  reloadOtherViews: async () => {
+    await loadCatalogs();
+    await Promise.all([loadApplications(), loadEnrollments(), loadDrafts()]);
+  },
+});
 
 const { load: loadDashboard, renderWorkflow: renderDashboardWorkflow } = createDashboardPage({ state, api, byId });
 

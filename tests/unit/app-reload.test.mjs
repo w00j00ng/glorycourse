@@ -324,7 +324,6 @@ test('shows only the latest semester editor when semester selections finish out 
 
 for (const { action, operation } of [
   { action: 'finalizeDraft', operation: 'finalization' },
-  { action: 'submitRestore', operation: 'restore' },
 ]) {
   test(`accepts a corrected ${operation} note after rejection and preserves uncertain retries`, async () => {
     for (const code of ['UNPROCESSABLE', 'INTERNAL_ERROR', undefined]) {
@@ -348,8 +347,7 @@ for (const { action, operation } of [
           return { createdCount: 2, storeRevision: 4 };
         },
         run: async (callback) => callback(), showMessage() {},
-        loadCatalogs: async () => {}, loadApplications: async () => {}, loadEnrollments: async () => {},
-        loadDrafts: async () => {}, loadBackups: async () => {},
+        loadEnrollments: async () => {}, loadDrafts: async () => {},
       });
       vm.runInContext(`${appFunction(action)}\nglobalThis.submit = ${action};`, context);
       const event = { preventDefault() {}, currentTarget: { elements: { note } } };
@@ -368,7 +366,7 @@ for (const { action, operation } of [
         assert.equal(requests[1].body, requests[0].body, 'an uncertain outcome must replay the identical request');
       }
       assert.equal(context.state[operation], null, code);
-      assert.ok(closed.includes(operation === 'restore' ? 'restore-dialog' : 'finalize-dialog'), code);
+      assert.ok(closed.includes('finalize-dialog'), code);
     }
   });
 
@@ -385,8 +383,7 @@ for (const { action, operation } of [
       byId: () => ({ close() {} }),
       api: (_path, options) => new Promise((resolve, reject) => pending.push({ options, resolve, reject })),
       run: async (callback) => callback(), showMessage() {},
-      loadCatalogs: async () => {}, loadApplications: async () => {}, loadEnrollments: async () => {},
-      loadDrafts: async () => {}, loadBackups: async () => {},
+      loadEnrollments: async () => {}, loadDrafts: async () => {},
     });
     vm.runInContext(`${appFunction(action)}\nglobalThis.submit = ${action};`, context);
     const event = { preventDefault() {}, currentTarget: { elements: { note } } };
