@@ -236,48 +236,6 @@ const reviewWarnings = (preview, issueContext = () => ({})) => {
 };
 
 
-let draftReadinessRequest = 0;
-const openDraftCreate = async () => {
-  draftReadinessRequest++;
-  if (!state.policies.length) state.policies = (await api('/allocation-policies')).items;
-  const form = byId('draft-create-form');
-  form.reset();
-  fillSelect(form.elements.semesterId, state.semesters, '학기를 선택하세요.');
-  form.elements.policy.replaceChildren(...state.policies.map((policy) => {
-    const option = document.createElement('option');
-    option.value = `${policy.policyId}\n${policy.policyVersion}`;
-    option.textContent = policy.name;
-    return option;
-  }));
-  showPolicyDescription();
-  byId('draft-readiness').textContent = '학기를 선택하면 자동 배정 준비 상태를 확인합니다.';
-  byId('draft-create-dialog').showModal();
-};
-
-const showPolicyDescription = () => {
-  const value = byId('draft-create-form').elements.policy.value;
-  byId('draft-policy-description').textContent = state.policies.find((policy) => (
-    `${policy.policyId}\n${policy.policyVersion}` === value
-  ))?.description ?? '';
-};
-
-const showDraftReadiness = async () => {
-  const request = ++draftReadinessRequest;
-  const semesterId = byId('draft-create-form').elements.semesterId.value;
-  if (!semesterId) {
-    byId('draft-readiness').textContent = '학기를 선택하면 자동 배정 준비 상태를 확인합니다.';
-    return;
-  }
-  const [context, enrollments] = await Promise.all([
-    api(`/semesters/${semesterId}/context`), api(`/enrollments?semesterId=${encodeURIComponent(semesterId)}&limit=200`),
-  ]);
-  if (request !== draftReadinessRequest) return;
-  const issueNames = context.issues.map(({ code }) => issueText({ code, severity: 'WARNING' }));
-  byId('draft-readiness').textContent = context.readyForAutoAllocation
-    ? `자동 배정 준비됨 · 기존 확정 ${enrollments.total}명`
-    : `자동 배정 준비 필요: ${issueNames.join(', ')} · 기존 확정 ${enrollments.total}명`;
-};
-
 const submitDraft = async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -540,8 +498,9 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   return result.items;
 };
 
-const { load: loadDrafts } = createDraftsPage({
-  state, byId, loadPaged, cell, actionsCell, resourceName, policyName, openDraft, deleteDraft,
+const { load: loadDrafts, openCreate: openDraftCreate, showPolicyDescription,
+  showReadiness: showDraftReadiness } = createDraftsPage({
+  state, byId, api, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName, openDraft, deleteDraft,
 });
 
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,

@@ -203,6 +203,35 @@ test('keeps the latest draft list and page when earlier requests finish later', 
   });
 });
 
+test('shows readiness only for the semester currently chosen in the draft form', async () => {
+  const pending = [];
+  const form = { elements: { semesterId: { value: 'first' } } };
+  const readiness = { textContent: '' };
+  const { showReadiness } = createDraftsPage({
+    state: { drafts: [], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 0 } } },
+    byId: (id) => ({ 'draft-create-form': form, 'draft-readiness': readiness })[id],
+    api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+  });
+
+  const earlier = showReadiness();
+  form.elements.semesterId.value = 'second';
+  const latest = showReadiness();
+  assert.match(pending[0].path, /\/semesters\/first\/context/);
+  assert.match(pending[2].path, /\/semesters\/second\/context/);
+  pending[2].resolve({ issues: [], readyForAutoAllocation: true });
+  pending[3].resolve({ total: 2 });
+  await latest;
+  pending[0].resolve({ issues: [{ code: 'MISSING_CAPACITY' }], readyForAutoAllocation: false });
+  pending[1].resolve({ total: 5 });
+  await earlier;
+  assert.equal(readiness.textContent, '자동 배정 준비됨 · 기존 확정 2명');
+
+  form.elements.semesterId.value = '';
+  await showReadiness();
+  assert.equal(readiness.textContent, '학기를 선택하면 자동 배정 준비 상태를 확인합니다.');
+  assert.equal(pending.length, 4);
+});
+
 test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
   await withRowDocument(async () => {
     for (const interrupted of [false, true]) {
