@@ -15,10 +15,15 @@
     "frontend/catalog-page.js",
     "frontend/catalog-view.js",
     "frontend/dashboard-page.js",
+    "frontend/drafts-page.js",
+    "frontend/draft-detail.js",
     "frontend/draft-view.js",
+    "frontend/enrollments-page.js",
     "frontend/finalization-page.js",
+    "frontend/imports-page.js",
     "frontend/download-name.js",
     "frontend/issue-view.js",
-    "frontend/list-view.js"
+    "frontend/list-view.js",
+    "frontend/warning-dialog.js"
   ]
 }

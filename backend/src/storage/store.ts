@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { current, Immer, isDraft } from 'immer';
+import { current, freeze, Immer, isDraft } from 'immer';
 
 import type { AllocationSnapshot, PolicySettings } from '../allocation/engine.ts';
 import { SQLiteAdapter } from './sqlite.ts';
@@ -236,7 +236,7 @@ export class Store {
 
   private constructor(adapter: StoreAdapter, data: DatabaseState) {
     this.adapter = adapter;
-    this.data = data;
+    this.data = freeze(data, true);
   }
 
   static async open(adapter: StoreAdapter, defaultData: DatabaseState): Promise<Store> {
@@ -247,8 +247,71 @@ export class Store {
     return new Store(adapter, data);
   }
 
+  /** The shared snapshot is deeply frozen; writes replace it only after persistence succeeds. */
   read(): DatabaseState {
-    return structuredClone(this.data);
+    return this.data;
+  }
+
+  version(): DatabaseState['meta'] {
+    return this.data.meta;
+  }
+
+  catalog<K extends 'semesters' | 'members' | 'courses'>(key: K): Readonly<DatabaseState[K]> {
+    return this.data[key];
+  }
+
+  getImportBatch(id: string): Readonly<ImportBatchRecord> | undefined {
+    return this.data.importBatches.find((batch) => batch.id === id);
+  }
+
+  findImportReceipt(previewId: string, storeEpoch: string, idempotencyKey: string):
+    Readonly<NonNullable<ImportBatchRecord['receipt']>> | undefined {
+    return this.data.importBatches.find(({ receipt }) => (
+      receipt?.previewId === previewId
+      && receipt.storeEpoch === storeEpoch
+      && receipt.idempotencyKey === idempotencyKey
+    ))?.receipt ?? undefined;
+  }
+
+  restoreHistory(): ReadonlyArray<Readonly<RestoreReceiptRecord>> {
+    return this.data.restoreReceipts;
+  }
+
+  finalizationReceipt(idempotencyKey: string): Readonly<FinalizationReceiptRecord> | undefined {
+    return this.data.finalizationReceipts.find((item) => item.idempotencyKey === idempotencyKey);
+  }
+
+  latestFinalizationReceipt(semesterId: string): Readonly<FinalizationReceiptRecord> | undefined {
+    return this.data.finalizationReceipts.filter((item) => item.semesterId === semesterId).at(-1);
+  }
+
+  applicationData(): Pick<DatabaseState,
+    'semesters' | 'members' | 'courses' | 'semesterCourses' | 'applications' | 'applicationChoices' | 'enrollments'> {
+    const { semesters, members, courses, semesterCourses, applications, applicationChoices, enrollments } = this.data;
+    return { semesters, members, courses, semesterCourses, applications, applicationChoices, enrollments };
+  }
+
+  enrollmentData(): Pick<DatabaseState, 'meta' | 'semesters' | 'members' | 'courses' | 'semesterCourses' | 'enrollments'> {
+    const { meta, semesters, members, courses, semesterCourses, enrollments } = this.data;
+    return { meta, semesters, members, courses, semesterCourses, enrollments };
+  }
+
+  draftListData(): Pick<DatabaseState, 'meta' | 'allocationDrafts'> {
+    const { meta, allocationDrafts } = this.data;
+    return { meta, allocationDrafts };
+  }
+
+  draftDetailData(): Pick<DatabaseState,
+    'meta' | 'semesters' | 'members' | 'courses' | 'semesterCourses' |
+    'applications' | 'applicationChoices' | 'enrollments' | 'allocationDrafts' | 'allocationDraftItems'> {
+    const {
+      meta, semesters, members, courses, semesterCourses, applications, applicationChoices,
+      enrollments, allocationDrafts, allocationDraftItems,
+    } = this.data;
+    return {
+      meta, semesters, members, courses, semesterCourses, applications, applicationChoices,
+      enrollments, allocationDrafts, allocationDraftItems,
+    };
   }
 
   write<T>(
@@ -314,7 +377,7 @@ export class Store {
     const candidate = structuredClone(input);
     assertValidStore(candidate);
     await options.backup();
-    await this.#persist(candidate);
+    await this.#persist(candidate, this.data);
     this.#recoveryRequired = false;
   }
 
@@ -330,7 +393,7 @@ export class Store {
         throw new StoreRecoveryRequiredError();
       }
     }
-    this.data = candidate;
+    this.data = freeze(candidate, true);
   }
 }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
@@ -52,6 +53,91 @@ test('serializes concurrent commands and persists both changes', async (t) => {
   assert.deepEqual(store.read().members.map(({ id }) => id), ['member-a', 'member-b']);
   assert.equal(store.read().meta.storeRevision, 2);
   assert.deepEqual(await new SQLiteAdapter(file).read(), store.read());
+});
+
+test('read reuses an immutable snapshot until a write commits', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const before = store.read();
+
+  assert.strictEqual(store.read(), before);
+  assert.throws(() => before.members.push(member('not-saved')), TypeError);
+  assert.throws(() => { before.meta.storeRevision = 99; }, TypeError);
+  assert.deepEqual(store.read(), emptyStore());
+
+  await store.write({}, (candidate) => candidate.members.push(member('saved')));
+  const after = store.read();
+  assert.notStrictEqual(after, before);
+  assert.strictEqual(store.read(), after);
+  assert.deepEqual(before.members, []);
+  assert.equal(after.members[0].id, 'saved');
+  assert.throws(() => { after.members[0].name = 'not-saved'; }, TypeError);
+
+  const replacement = emptyStore();
+  replacement.meta.storeEpoch = 'restored';
+  replacement.members.push(member('restored'));
+  await store.restore(replacement, { expectedRevision: 1, expectedEpoch: 'epoch-1', backup: async () => {} });
+  const restored = store.read();
+  assert.notStrictEqual(restored, after);
+  assert.equal(after.members[0].id, 'saved');
+  assert.equal(restored.members[0].id, 'restored');
+  assert.throws(() => restored.members.push(member('not-saved')), TypeError);
+});
+
+test('version returns only the committed epoch and revision across writes and restore', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const before = store.version();
+  assert.deepEqual(before, { storeEpoch: 'epoch-1', storeRevision: 0 });
+  assert.throws(() => { before.storeRevision = 99; }, TypeError);
+
+  await store.write({}, (candidate) => candidate.members.push(member('saved')));
+  assert.deepEqual(before, { storeEpoch: 'epoch-1', storeRevision: 0 });
+  assert.deepEqual(store.version(), { storeEpoch: 'epoch-1', storeRevision: 1 });
+
+  const replacement = emptyStore();
+  replacement.meta.storeEpoch = 'restored';
+  await store.restore(replacement, { expectedRevision: 1, expectedEpoch: 'epoch-1', backup: async () => {} });
+  assert.deepEqual(store.version(), { storeEpoch: 'restored', storeRevision: 0 });
+});
+
+test('catalog and import-batch reads follow saved changes without exposing another collection', async () => {
+  const initial = emptyStore();
+  initial.members.push(member('member-a'));
+  initial.importBatches.push({
+    id: 'batch-a', kind: 'APPLICATIONS', templateVersion: '1', fileHash: 'hash',
+    importedAt: '2026-09-22T00:00:00.000Z', status: 'STAGED', rawRows: [], resolutions: [], receipt: null,
+  });
+  const store = await Store.open(new MemoryAdapter(initial), emptyStore());
+
+  assert.deepEqual(store.catalog('members').map(({ name }) => name), ['member-a']);
+  assert.equal(store.getImportBatch('batch-a')?.status, 'STAGED');
+  assert.equal(store.getImportBatch('missing'), undefined);
+
+  await store.write({}, (candidate) => { candidate.members.push(member('member-b')); });
+  assert.deepEqual(store.catalog('members').map(({ name }) => name), ['member-a', 'member-b']);
+  assert.equal(store.getImportBatch('batch-a')?.id, 'batch-a');
+});
+
+test('restoring one changed member keeps unrelated SQLite rows untouched', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-restore-rows-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'db.sqlite');
+  const initial = emptyStore();
+  initial.members.push(member('changed'), member('untouched'));
+  const store = await openStore(file, initial);
+  const replacement = structuredClone(store.read());
+  replacement.meta.storeEpoch = 'restored';
+  replacement.members[0].name = '수정된 회원';
+  replacement.members[0].nameKey = '수정된 회원';
+
+  const db = new DatabaseSync(file);
+  try {
+    db.exec(`CREATE TRIGGER protect_untouched BEFORE DELETE ON members
+      WHEN OLD.id = 'untouched' BEGIN SELECT RAISE(ABORT, 'unrelated member deleted'); END`);
+  } finally { db.close(); }
+
+  await store.restore(replacement, { expectedRevision: 0, expectedEpoch: 'epoch-1', backup: async () => {} });
+  assert.deepEqual((await openStore(file, emptyStore())).read(), replacement);
+  assert.equal(store.read().members[1].name, 'untouched');
 });
 
 test('rejects stale revisions without changing committed state', async () => {
@@ -255,8 +341,8 @@ class WriteThenFailFileAdapter {
     return this.adapter.read();
   }
 
-  async write(data) {
-    await this.adapter.write(data);
+  async write(data, previous) {
+    await this.adapter.write(data, previous);
     throw new Error('response lost after file replacement');
   }
 }

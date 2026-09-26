@@ -52,7 +52,7 @@ npm start
 
 DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `schema_migrations`로 관리한다. 업무 자료는 JSON 문서가 아니라 명시 컬럼과 자식 테이블에 저장한다. 실행 전에 이력을 확인하고, 미적용 SQL이 있으면 `update-backups/`에 SQLite 백업을 만든 뒤 한 트랜잭션으로 적용한다. `npm run migrations:manifest`로 manifest를 갱신하고 `npm run migrations:check`로 검증한다. 미배포 개발용 `db.json` 및 이력 테이블이 없는 SQLite DB는 자동 이전하지 않는다.
 
-일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성·백업 복원은 전체 교체 경로를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색과 `Store.read()`의 전체 복제는 자료량에 비례할 수 있다.
+일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성은 빈 테이블에 삽입하고 백업 복원도 달라진 행만 적용한다. 복원 전 DB 전체 안전 사본은 유지한다. `Store.read()`는 전체 복제 없이 깊이 동결된 스냅샷을 반환하며, 임시 변경이 필요한 미리보기는 별도 copy-on-write 후보를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색은 자료량에 비례할 수 있다.
 
 1. 기존 최대 버전보다 큰 Unix 초 timestamp로 새 `.sql` 파일을 추가한다. 이미 배포한 파일의 이름·내용은 수정하거나 삭제하지 않는다.
 2. SQL은 UTF-8 BOM 없이 LF 줄바꿈으로 작성한다. 트랜잭션은 실행기가 관리하므로 `BEGIN`·`COMMIT`이나 `schema_migrations` 직접 변경문을 넣지 않는다.
@@ -86,14 +86,14 @@ npm run test:workbook-scale
 ```
 
 - `verify`: migration manifest, OpenAPI, 타입, 기능·계약·실제 파일 저장, 강제 종료 복구와 실행기 검증. 패키지·부하·실제 GUI 검증은 별도다.
-- `typecheck`: 백엔드 TypeScript와 분리된 대시보드·자료 관리·배정 확정·수강신청 양식 화면, 배정초안 표시, 목록·학기/강좌·파일명·안내 문구 모듈의 JavaScript를 `checkJs`로 검사한다. `frontend/app.js`는 아직 타입 검사 대상이 아니다.
-- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 초안 검토·확정, 대량 초안 페이지 처리, 수동 백업·복원을 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
+- `typecheck`: 백엔드 TypeScript와 분리된 대시보드·자료 관리·배정 확정·수강신청 양식·배정초안 상세 화면, 목록·학기/강좌·파일명·안내 문구 모듈의 JavaScript를 `checkJs`로 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
+- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 초안 최종 결정 저장·자동 복원·회원 추가와 확정, 대량 초안 페이지 처리, 수동 백업·복원을 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
 - `test:coverage`: `verify`를 [c8](https://github.com/bcoe/c8)으로 실행해 `coverage/index.html`, `coverage/lcov.info`, `coverage/coverage-summary.json`과 요약을 생성한다. 백엔드 전체, 프런트엔드 JavaScript 전체, `launcher.mjs`와 `runtime-paths.mjs`가 대상이다. 별도로 실행하는 브라우저 테스트의 사용 줄은 이 수치에 합산되지 않아 `frontend/app.js`처럼 Node 테스트에서 실행하지 않는 파일은 0%로 포함된다. 빌드·검증 스크립트와 테스트 자체는 집계하지 않는다.
 - 기본 브랜치의 성공한 CI는 `coverage/pages/`의 정적 SVG 배지와 HTML 요약을 GitHub Pages에 배포한다. 저장소 설정의 **Pages → Build and deployment → Source**는 `GitHub Actions`로 한 번 지정해야 한다. CI는 README를 수정하거나 커밋하지 않으며 개인 토큰이나 외부 커버리지 서비스도 사용하지 않는다.
 - README 상단의 Backend·Frontend 배지는 `https://w00j00ng.github.io/glorycourse/coverage/` 아래의 고정 경로를 참조한다. 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다.
 - PR에서는 Backend·Frontend 각각의 줄 커버리지가 80% 미만이면 해당 영역과 수치를 GitHub Actions 경고 annotation과 실행 요약에 표시한다. 80% 이상이면 경고하지 않으며, 커버리지 미달 자체는 테스트 실패나 병합 차단으로 처리하지 않는다.
 - `test:scale`: 10,000명·1,000강좌와 대체 배정 부하 검증
-- `test:storage-scale`: 회원 1천·1만 명의 신청·이력·Excel 원본·초안이 섞인 자료에서 회원 한 건 수정의 시간과 SQLite 변경 건수를 측정한다. 복원용 전체 교체 경로와 일반 부분 저장을 비교하고 재시작 후 자료 일치도 검사한다. 시간은 환경에 따라 달라지며 변경 건수 회귀를 중점적으로 확인한다.
+- `test:storage-scale`: 회원 1천·1만 명의 신청·이력·Excel 원본·초안이 섞인 자료에서 회원 한 건 수정의 시간과 SQLite 변경 건수를 측정하고 재시작 후 자료 일치도 검사한다. 전체 교체 저장 경로는 제거했다. 시간은 환경에 따라 달라지며 변경 건수 회귀를 중점적으로 확인한다.
 - `test:workbook-scale`: xlsx 기본 행 한도의 생성·재파싱 검증. 약 700MiB heap을 사용할 수 있어 별도로 실행한다.
 - `test:desktop`: 로그인한 데스크톱에서 기본 브라우저를 실제로 열고 시험 페이지 요청까지 확인한다. 브라우저 탭 하나가 열리며 확인 후 닫아도 된다. GUI가 없는 CI의 `verify`에는 포함하지 않는다.
 

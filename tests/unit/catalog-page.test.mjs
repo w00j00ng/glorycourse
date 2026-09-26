@@ -25,7 +25,6 @@ test('selecting a semester twice closes its editor and marks the row unselected'
       actionsCell: () => ({ querySelectorAll: () => [{}, {}, {}] }),
       api: async () => ({ semester: { id: 'semester-1', name: '2026 가을' }, semesterCourses: [] }),
       fillSelect: () => { select.value = ''; },
-      catalogCourseRow: () => ({}),
     });
 
     await page.selectSemesterRow('semester-1');
@@ -68,7 +67,6 @@ test('moving a semester sends its neighbor and reloads the selected row', async 
       run: async (action) => action(),
       loadCatalogs: async () => { steps.push('catalog'); },
       fillSelect: () => { select.value = ''; },
-      catalogCourseRow: () => ({}),
       cell: () => ({}), actionsCell: () => ({ querySelectorAll: () => [{}, {}, {}] }),
     });
 
@@ -106,7 +104,7 @@ test('choosing another semester closes the previously selected editor', async ()
     const page = createCatalogPage({
       state, byId: (id) => nodes[id],
       api: async () => ({ semester: { id: 'b', name: '가을' }, semesterCourses: [] }),
-      fillSelect: () => { select.value = ''; }, catalogCourseRow: () => ({}), cell: () => ({}),
+      fillSelect: () => { select.value = ''; }, cell: () => ({}),
       actionsCell: () => ({ querySelectorAll: () => [{}, {}, {}] }),
     });
 
@@ -141,7 +139,7 @@ test('the semester editor keeps the newest selection when an older detail reques
         state, byId: (id) => nodes[id],
         api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
         fillSelect: () => { select.value = ''; },
-        catalogCourseRow: () => ({}), cell: () => ({}),
+        cell: () => ({}),
         actionsCell: () => ({ querySelectorAll: () => [{}, {}, {}] }),
       });
 

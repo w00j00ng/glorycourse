@@ -36,7 +36,7 @@ const emptyStore = (epoch = 'epoch-1', revision = 0) => ({
 });
 const writeStore = async (file, data) => {
   await openStore(file, emptyStore());
-  await new SQLiteAdapter(file).write(data);
+  await new SQLiteAdapter(file).write(data, emptyStore());
 };
 
 test('allows only one live instance lock for a data directory', async (t) => {
@@ -138,7 +138,7 @@ test('restores a validated backup after backing up current data and changes epoc
     previousBackupId: 'prior-backup', storeRevision: 3, storeEpoch: 'prior-epoch',
     restoredAt: '2026-09-21T00:00:00.000Z',
   });
-  await new SQLiteAdapter(dataFile).write(current);
+  await new SQLiteAdapter(dataFile).write(current, emptyStore('old-epoch', 2));
 
   const receipt = await restoreBackup({
     dataFile,
@@ -327,7 +327,7 @@ test('returns the durable restore receipt when the adapter loses its write respo
   const adapter = new SQLiteAdapter(dataFile);
   const store = await Store.open({
     read: () => adapter.read(),
-    write: async (data) => { await adapter.write(data); throw new Error('response lost'); },
+    write: async (data, previous) => { await adapter.write(data, previous); throw new Error('response lost'); },
   }, emptyStore());
   const dependencies = {
     dataFile, backupDirectory: join(directory, 'backups'), id: randomUUID,

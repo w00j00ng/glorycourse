@@ -28,5 +28,6 @@ import './unit/download-name.test.mjs';
 import './unit/dashboard-view.test.mjs';
 import './unit/help-content.test.mjs';
 import './unit/issue-view.test.mjs';
+import './unit/warning-dialog.test.mjs';
 import './unit/api-errors.test.mjs';
 import './unit/coverage-report.test.mjs';

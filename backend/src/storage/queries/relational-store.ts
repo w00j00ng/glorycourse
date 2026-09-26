@@ -256,6 +256,9 @@ const compact = <T extends object>(item: T): T => Object.fromEntries(
 ) as T;
 
 export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, previous?: DatabaseState): void => {
+  if (!previous && db.prepare('SELECT 1 FROM store_meta WHERE id = 1').get()) {
+    throw new Error('Previous store state is required to replace a populated database');
+  }
   if (previous) {
     prepareChanges(db, 'enrollments', data.enrollments, previous.enrollments);
     prepareChanges(db, 'allocation_draft_items', data.allocationDraftItems, previous.allocationDraftItems);
@@ -274,19 +277,7 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
     prepareChanges(db, 'courses', data.courses, previous.courses, [['name_key', (item) => item.nameKey]]);
     prepareChanges(db, 'restore_receipts', data.restoreReceipts, previous.restoreReceipts,
       [['receipt_id', (item) => item.receiptId]]);
-  } else db.exec(`
-    DELETE FROM enrollments;
-    DELETE FROM allocation_drafts;
-    DELETE FROM finalization_receipts;
-    DELETE FROM applications;
-    DELETE FROM import_batches;
-    DELETE FROM semester_courses;
-    DELETE FROM semesters;
-    DELETE FROM members;
-    DELETE FROM courses;
-    DELETE FROM restore_receipts;
-    DELETE FROM store_meta;
-  `);
+  }
   prepareRow(db, 'store_meta', 'id, store_epoch, store_revision')
     .run(1, data.meta.storeEpoch, data.meta.storeRevision);
 

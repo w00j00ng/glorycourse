@@ -37,7 +37,8 @@ export class AllocationSnapshotError extends Error {
 }
 
 export const buildAllocationSnapshot = (
-  data: DatabaseState,
+  data: Pick<DatabaseState, 'semesters' | 'members' | 'courses' | 'semesterCourses' |
+    'applications' | 'applicationChoices' | 'enrollments'>,
   semesterId: string,
 ): AllocationSnapshot => {
   const semesters = data.semesters as Semester[];

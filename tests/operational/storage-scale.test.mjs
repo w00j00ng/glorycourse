@@ -7,8 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { buildAllocationSnapshot } from '../../backend/src/allocation/snapshot.ts';
-import { openStore, Store } from '../../backend/src/storage/store.ts';
-import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
+import { openStore } from '../../backend/src/storage/store.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const timestamp = '2026-09-26T00:00:00.000Z';
@@ -88,38 +87,28 @@ for (const members of [1_000, 10_000]) {
     const directory = await mkdtemp(join(tmpdir(), 'glorycourse-storage-scale-'));
     context.after(() => rm(directory, { recursive: true, force: true }));
     const initial = mixedRecords(members);
-    const results = {};
-    for (const mode of ['full', 'normal']) {
-      const file = join(directory, `${mode}.sqlite`);
-      let store = await openStore(file, initial);
-      if (mode === 'full') {
-        const adapter = new SQLiteAdapter(file);
-        store = await Store.open({ read: () => adapter.read(), write: (data) => adapter.write(data) }, initial);
-      }
-      const samples = [];
-      for (let edit = 1; edit <= 3; edit++) {
-        const started = performance.now();
-        await editMember(store, edit);
-        samples.push(performance.now() - started);
-      }
-      const changedRows = await changedRowsFor(() => editMember(store, 4));
-      const expected = structuredClone(initial);
-      expected.meta.storeRevision += 4;
-      expected.members[0] = {
-        ...expected.members[0], name: '수정 회원 4', nameKey: '수정 회원 4', updatedAt: '2026-09-26T00:00:04.000Z',
-      };
-      assert.deepEqual(store.read(), expected, `${mode}: only the member and store revision change`);
-      assert.deepEqual((await openStore(file, empty)).read(), expected, `${mode}: restart retains every record and snapshot`);
-      const medianMs = [...samples].sort((left, right) => left - right)[1];
-      assert.ok(medianMs < 60_000, `${mode}: one member edit took ${Math.round(medianMs)} ms`);
-      results[mode] = { medianMs: Math.round(medianMs * 10) / 10, samplesMs: samples.map(Math.round), changedRows };
-      context.diagnostic(JSON.stringify({ scenario: 'one-member-edit', members, mode, ...results[mode] }));
+    const file = join(directory, 'data.sqlite');
+    const store = await openStore(file, initial);
+    const samples = [];
+    for (let edit = 1; edit <= 3; edit++) {
+      const started = performance.now();
+      await editMember(store, edit);
+      samples.push(performance.now() - started);
     }
+    const changedRows = await changedRowsFor(() => editMember(store, 4));
+    const expected = structuredClone(initial);
+    expected.meta.storeRevision += 4;
+    expected.members[0] = {
+      ...expected.members[0], name: '수정 회원 4', nameKey: '수정 회원 4', updatedAt: '2026-09-26T00:00:04.000Z',
+    };
+    assert.deepEqual(store.read(), expected, 'only the member and store revision change');
+    assert.deepEqual((await openStore(file, empty)).read(), expected, 'restart retains every record and snapshot');
+    const medianMs = [...samples].sort((left, right) => left - right)[1];
+    assert.ok(medianMs < 60_000, `one member edit took ${Math.round(medianMs)} ms`);
     context.diagnostic(JSON.stringify({
-      members, speedup: Math.round(results.full.medianMs / results.normal.medianMs * 10) / 10,
-      changedRowReduction: results.full.changedRows / results.normal.changedRows,
+      scenario: 'one-member-edit', members, medianMs: Math.round(medianMs * 10) / 10,
+      samplesMs: samples.map(Math.round), changedRows,
     }));
-    assert.ok(results.full.changedRows > members * 10, 'baseline performs the full relational rewrite');
-    assert.ok(results.normal.changedRows <= 4, `one member edit changed ${results.normal.changedRows} SQLite rows`);
+    assert.ok(changedRows <= 4, `one member edit changed ${changedRows} SQLite rows`);
   });
 }

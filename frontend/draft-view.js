@@ -56,13 +56,13 @@ export const filterDraftItems = (items, { query = '', result = 'ALL', courseName
   });
 };
 
-/** @param {DraftItem[]} items @param {{ applications: Map<string | null, { applicationOrder: number | null }>, courseView: boolean, courseName: (id: string | null) => string, sort?: string }} options */
+/** @param {DraftItem[]} items @param {{ applications: ReadonlyMap<string, { applicationOrder: number | null }>, courseView: boolean, courseName: (id: string | null) => string, sort?: string }} options */
 export const sortDraftItems = (items, { applications, courseView, courseName, sort = 'ORDER_ASC' }) => [...items].sort((left, right) => {
   const courseDifference = courseView
     ? courseName(left.finalSemesterCourseId).localeCompare(courseName(right.finalSemesterCourseId), 'ko')
     : 0;
-  const leftOrder = applications.get(left.sourceApplicationId)?.applicationOrder ?? Infinity;
-  const rightOrder = applications.get(right.sourceApplicationId)?.applicationOrder ?? Infinity;
+  const leftOrder = applications.get(left.sourceApplicationId ?? '')?.applicationOrder ?? Infinity;
+  const rightOrder = applications.get(right.sourceApplicationId ?? '')?.applicationOrder ?? Infinity;
   const orderDifference = leftOrder === rightOrder ? 0 : leftOrder - rightOrder;
   const nameDifference = left.memberNameAtGeneration.localeCompare(right.memberNameAtGeneration, 'ko');
   const selectedDifference = sort === 'ORDER_DESC'

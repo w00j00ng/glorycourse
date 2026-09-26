@@ -61,8 +61,20 @@ test('leaves an old JSON file untouched and rolls back a failed SQLite transacti
   await openStore(file, empty);
   assert.equal(await readFile(legacyFile, 'utf8'), '{broken');
   const adapter = new SQLiteAdapter(file);
-  await assert.rejects(adapter.write({ ...structuredClone(empty), members: [member, member] }));
+  await assert.rejects(adapter.write({ ...structuredClone(empty), members: [member, member] }, empty));
   assert.deepEqual(await adapter.read(), empty);
+});
+
+test('does not replace an existing database without its previous state', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-sqlite-guard-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'db.sqlite');
+  const initial = { ...structuredClone(empty), members: [member] };
+  await openStore(file, initial);
+  const adapter = new SQLiteAdapter(file);
+
+  await assert.rejects(adapter.write(empty), /Previous store state is required/);
+  assert.deepEqual(await adapter.read(), initial);
 });
 
 test('rejects a record whose foreign keys do not exist and keeps committed data intact', async (t) => {
@@ -96,7 +108,7 @@ test('reopens a maximum-size import with every row and cell in order', async (t)
   const db = new DatabaseSync(file);
   try {
     db.exec('PRAGMA foreign_keys = ON; BEGIN IMMEDIATE');
-    writeRelationalStore(db, data);
+    writeRelationalStore(db, data, empty);
     db.exec('COMMIT');
     const started = performance.now();
     const reopened = readRelationalStore(db);

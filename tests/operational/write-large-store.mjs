@@ -1,6 +1,6 @@
 import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
 
-const [file, rawCount, mode = 'full'] = process.argv.slice(2);
+const [file, rawCount] = process.argv.slice(2);
 const count = Number(rawCount);
 const timestamp = '2026-09-22T00:00:00.000Z';
 const data = {
@@ -26,5 +26,5 @@ const data = {
 };
 
 const adapter = new SQLiteAdapter(file);
-const previous = mode === 'incremental' ? await adapter.read() : undefined;
+const previous = await adapter.read();
 await adapter.write(data, previous);

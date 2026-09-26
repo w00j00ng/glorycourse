@@ -176,7 +176,7 @@ export class DraftService {
   }
 
   get(id: string): DraftDetail {
-    const data = this.store.read();
+    const data = this.store.draftDetailData();
     const draft = requireDraft(data, id);
     const items = draftItems(data).filter(({ draftId }) => draftId === id);
     let isStale = true;
@@ -210,7 +210,7 @@ export class DraftService {
   }
 
   list(): Array<ReturnType<typeof draftSummary>> {
-    const data = this.store.read();
+    const data = this.store.draftListData();
     return drafts(data).filter((draft) => draft.status === 'DRAFT')
       .map((draft) => draftSummary(draft, data.meta.storeRevision)).sort((left, right) => (
       right.createdAt.localeCompare(left.createdAt) || compareId(left.id, right.id)
@@ -486,13 +486,13 @@ const draftSummary = (draft: DraftRecord, storeRevision: number) => ({
   enrollmentReportIsCurrent: draft.enrollmentReportStoreRevision === storeRevision,
 });
 
-const requireDraft = (data: DatabaseState, id: string): DraftRecord => {
+const requireDraft = (data: Pick<DatabaseState, 'allocationDrafts'>, id: string): DraftRecord => {
   const draft = drafts(data).find((item) => item.id === id);
   if (!draft) throw new DraftNotFoundError();
   return draft;
 };
-const drafts = (data: DatabaseState): DraftRecord[] => data.allocationDrafts;
-const draftItems = (data: DatabaseState): DraftItemRecord[] => data.allocationDraftItems;
+const drafts = (data: Pick<DatabaseState, 'allocationDrafts'>): DraftRecord[] => data.allocationDrafts;
+const draftItems = (data: Pick<DatabaseState, 'allocationDraftItems'>): DraftItemRecord[] => data.allocationDraftItems;
 const byMemberId = (left: DraftItemRecord, right: DraftItemRecord): number => compareId(left.memberId, right.memberId);
 const compareId = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 

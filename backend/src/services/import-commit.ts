@@ -83,7 +83,7 @@ export class ImportCommitService {
   async commit(input: CommitInput): Promise<ImportReceipt> {
     validateInput(input);
     const requestHash = hashRequest(input);
-    const previous = findReceipt(this.#store.read(), input);
+    const previous = this.#store.findImportReceipt(input.previewId, input.storeEpoch, input.idempotencyKey);
     if (previous) return matchingReceipt(previous, requestHash);
 
     let preview: ImportPreview;
@@ -93,7 +93,7 @@ export class ImportCommitService {
       if (error instanceof ImportPreviewNotFoundError) throw new ImportPreviewStaleError();
       throw error;
     }
-    assertCurrent(this.#store.read(), preview, input);
+    assertCurrent(this.#store.version(), preview, input);
     if (preview.issues.some((issue) => (
       issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
     ))) throw new ImportCommitConflictError();
@@ -103,7 +103,7 @@ export class ImportCommitService {
 
     try {
       return await this.#store.write({ expectedRevision: preview.storeRevision }, (data) => {
-        assertCurrent(data, preview, input);
+        assertCurrent(data.meta, preview, input);
         const committedAt = this.#dependencies.now().toISOString();
         applyContext(data, preview.contextChanges, input.resolutions, committedAt, this.#dependencies.id);
         const counts = preview.kind === 'APPLICATIONS'
@@ -147,7 +147,7 @@ export class ImportCommitService {
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError) {
-        const receipt = findReceipt(this.#store.read(), input);
+        const receipt = this.#store.findImportReceipt(input.previewId, input.storeEpoch, input.idempotencyKey);
         if (receipt) return matchingReceipt(receipt, requestHash);
         throw new ImportPreviewStaleError();
       }
@@ -396,13 +396,13 @@ const validateInput = (input: CommitInput): void => {
   ) throw new ImportCommitConflictError('Import commit request is invalid');
 };
 
-const assertCurrent = (data: DatabaseState, preview: ImportPreview, input: CommitInput): void => {
+const assertCurrent = (meta: DatabaseState['meta'], preview: ImportPreview, input: CommitInput): void => {
   if (
     input.storeRevision !== preview.storeRevision
     || input.storeEpoch !== preview.storeEpoch
     || input.warningDigest !== preview.warningDigest
-    || data.meta.storeRevision !== preview.storeRevision
-    || data.meta.storeEpoch !== preview.storeEpoch
+    || meta.storeRevision !== preview.storeRevision
+    || meta.storeEpoch !== preview.storeEpoch
   ) throw new ImportPreviewStaleError();
 };
 
@@ -418,15 +418,6 @@ const sortObject = (value: unknown): unknown => {
   }
   return value;
 };
-
-const findReceipt = (data: DatabaseState, input: CommitInput): ImportReceipt | undefined => batches(data)
-  .map(({ receipt }) => receipt)
-  .find((receipt): receipt is ImportReceipt => Boolean(
-    receipt
-    && receipt.previewId === input.previewId
-    && receipt.storeEpoch === input.storeEpoch
-    && receipt.idempotencyKey === input.idempotencyKey,
-  ));
 
 const matchingReceipt = (receipt: ImportReceipt, requestHash: string): ImportReceipt => {
   if (receipt.requestHash !== requestHash) throw new ImportIdempotencyConflictError();

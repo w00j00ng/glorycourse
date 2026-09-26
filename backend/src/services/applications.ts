@@ -9,6 +9,8 @@ import type {
 } from '../storage/store.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 
+type ApplicationData = ReturnType<Store['applicationData']>;
+
 export type ApplicationInput = {
   semesterName: string;
   memberName: string;
@@ -188,14 +190,14 @@ export class ApplicationService {
   }
 
   get(id: string): ApplicationView {
-    const data = this.store.read();
+    const data = this.store.applicationData();
     const application = applications(data).find((item) => item.id === id);
     if (!application) throw new ApplicationNotFoundError();
     return applicationView(data, application);
   }
 
   list(filters: ApplicationListFilters = {}): ApplicationView[] {
-    const data = this.store.read();
+    const data = this.store.applicationData();
     const memberName = filters.memberName?.trim().normalize('NFC');
     const matchingSemesterCourses = filters.courseId
       ? new Set(semesterCourses(data).filter(({ courseId }) => courseId === filters.courseId).map(({ id }) => id))
@@ -236,7 +238,7 @@ export class ApplicationService {
   }
 
   getSemesterContext(semesterId: string): ReturnType<typeof semesterContext> {
-    const data = this.store.read();
+    const data = this.store.applicationData();
     return semesterContext(data, semesterById(data, semesterId));
   }
 
@@ -568,7 +570,7 @@ const resolveSemesterCourse = (
   return created;
 };
 
-const applicationView = (data: DatabaseState, application: Application): ApplicationView => {
+const applicationView = (data: ApplicationData, application: Application): ApplicationView => {
   const semester = semesterById(data, application.semesterId);
   const member = members(data).find((item) => item.id === application.memberId);
   if (!member) throw new ApplicationNotFoundError('Application member was not found');
@@ -600,7 +602,7 @@ const applicationView = (data: DatabaseState, application: Application): Applica
   };
 };
 
-const semesterContext = (data: DatabaseState, semester: Semester) => {
+const semesterContext = (data: ApplicationData, semester: Semester) => {
   const items = semesterCourses(data)
     .filter((item) => item.semesterId === semester.id)
     .map((item) => {
@@ -631,16 +633,16 @@ const bumpSemester = (semester: Semester, now: string): void => {
   semester.updatedAt = now;
 };
 
-const semesterById = (data: DatabaseState, id: string): Semester => {
+const semesterById = (data: ApplicationData, id: string): Semester => {
   const semester = semesters(data).find((item) => item.id === id);
   if (!semester) throw new ApplicationNotFoundError('Semester was not found');
   return semester;
 };
 
-const semesters = (data: DatabaseState): Semester[] => data.semesters;
-const members = (data: DatabaseState): Named[] => data.members;
-const courses = (data: DatabaseState): Named[] => data.courses;
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
-const applications = (data: DatabaseState): Application[] => data.applications;
-const choices = (data: DatabaseState): Choice[] => data.applicationChoices;
-const enrollments = (data: DatabaseState): DatabaseState['enrollments'] => data.enrollments;
+const semesters = (data: ApplicationData): Semester[] => data.semesters;
+const members = (data: ApplicationData): Named[] => data.members;
+const courses = (data: ApplicationData): Named[] => data.courses;
+const semesterCourses = (data: ApplicationData): SemesterCourse[] => data.semesterCourses;
+const applications = (data: ApplicationData): Application[] => data.applications;
+const choices = (data: ApplicationData): Choice[] => data.applicationChoices;
+const enrollments = (data: ApplicationData): DatabaseState['enrollments'] => data.enrollments;

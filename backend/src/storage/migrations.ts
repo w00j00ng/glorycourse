@@ -130,7 +130,7 @@ export const migrateDatabase = async (
         db.prepare('INSERT INTO schema_migrations (version, name, checksum, applied_at, app_version) VALUES (?, ?, ?, ?, ?)')
           .run(migration.version, migration.name, migration.checksum, new Date().toISOString(), appVersion);
       }
-      if (fresh) writeStoreToDatabase(db, structuredClone(initial!));
+      if (fresh) writeStoreToDatabase(db, initial!);
       else if (options.rotateEpoch !== false) {
         db.prepare('UPDATE store_meta SET store_epoch = ? WHERE id = 1').run(randomUUID());
       }

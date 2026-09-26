@@ -81,6 +81,7 @@ test('persists automatic evidence and an administrator final edit across a real 
   const beforeEnrollments = first.store.read().enrollments;
   const created = await first.service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   const automatic = structuredClone(created.studentResults[0]);
+  assert.deepEqual(first.service.list().map(({ id }) => id), [created.draft.id]);
 
   await first.service.updateItem(created.draft.id, 'member-1', {
     expectedDraftRevision: 0,
@@ -165,6 +166,7 @@ test('allows only one edit at a draft revision and keeps a previously archived d
     DraftReadOnlyError,
   );
   assert.equal(service.get(created.draft.id).draft.status, 'ARCHIVED');
+  assert.deepEqual(service.list(), []);
   assert.equal(store.read().enrollments.length, 0);
 });
 
