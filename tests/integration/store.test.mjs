@@ -54,6 +54,34 @@ test('serializes concurrent commands and persists both changes', async (t) => {
   assert.deepEqual(await new SQLiteAdapter(file).read(), store.read());
 });
 
+test('read reuses an immutable snapshot until a write commits', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const before = store.read();
+
+  assert.strictEqual(store.read(), before);
+  assert.throws(() => before.members.push(member('not-saved')), TypeError);
+  assert.throws(() => { before.meta.storeRevision = 99; }, TypeError);
+  assert.deepEqual(store.read(), emptyStore());
+
+  await store.write({}, (candidate) => candidate.members.push(member('saved')));
+  const after = store.read();
+  assert.notStrictEqual(after, before);
+  assert.strictEqual(store.read(), after);
+  assert.deepEqual(before.members, []);
+  assert.equal(after.members[0].id, 'saved');
+  assert.throws(() => { after.members[0].name = 'not-saved'; }, TypeError);
+
+  const replacement = emptyStore();
+  replacement.meta.storeEpoch = 'restored';
+  replacement.members.push(member('restored'));
+  await store.restore(replacement, { expectedRevision: 1, expectedEpoch: 'epoch-1', backup: async () => {} });
+  const restored = store.read();
+  assert.notStrictEqual(restored, after);
+  assert.equal(after.members[0].id, 'saved');
+  assert.equal(restored.members[0].id, 'restored');
+  assert.throws(() => restored.members.push(member('not-saved')), TypeError);
+});
+
 test('rejects stale revisions without changing committed state', async () => {
   const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
   await store.write({ expectedRevision: 0 }, (candidate) => candidate.members.push(member('member-a')));

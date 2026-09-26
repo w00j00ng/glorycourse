@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { produce } from 'immer';
 
 import {
   StoreEpochConflictError,
@@ -151,7 +152,10 @@ export class EnrollmentService {
   previewMany(inputs: BatchInput[]) {
     const clean = validateBatchInput(inputs);
     const data = this.store.read();
-    const { issues } = applyBatchCandidate(data, clean, this.dependencies.now().toISOString(), randomUUID);
+    let issues: EnrollmentIssue[] = [];
+    produce(data, (candidate) => {
+      issues = applyBatchCandidate(candidate, clean, this.dependencies.now().toISOString(), randomUUID).issues;
+    });
     const payload: BatchTokenPayload = {
       version: 1, kind: 'BATCH_CREATE', inputs: clean,
       storeRevision: data.meta.storeRevision, storeEpoch: data.meta.storeEpoch,

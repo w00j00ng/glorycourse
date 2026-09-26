@@ -40,7 +40,7 @@ test('previews all enrollment warnings together and commits all acknowledged row
   const { file, store, applications, enrollments } = await workspace(t);
   const first = await applications.create(application('가'));
   await applications.updateSemesterContext({ semesterId: first.semesterId, expectedRevision: 1, order: 1, semesterCourses: [{ courseName: '연기', capacity: 1 }] });
-  const before = store.read();
+  const before = structuredClone(store.read());
   const preview = enrollments.previewMany([enrollment('가'), enrollment('나')]);
   assert.deepEqual(store.read(), before);
   assert.ok(preview.issues.some((issue) => issue.code === 'CAPACITY_EXCEEDED' && issue.detail.rowNumber === 2));
@@ -81,7 +81,7 @@ test('requires retake acknowledgement even when the earlier semester appears las
     const created = await applications.create({ ...application('가'), semesterName });
     await applications.updateSemesterContext({ semesterId: created.semesterId, expectedRevision: 1, order, semesterCourses: [{ courseName: '연기', capacity: 10 }] });
   }
-  const before = store.read();
+  const before = structuredClone(store.read());
   const preview = enrollments.previewMany(['다음 학기', '이전 학기'].map((semesterName) => ({ ...enrollment('가'), semesterName })));
   assert.ok(preview.issues.some((issue) => issue.code === 'RETAKE' && issue.detail.rowNumber === 1));
   const request = { preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest };

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { current, Immer, isDraft } from 'immer';
+import { current, freeze, Immer, isDraft } from 'immer';
 
 import type { AllocationSnapshot, PolicySettings } from '../allocation/engine.ts';
 import { SQLiteAdapter } from './sqlite.ts';
@@ -236,7 +236,7 @@ export class Store {
 
   private constructor(adapter: StoreAdapter, data: DatabaseState) {
     this.adapter = adapter;
-    this.data = data;
+    this.data = freeze(data, true);
   }
 
   static async open(adapter: StoreAdapter, defaultData: DatabaseState): Promise<Store> {
@@ -247,8 +247,9 @@ export class Store {
     return new Store(adapter, data);
   }
 
+  /** The shared snapshot is deeply frozen; writes replace it only after persistence succeeds. */
   read(): DatabaseState {
-    return structuredClone(this.data);
+    return this.data;
   }
 
   write<T>(
@@ -330,7 +331,7 @@ export class Store {
         throw new StoreRecoveryRequiredError();
       }
     }
-    this.data = candidate;
+    this.data = freeze(candidate, true);
   }
 }
 
