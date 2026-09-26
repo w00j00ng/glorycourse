@@ -21,6 +21,7 @@ import './unit/list-view.test.mjs';
 import './unit/app-reload.test.mjs';
 import './unit/backups-page.test.mjs';
 import './unit/finalization-page.test.mjs';
+import './unit/applications-page.test.mjs';
 import './unit/catalog-view.test.mjs';
 import './unit/download-name.test.mjs';
 import './unit/dashboard-view.test.mjs';

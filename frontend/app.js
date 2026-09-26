@@ -15,6 +15,7 @@ import { currentSemester, orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
 import { createBackupsPage } from './backups-page.js';
 import { createFinalizationPage } from './finalization-page.js';
+import { createApplicationsPage } from './applications-page.js';
 import { PAGE_HELP } from './help-content.js';
 import { issueText } from './issue-view.js';
 
@@ -405,42 +406,6 @@ const deleteApplication = async (item) => {
     '신청을 삭제했습니다.',
   );
   await loadApplications();
-};
-
-const showApplicationTemplateSummary = async () => {
-  const form = byId('application-template-form');
-  const semesterId = form.elements.semesterId.value;
-  const summary = byId('application-template-summary');
-  if (!semesterId) {
-    summary.textContent = '학기를 선택하면 양식에 포함할 강좌를 확인합니다.';
-    return;
-  }
-  summary.textContent = '개설 강좌를 확인하는 중입니다.';
-  const context = await api(`/semesters/${semesterId}/context`);
-  if (form.elements.semesterId.value !== semesterId) return;
-  summary.textContent = context.semesterCourses.length
-    ? `${context.semester.name}의 개설 강좌 ${context.semesterCourses.length}개를 양식에 포함합니다.`
-    : `${context.semester.name}에 등록된 개설 강좌가 없습니다. 빈 개설강좌 시트로 다운로드합니다.`;
-};
-
-const openApplicationTemplate = () => {
-  const form = byId('application-template-form');
-  form.reset();
-  fillSelect(form.elements.semesterId, state.semesters, '학기를 선택하세요.');
-  const filteredSemesterId = byId('application-semester-filter').value;
-  if (state.semesters.some(({ id }) => id === filteredSemesterId)) form.elements.semesterId.value = filteredSemesterId;
-  byId('application-template-dialog').showModal();
-  void showApplicationTemplateSummary().catch((error) => showMessage(error.message, true));
-};
-
-const downloadApplicationTemplate = async (event) => {
-  event.preventDefault();
-  const semesterId = event.currentTarget.elements.semesterId.value;
-  await run(
-    () => download(`/applications/template?semesterId=${encodeURIComponent(semesterId)}`, templateFilename('수강신청')),
-    '선택한 학기의 신청 양식을 다운로드했습니다.',
-  );
-  byId('application-template-dialog').close();
 };
 
 const catalogCourseRow = (course = {}) => {
@@ -1353,6 +1318,12 @@ const fillSelect = (select, items, placeholder) => {
     return option;
   }));
 };
+
+const {
+  showTemplateSummary: showApplicationTemplateSummary,
+  openTemplate: openApplicationTemplate,
+  downloadTemplate: downloadApplicationTemplate,
+} = createApplicationsPage({ state, byId, api, fillSelect, showMessage, run, download });
 
 const loadCatalogItems = async (path) => {
   const items = [];

@@ -10,6 +10,7 @@
     "noEmit": true
   },
   "include": [
+    "frontend/applications-page.js",
     "frontend/backups-page.js",
     "frontend/catalog-view.js",
     "frontend/dashboard-page.js",
