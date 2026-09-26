@@ -1,7 +1,6 @@
 # 프로젝트 점검 및 보완 계획
 
-작업 브랜치: `fix/project-hardening`  
-기준 커밋: `8736fc3` (`docs/user-guide`의 사용자 안내 포함)
+작업 브랜치: `fix/project-hardening` · 기준 커밋: `8736fc3` (`docs/user-guide`의 사용자 안내 포함)
 
 ## 목표와 작업 원칙
 
