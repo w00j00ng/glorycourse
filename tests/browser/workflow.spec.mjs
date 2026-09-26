@@ -187,6 +187,50 @@ test('a late catalog refresh does not hide a semester added afterward', async ({
   }
 });
 
+test('draft readiness follows the semester currently selected', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  for (const name of ['먼저 선택한 학기', '나중에 선택한 학기']) {
+    await page.locator('#new-semester').click();
+    await page.locator('#semester-create-form [name="name"]').fill(name);
+    await page.locator('#semester-create-form [type="submit"]').click();
+    await expect(page.locator('#catalog-semester-rows')).toContainText(name);
+  }
+  const oldSemesterId = await page.locator('#catalog-semester-rows tr').filter({ hasText: '먼저 선택한 학기' }).getAttribute('data-id');
+  let releaseOldResponse;
+  const holdOldResponse = new Promise((resolve) => { releaseOldResponse = resolve; });
+  let oldResponseReady;
+  const oldResponseCaptured = new Promise((resolve) => { oldResponseReady = resolve; });
+  await page.route(`**/api/v1/semesters/${oldSemesterId}/context`, async (route) => {
+    const response = await route.fetch();
+    const context = await response.json();
+    oldResponseReady();
+    await holdOldResponse;
+    await route.fulfill({ response, json: {
+      ...context, readyForAutoAllocation: false, issues: [{ code: 'CAPACITY_UNRESOLVED' }],
+    } });
+  });
+
+  try {
+    await page.getByRole('button', { name: '배정초안', exact: true }).click();
+    await page.locator('#new-draft').click();
+    const semester = page.locator('#draft-create-form [name="semesterId"]');
+    await semester.selectOption({ label: '먼저 선택한 학기' });
+    await oldResponseCaptured;
+    await semester.selectOption({ label: '나중에 선택한 학기' });
+    await expect(page.locator('#draft-readiness')).toContainText('자동 배정 준비됨');
+
+    const oldResponseFinished = page.waitForResponse((response) => response.url().endsWith(`/semesters/${oldSemesterId}/context`));
+    releaseOldResponse();
+    await oldResponseFinished;
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.locator('#draft-readiness')).toContainText('자동 배정 준비됨');
+    await semester.selectOption('');
+    await expect(page.locator('#draft-readiness')).toHaveText('학기를 선택하면 자동 배정 준비 상태를 확인합니다.');
+  } finally {
+    releaseOldResponse();
+  }
+});
+
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();

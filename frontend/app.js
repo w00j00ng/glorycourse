@@ -795,7 +795,9 @@ const commitImport = async () => {
   await Promise.all([loadApplications(), loadEnrollments()]);
 };
 
+let draftReadinessRequest = 0;
 const openDraftCreate = async () => {
+  draftReadinessRequest++;
   if (!state.policies.length) state.policies = (await api('/allocation-policies')).items;
   const form = byId('draft-create-form');
   form.reset();
@@ -819,11 +821,16 @@ const showPolicyDescription = () => {
 };
 
 const showDraftReadiness = async () => {
+  const request = ++draftReadinessRequest;
   const semesterId = byId('draft-create-form').elements.semesterId.value;
-  if (!semesterId) return;
+  if (!semesterId) {
+    byId('draft-readiness').textContent = '학기를 선택하면 자동 배정 준비 상태를 확인합니다.';
+    return;
+  }
   const [context, enrollments] = await Promise.all([
     api(`/semesters/${semesterId}/context`), api(`/enrollments?semesterId=${encodeURIComponent(semesterId)}&limit=200`),
   ]);
+  if (request !== draftReadinessRequest) return;
   const issueNames = context.issues.map(({ code }) => issueText({ code, severity: 'WARNING' }));
   byId('draft-readiness').textContent = context.readyForAutoAllocation
     ? `자동 배정 준비됨 · 기존 확정 ${enrollments.total}명`
