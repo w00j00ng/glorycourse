@@ -264,6 +264,19 @@ export class Store {
     return this.data.importBatches.find((batch) => batch.id === id);
   }
 
+  findImportReceipt(previewId: string, storeEpoch: string, idempotencyKey: string):
+    Readonly<NonNullable<ImportBatchRecord['receipt']>> | undefined {
+    return this.data.importBatches.find(({ receipt }) => (
+      receipt?.previewId === previewId
+      && receipt.storeEpoch === storeEpoch
+      && receipt.idempotencyKey === idempotencyKey
+    ))?.receipt ?? undefined;
+  }
+
+  restoreHistory(): ReadonlyArray<Readonly<RestoreReceiptRecord>> {
+    return this.data.restoreReceipts;
+  }
+
   write<T>(
     options: { expectedRevision?: number; expectedEpoch?: string },
     command: (candidate: DatabaseState) => T | Promise<T>,

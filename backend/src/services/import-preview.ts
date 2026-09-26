@@ -153,7 +153,7 @@ export class ImportPreviewService {
   }
 
   getStaged(id: string): ImportBatch {
-    const batch = importBatches(this.#store.read()).find((item) => item.id === id);
+    const batch = this.#store.getImportBatch(id);
     if (!batch || batch.status !== 'STAGED') throw new ImportBatchNotFoundError();
     return structuredClone(batch);
   }

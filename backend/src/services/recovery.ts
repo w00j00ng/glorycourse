@@ -138,15 +138,16 @@ export class RecoveryService {
       acknowledgedWarningDigest: input.acknowledgedWarningDigest,
       acknowledgementNote: input.acknowledgementNote,
     });
-    const current = this.#store.read();
-    const previous = findReceipt(current, input.idempotencyKey, requestHash);
+    const current = this.#store.version();
+    const history = this.#store.restoreHistory();
+    const previous = findReceipt(history, input.idempotencyKey, requestHash);
     if (previous) return previous;
     const preview = this.#previews.get(input.preparedActionToken);
     if (!preview || Date.parse(preview.expiresAt) <= this.#dependencies.now().getTime()) {
       this.#previews.delete(input.preparedActionToken);
       throw new RecoveryTokenError();
     }
-    if (current.meta.storeRevision !== preview.storeRevision || current.meta.storeEpoch !== preview.storeEpoch) {
+    if (current.storeRevision !== preview.storeRevision || current.storeEpoch !== preview.storeEpoch) {
       throw new RecoveryStaleError();
     }
     if (input.acknowledgedWarningDigest !== preview.warningDigest || !input.acknowledgementNote.trim()) {
@@ -163,7 +164,7 @@ export class RecoveryService {
       restoredAt: restoredAt.toISOString(),
     };
     // Receipt history belongs to this installation, not to the older backup.
-    candidate.restoreReceipts = [...current.restoreReceipts, { idempotencyKey: input.idempotencyKey, requestHash, ...receipt }];
+    candidate.restoreReceipts = [...history, { idempotencyKey: input.idempotencyKey, requestHash, ...receipt }];
     try {
       await this.#store.restore(candidate, {
         expectedRevision: preview.storeRevision,
@@ -176,7 +177,7 @@ export class RecoveryService {
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError || error instanceof StoreEpochConflictError) {
-        const committed = findReceipt(this.#store.read(), input.idempotencyKey, requestHash);
+        const committed = findReceipt(this.#store.restoreHistory(), input.idempotencyKey, requestHash);
         if (committed) return committed;
         throw new RecoveryStaleError();
       }
@@ -199,8 +200,8 @@ export const publicBackup = ({ file: _file, ...backup }: Backup) => backup;
 const publicPreview = ({ candidate: _candidate, ...preview }: PreparedRestore): RestorePreview => preview;
 const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-const findReceipt = (data: DatabaseState, key: string, hash: string): RestoreReceipt | undefined => {
-  const record = data.restoreReceipts.find((item) => item.idempotencyKey === key);
+const findReceipt = (history: ReadonlyArray<RestoreReceiptRecord>, key: string, hash: string): RestoreReceipt | undefined => {
+  const record = history.find((item) => item.idempotencyKey === key);
   if (!record) return undefined;
   const { idempotencyKey: _key, requestHash, ...receipt } = record;
   if (requestHash !== hash) throw new RecoveryIdempotencyConflictError();
