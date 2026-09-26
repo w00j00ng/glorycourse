@@ -289,6 +289,108 @@ test('draft deletion asks for confirmation and refreshes only after deleting the
   }
 });
 
+test('a completed draft item edit does not reopen an older draft after another draft is selected', async () => {
+  const item = {
+    memberId: 'member-1', memberNameAtGeneration: '김가나',
+    autoDecision: 'SELECTED', autoSemesterCourseId: 'course-1',
+  };
+  for (const [name, invoke, expectedPath] of [
+    ['저장', (page) => page.saveDraftItem(item, 'course-2'), '/allocation-drafts/older/items/member-1'],
+    ['자동 복원', (page) => page.restoreDraftItem(item), '/allocation-drafts/older/items/member-1/restore-auto'],
+    ['회원 추가', (page) => page.addDraftItem(), '/allocation-drafts/older/items'],
+  ]) {
+    const requests = [];
+    let loads = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const state = {
+      draft: { draft: { id: 'older', revision: 7 } }, drafts: [], semesters: [], policies: [],
+      pagination: { draft: { page: 1, limit: 50, total: 0 } },
+    };
+    const nodes = {
+      'draft-add-member': { value: 'member-1' }, 'draft-add-course': { value: 'course-2' },
+      'draft-rows': { replaceChildren() {} }, 'draft-empty': {}, 'draft-count': {},
+    };
+    const page = createDraftsPage({
+      state, byId: (id) => nodes[id],
+      api: async (path, options) => { requests.push({ path, options }); },
+      run: async (action) => { await action(); await gate; },
+      loadPaged: async () => { loads++; return []; },
+    });
+
+    const editing = invoke(page);
+    state.draft = { draft: { id: 'newer', revision: 1 } };
+    release();
+    await editing;
+    assert.deepEqual(requests.map(({ path }) => path), [expectedPath], name);
+    assert.equal(JSON.parse(requests[0].options.body).expectedDraftRevision, 7, name);
+    assert.equal(loads, 1, name);
+    assert.equal(state.draft.draft.id, 'newer', name);
+  }
+});
+
+test('saving the current draft refreshes its detail but leaves a closed dialog closed', async () => {
+  const requests = [];
+  let loads = 0;
+  let shown = 0;
+  let gate = Promise.resolve();
+  let holdDetail = false;
+  let resolveDetail;
+  const dialog = { open: true };
+  const nodes = {
+    'draft-dialog': dialog, 'draft-rows': { replaceChildren() {} },
+    'draft-empty': {}, 'draft-count': {},
+  };
+  const page = createDraftsPage({
+    state: {
+      draft: { draft: { id: 'draft-1', revision: 7 } }, drafts: [], semesters: [], policies: [],
+      pagination: { draft: { page: 1, limit: 50, total: 0 } },
+    },
+    byId: (id) => nodes[id],
+    api: async (path, options) => {
+      requests.push({ path, options });
+      if (path === '/allocation-drafts/draft-1') {
+        if (holdDetail) return new Promise((resolve) => { resolveDetail = resolve; });
+        return { draft: { id: 'draft-1', semesterId: 'semester-1' } };
+      }
+      if (path === '/semesters/semester-1/context') return { semester: { name: '가을' } };
+      return {};
+    },
+    run: async (action) => { await action(); await gate; },
+    showDraft: async () => { shown++; },
+    loadPaged: async () => { loads++; return []; },
+  });
+  const item = {
+    memberId: 'member-1', memberNameAtGeneration: '김가나',
+    autoDecision: 'SELECTED', autoSemesterCourseId: 'course-1',
+  };
+
+  await page.saveDraftItem(item, 'course-2');
+  assert.equal(shown, 1);
+  assert.equal(loads, 1);
+  assert.equal(JSON.parse(requests[0].options.body).finalReasonCode, 'ADMIN_OVERRIDE');
+
+  let release;
+  gate = new Promise((resolve) => { release = resolve; });
+  const saving = page.saveDraftItem(item, 'course-2');
+  dialog.open = false;
+  release();
+  await saving;
+  assert.equal(shown, 1);
+  assert.equal(loads, 2);
+
+  holdDetail = true;
+  dialog.open = true;
+  gate = Promise.resolve();
+  const refreshing = page.saveDraftItem(item, 'course-2');
+  await new Promise((resolve) => setImmediate(resolve));
+  dialog.open = false;
+  resolveDetail({ draft: { id: 'draft-1', semesterId: 'semester-1' } });
+  await refreshing;
+  assert.equal(shown, 1);
+  assert.equal(loads, 3);
+});
+
 test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
   await withRowDocument(async () => {
     for (const interrupted of [false, true]) {

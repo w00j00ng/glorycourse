@@ -2,7 +2,6 @@ import {
   describeAllocationEvidence,
   draftApplicationSummaries,
   draftDecisionChanged,
-  draftFinalSelection,
   draftItemPage,
   filterDraftItems,
   reasonLabel,
@@ -291,48 +290,11 @@ const draftReasonCell = (item) => {
   return td;
 };
 
-const saveDraftItem = async (item, semesterCourseId) => {
-  await run(() => api(`/allocation-drafts/${state.draft.draft.id}/items/${item.memberId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      expectedDraftRevision: state.draft.draft.revision,
-      ...draftFinalSelection(item, semesterCourseId),
-    }),
-  }), `${item.memberNameAtGeneration}님의 최종 결정을 저장했습니다.`);
-  await Promise.all([openDraft(state.draft.draft.id), loadDrafts()]);
-};
-
-const restoreDraftItem = async (item) => {
-  await run(() => api(`/allocation-drafts/${state.draft.draft.id}/items/${item.memberId}/restore-auto`, {
-    method: 'POST',
-    body: JSON.stringify({ expectedDraftRevision: state.draft.draft.revision }),
-  }), `${item.memberNameAtGeneration}님의 자동 결과를 복원했습니다.`);
-  await Promise.all([openDraft(state.draft.draft.id), loadDrafts()]);
-};
-
 const fillDraftAddFields = () => {
   if (!state.draft || !state.draftContext) return;
   const memberIds = new Set(state.draft.studentResults.map(({ memberId }) => memberId));
   fillSelect(byId('draft-add-member'), state.members.filter(({ id }) => !memberIds.has(id)), '회원을 선택하세요.');
   fillSelect(byId('draft-add-course'), state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '강좌를 선택하세요.');
-};
-
-const addDraftItem = async () => {
-  const memberId = byId('draft-add-member').value;
-  const courseId = byId('draft-add-course').value;
-  if (!memberId || !courseId) return showMessage('추가할 회원과 강좌를 선택하세요.', true);
-  await run(() => api(`/allocation-drafts/${state.draft.draft.id}/items`, {
-    method: 'POST',
-    body: JSON.stringify({
-      memberId,
-      expectedDraftRevision: state.draft.draft.revision,
-      finalDecision: 'SELECTED',
-      finalSemesterCourseId: courseId,
-      finalReasonCode: 'ADMIN_ADDED',
-      finalReasonDetail: { note: '관리자가 배정초안에 회원을 추가했습니다.' },
-    }),
-  }), '회원을 초안에 추가했습니다.');
-  await Promise.all([openDraft(state.draft.draft.id), loadDrafts()]);
 };
 
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
@@ -417,8 +379,9 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
 };
 
 const { load: loadDrafts, openCreate: openDraftCreate, showPolicyDescription,
-  showReadiness: showDraftReadiness, openDraft, submitDraft } = createDraftsPage({
-  state, byId, api, run, showDraft, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName,
+  showReadiness: showDraftReadiness, openDraft, submitDraft, saveDraftItem,
+  restoreDraftItem, addDraftItem } = createDraftsPage({
+  state, byId, api, run, showDraft, showMessage, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName,
 });
 
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,

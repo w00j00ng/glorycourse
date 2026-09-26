@@ -1,14 +1,17 @@
 import { issueText } from './issue-view.js';
+import { draftFinalSelection } from './draft-view.js';
 
 /** @typedef {Pick<import('../backend/src/storage/store.ts').AllocationDraftRecord, 'id' | 'semesterId' | 'revision' | 'mode' | 'policyId' | 'policyVersion' | 'updatedAt'>} DraftSummary */
+/** @typedef {import('../backend/src/storage/store.ts').AllocationDraftItemRecord} DraftItem */
 /** @typedef {{ policyId: string, policyVersion: string, name: string, description: string, settings: unknown }} DraftPolicy */
 /**
  * @param {{
- *   state: { drafts: DraftSummary[], semesters: { id: string, name: string }[], policies: DraftPolicy[], pagination: { draft: { page: number, limit: number, total: number } } },
+ *   state: { draft?: { draft: { id: string, revision: number } } | null, drafts: DraftSummary[], semesters: { id: string, name: string }[], policies: DraftPolicy[], pagination: { draft: { page: number, limit: number, total: number } } },
  *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<any>,
  *   run: (action: () => Promise<any>, success?: string) => Promise<any>,
  *   showDraft: (detail: any, context: any) => Promise<void>,
+ *   showMessage: (message: string, error?: boolean) => void,
  *   fillSelect: (select: HTMLSelectElement, items: { id: string, name: string }[], placeholder: string) => void,
  *   loadPaged: (name: string, path: string, filters: string, pagination: { page: number, limit: number, total: number }) => Promise<DraftSummary[]>,
  *   cell: (text: string) => HTMLElement,
@@ -17,7 +20,7 @@ import { issueText } from './issue-view.js';
  *   policyName: (id: string, version: string) => string,
  * }} dependencies
  */
-export const createDraftsPage = ({ state, byId, api, run, showDraft, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
+export const createDraftsPage = ({ state, byId, api, run, showDraft, showMessage, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
   let readinessRequest = 0;
   let draftOpenRequest = 0;
 
@@ -86,14 +89,62 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, fillSelect,
     if (request === draftOpenRequest) await showDraft(detail, context);
   };
 
-  /** @param {string} id */
-  const openDraft = async (id) => {
+  /** @param {string} id @param {boolean} [onlyIfOpen] */
+  const openDraft = async (id, onlyIfOpen = false) => {
     const request = ++draftOpenRequest;
     const detail = await api(`/allocation-drafts/${id}`);
-    if (request !== draftOpenRequest) return;
+    if (request !== draftOpenRequest || (onlyIfOpen && !byId('draft-dialog').open)) return;
     const context = await api(`/semesters/${detail.draft.semesterId}/context`);
-    if (request !== draftOpenRequest) return;
+    if (request !== draftOpenRequest || (onlyIfOpen && !byId('draft-dialog').open)) return;
     await showDraft(detail, context);
+  };
+
+  /** @param {string} draftId */
+  const refreshAfterItemChange = async (draftId) => {
+    if (state.draft?.draft.id === draftId && byId('draft-dialog').open) await Promise.all([openDraft(draftId, true), load()]);
+    else await load();
+  };
+
+  /** @param {DraftItem} item @param {string} semesterCourseId */
+  const saveDraftItem = async (item, semesterCourseId) => {
+    if (!state.draft) return;
+    const { id, revision } = state.draft.draft;
+    await run(() => api(`/allocation-drafts/${id}/items/${item.memberId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ expectedDraftRevision: revision, ...draftFinalSelection(item, semesterCourseId) }),
+    }), `${item.memberNameAtGeneration}님의 최종 결정을 저장했습니다.`);
+    await refreshAfterItemChange(id);
+  };
+
+  /** @param {DraftItem} item */
+  const restoreDraftItem = async (item) => {
+    if (!state.draft) return;
+    const { id, revision } = state.draft.draft;
+    await run(() => api(`/allocation-drafts/${id}/items/${item.memberId}/restore-auto`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedDraftRevision: revision }),
+    }), `${item.memberNameAtGeneration}님의 자동 결과를 복원했습니다.`);
+    await refreshAfterItemChange(id);
+  };
+
+  const addDraftItem = async () => {
+    if (!state.draft) return;
+    const memberId = byId('draft-add-member').value;
+    const courseId = byId('draft-add-course').value;
+    if (!memberId || !courseId) return showMessage('추가할 회원과 강좌를 선택하세요.', true);
+    const { id, revision } = state.draft.draft;
+    await run(() => api(`/allocation-drafts/${id}/items`, {
+      method: 'POST',
+      body: JSON.stringify({
+        memberId,
+        expectedDraftRevision: revision,
+        finalDecision: 'SELECTED',
+        finalSemesterCourseId: courseId,
+        finalReasonCode: 'ADMIN_ADDED',
+        finalReasonDetail: { note: '관리자가 배정초안에 회원을 추가했습니다.' },
+      }),
+    }), '회원을 초안에 추가했습니다.');
+    await refreshAfterItemChange(id);
   };
 
   const showPolicyDescription = () => {
@@ -142,5 +193,6 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, fillSelect,
       : `자동 배정 준비 필요: ${issueNames.join(', ')} · 기존 확정 ${total}명`;
   };
 
-  return { load, openCreate, showPolicyDescription, showReadiness, openDraft, deleteDraft, submitDraft };
+  return { load, openCreate, showPolicyDescription, showReadiness, openDraft, deleteDraft, submitDraft,
+    saveDraftItem, restoreDraftItem, addDraftItem };
 };
