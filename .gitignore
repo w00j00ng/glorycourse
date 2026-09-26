@@ -1,6 +1,8 @@
 node_modules/
 .redocly/
 coverage/
+playwright-report/
+test-results/
 *.log
 .document-drafts/
 .data/

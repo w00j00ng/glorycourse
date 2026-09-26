@@ -13,6 +13,7 @@
     "test:crash": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/crash-write.test.mjs",
     "test:scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/allocation-scale.test.mjs",
     "test:storage-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/storage-scale.test.mjs",
+    "test:browser": "playwright test tests/browser --workers=1",
     "test:workbook-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/workbook-scale.test.mjs",
     "test:openapi": "redocly lint openapi/openapi.yaml --extends=spec",
     "typecheck": "tsc --noEmit",
@@ -46,6 +47,7 @@
     ]
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@redocly/cli": "2.54.2",
     "@types/node": "22.20.4",
     "c8": "12.0.0",
