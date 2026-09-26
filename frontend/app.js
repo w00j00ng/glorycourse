@@ -14,6 +14,7 @@ import { reportFilename, templateFilename } from './download-name.js';
 import { currentSemester, orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
 import { createBackupsPage } from './backups-page.js';
+import { createFinalizationPage } from './finalization-page.js';
 import { PAGE_HELP } from './help-content.js';
 import { issueText } from './issue-view.js';
 
@@ -22,7 +23,7 @@ const PAGE_LIMIT = 50;
 const state = {
   token: '', applications: [], enrollments: [], drafts: [], draft: null, draftContext: null,
   policies: [], semesters: [], members: [], courses: [], catalogContext: null, catalogCopyCourses: [],
-  importPreview: null, finalization: null, enrollmentReport: null, draftApplicationSummaries: null, busy: 0, stopping: false,
+  importPreview: null, enrollmentReport: null, draftApplicationSummaries: null, busy: 0, stopping: false,
   applicationSemesterFilterTouched: false,
   selectedSemesterId: null,
   movingSemester: false,
@@ -1333,69 +1334,14 @@ const addDraftItem = async () => {
   await Promise.all([openDraft(state.draft.draft.id), loadDrafts()]);
 };
 
-const previewFinalization = async () => {
-  const preview = await run(() => api(`/allocation-drafts/${state.draft.draft.id}/finalize-preview`, {
-    method: 'POST', body: JSON.stringify({ expectedDraftRevision: state.draft.draft.revision }),
-  }));
-  state.finalization = { preview, draftId: state.draft.draft.id, idempotencyKey: crypto.randomUUID(), request: null };
-  byId('finalize-add-count').textContent = String(preview.enrollments.length);
-  byId('finalize-issue-count').textContent = String(preview.issues.length);
-  byId('finalize-courses').replaceChildren(...preview.courseSummary.map((course) => {
-    const card = document.createElement('div');
-    card.className = 'import-candidate';
-    const name = document.createElement('strong');
-    name.textContent = draftCourseName(course.semesterCourseId);
-    const detail = document.createElement('small');
-    detail.textContent = `기존 ${course.existingCount}명 · 이번 추가 ${course.addedCount}명 · 합계 ${course.totalCount}명${course.capacity === null ? ' · 정원 미정' : ` / 정원 ${course.capacity}명`}`;
-    card.append(name, detail);
-    return card;
-  }));
-  byId('finalize-issues').replaceChildren(...(preview.issues.length ? preview.issues : [{ severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]).map((issue) => {
-    const item = document.createElement('li');
-    const memberName = state.draft.studentResults.find(({ memberId }) => memberId === issue.subject?.memberId)?.memberNameAtGeneration;
-    const courseName = state.draftContext.semesterCourses.find(({ courseId }) => courseId === issue.subject?.courseId)?.courseName;
-    item.textContent = issueText(issue, { memberName, courseName });
-    return item;
-  }));
-  byId('finalize-form').reset();
-  byId('finalize-draft').disabled = preview.issues.some(({ severity }) => severity === 'ERROR');
-  byId('finalize-dialog').showModal();
-};
-
-const finalizeDraft = async (event) => {
-  event.preventDefault();
-  const finalization = state.finalization;
-  if (!finalization) return;
-  const request = finalization.request ??= {
-    preparedActionToken: finalization.preview.preparedActionToken,
-    expectedDraftRevision: finalization.preview.draftRevision,
-    acknowledgedWarningDigest: finalization.preview.warningDigest,
-    acknowledgementNote: event.currentTarget.elements.note.value,
-  };
-  let receipt;
-  try {
-    receipt = await run(() => api(`/allocation-drafts/${finalization.draftId}/finalize`, {
-      method: 'POST',
-      headers: { 'Idempotency-Key': finalization.idempotencyKey },
-      body: JSON.stringify(request),
-    }), '배정초안을 확정하고 수강이력을 생성했습니다.');
-  } catch (error) {
-    if (error.code === 'UNPROCESSABLE' && finalization.request === request) finalization.request = null;
-    throw error;
-  }
-  byId('finalize-dialog').close();
-  byId('draft-dialog').close();
-  state.finalization = null;
-  state.draft = null;
-  showMessage(`배정을 확정했습니다. 추가된 수강이력 ${receipt.createdCount}건`);
-  await Promise.all([loadDrafts(), loadEnrollments()]);
-};
-
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
 const policyName = (policyId, policyVersion) => state.policies.find((policy) => (
   policy.policyId === policyId && policy.policyVersion === policyVersion
 ))?.name ?? `${policyId} ${policyVersion}`;
 const draftCourseName = (id) => id ? state.draftContext?.semesterCourses.find((course) => course.id === id)?.courseName ?? id : '제외';
+const { previewFinalization, finalizeDraft } = createFinalizationPage({
+  state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
+});
 const fillSelect = (select, items, placeholder) => {
   const empty = document.createElement('option');
   empty.value = '';

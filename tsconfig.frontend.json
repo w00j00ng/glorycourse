@@ -14,6 +14,7 @@
     "frontend/catalog-view.js",
     "frontend/dashboard-page.js",
     "frontend/draft-view.js",
+    "frontend/finalization-page.js",
     "frontend/download-name.js",
     "frontend/issue-view.js",
     "frontend/list-view.js"
