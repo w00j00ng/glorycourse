@@ -143,14 +143,6 @@ const shutdown = async () => {
   }
 };
 
-const loadApplications = async () => {
-  const pagination = state.pagination.application = { ...state.pagination.application };
-  const items = await loadPaged('application', '/applications', recordQuery('application'), pagination);
-  if (state.pagination.application !== pagination) return;
-  state.applications = items;
-  renderApplications();
-};
-
 const loadEnrollments = async () => {
   const pagination = state.pagination.enrollment = { ...state.pagination.enrollment };
   const items = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'), pagination);
@@ -269,41 +261,26 @@ const actionsCell = (...actions) => {
   return td;
 };
 
-const addChoice = (container, choice = {}) => {
-  const row = byId('choice-template').content.firstElementChild.cloneNode(true);
-  row.querySelector('[name="courseName"]').value = choice.courseName || '';
-  row.querySelector('[name="preference"]').value = choice.preference || container.children.length + 1;
-  row.querySelector('.remove-choice').addEventListener('click', () => {
-    if (container.children.length > 1) row.remove();
-  });
-  container.append(row);
-};
-
-const addManualEntry = (kind, item = {}, editing = false) => {
-  const container = byId(`${kind}-entry-rows`);
+const addEnrollmentEntry = (item = {}, editing = false) => {
+  const container = byId('enrollment-entry-rows');
   if (container.children.length >= 100) return showMessage('한 번에 최대 100건을 등록할 수 있습니다.', true);
-  const row = byId(`${kind}-entry-template`).content.firstElementChild.cloneNode(true);
+  const row = byId('enrollment-entry-template').content.firstElementChild.cloneNode(true);
   const previous = container.lastElementChild;
   row.querySelector('[name="semesterName"]').value = item.semesterName ?? previous?.querySelector('[name="semesterName"]').value ?? '';
   row.querySelector('[name="memberName"]').value = item.memberName ?? '';
-  if (kind === 'application') {
-    row.querySelector('[name="applicationOrder"]').value = item.applicationOrder ?? '';
-    const choices = row.querySelector('.choice-fields');
-    for (const choice of item.choices ?? [{}]) addChoice(choices, choice);
-    row.querySelector('.add-choice').addEventListener('click', () => addChoice(choices));
-  } else configureEnrollmentCourse(row, item.courseName ?? (previous ? enrollmentCourseName(previous) : ''));
+  configureEnrollmentCourse(row, item.courseName ?? (previous ? enrollmentCourseName(previous) : ''));
   const remove = row.querySelector('.remove-entry');
   remove.hidden = editing;
   remove.addEventListener('click', () => {
-    if (container.children.length > 1) { row.remove(); numberManualEntries(kind); }
+    if (container.children.length > 1) { row.remove(); numberEnrollmentEntries(); }
   });
   container.append(row);
-  numberManualEntries(kind);
+  numberEnrollmentEntries();
 };
 
-const numberManualEntries = (kind) => {
-  [...byId(`${kind}-entry-rows`).children].forEach((row, index) => {
-    row.querySelector('legend').textContent = `${kind === 'application' ? '신청' : '이력'} ${index + 1}`;
+const numberEnrollmentEntries = () => {
+  [...byId('enrollment-entry-rows').children].forEach((row, index) => {
+    row.querySelector('legend').textContent = `이력 ${index + 1}`;
   });
 };
 
@@ -334,57 +311,6 @@ const enrollmentCourseName = (entry) => (
   state.courses.find(({ id }) => id === entry.querySelector('[name="courseId"]').value)?.name
   ?? entry.querySelector('[name="newCourseName"]').value
 );
-
-const openApplication = (item) => {
-  const form = byId('application-form');
-  form.reset();
-  form.dataset.id = item?.id || '';
-  form.dataset.revision = item?.revision ?? '';
-  byId('application-dialog-title').textContent = item ? '신청 수정' : '신청 등록';
-  byId('application-entry-rows').replaceChildren();
-  byId('add-application-entry').hidden = Boolean(item);
-  form.querySelector('[type="submit"]').textContent = item ? '저장' : '전체 저장';
-  addManualEntry('application', item, Boolean(item));
-  byId('application-dialog').showModal();
-};
-
-const submitApplication = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const submit = form.querySelector('[type="submit"]');
-  if (submit.disabled) return;
-  const items = [...byId('application-entry-rows').children].map((entry) => ({
-    semesterName: entry.querySelector('[name="semesterName"]').value,
-    memberName: entry.querySelector('[name="memberName"]').value,
-    applicationOrder: Number(entry.querySelector('[name="applicationOrder"]').value),
-    choices: [...entry.querySelector('.choice-fields').children].map((row) => ({
-      courseName: row.querySelector('[name="courseName"]').value,
-      preference: Number(row.querySelector('[name="preference"]').value),
-    })),
-  }));
-  submit.disabled = true;
-  try {
-    await run(
-      () => api(form.dataset.id ? `/applications/${form.dataset.id}` : '/applications/batch', {
-        method: form.dataset.id ? 'PATCH' : 'POST',
-        body: JSON.stringify(form.dataset.id ? { ...items[0], expectedRevision: Number(form.dataset.revision) } : { items }),
-      }),
-      form.dataset.id ? '신청을 수정했습니다.' : `신청 ${items.length}건을 등록했습니다.`,
-    );
-    byId('application-dialog').close();
-    await loadCatalogs();
-    await loadApplications();
-  } finally { submit.disabled = false; }
-};
-
-const deleteApplication = async (item) => {
-  if (!window.confirm(`${item.memberName}님의 ${item.semesterName} 신청을 삭제할까요?`)) return;
-  await run(
-    () => api(`/applications/${item.id}?expectedRevision=${item.revision}`, { method: 'DELETE' }),
-    '신청을 삭제했습니다.',
-  );
-  await loadApplications();
-};
 
 const catalogCourseRow = (course = {}) => {
   const row = document.createElement('tr');
@@ -739,7 +665,7 @@ const openEnrollment = (item) => {
   byId('enrollment-dialog-title').textContent = item ? '이력 수정' : '이력 등록';
   byId('enrollment-entry-rows').replaceChildren();
   byId('add-enrollment-entry').hidden = Boolean(item);
-  addManualEntry('enrollment', item, Boolean(item));
+  addEnrollmentEntry(item, Boolean(item));
   byId('enrollment-dialog').showModal();
 };
 
@@ -1297,16 +1223,6 @@ const fillSelect = (select, items, placeholder) => {
   }));
 };
 
-const {
-  renderApplications,
-  showTemplateSummary: showApplicationTemplateSummary,
-  openTemplate: openApplicationTemplate,
-  downloadTemplate: downloadApplicationTemplate,
-} = createApplicationsPage({
-  state, byId, api, fillSelect, showMessage, run, download,
-  cell, choicesCell, badgeCell, actionsCell, openApplication, deleteApplication,
-});
-
 const loadCatalogItems = async (path) => {
   const items = [];
   for (let page = 1; ; page++) {
@@ -1367,6 +1283,20 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   renderPagination(name);
   return result.items;
 };
+
+const {
+  load: loadApplications,
+  addApplicationEntry,
+  openApplication,
+  submitApplication,
+  showTemplateSummary: showApplicationTemplateSummary,
+  openTemplate: openApplicationTemplate,
+  downloadTemplate: downloadApplicationTemplate,
+} = createApplicationsPage({
+  state, byId, api, fillSelect, showMessage, run, download,
+  cell, choicesCell, badgeCell, actionsCell,
+  loadPaged, recordQuery, loadCatalogs,
+});
 
 const {
   load: loadBackups, createManualBackup, openRestore, clearRestorePreview, submitRestore,
@@ -1460,8 +1390,8 @@ byId('catalog-copy-form').elements.sourceSemesterId.addEventListener('change', (
   void loadCatalogCopyCourses().catch((error) => showMessage(error.message, true));
 });
 byId('catalog-copy-form').addEventListener('submit', copyCatalogCourses);
-byId('add-application-entry').addEventListener('click', () => addManualEntry('application'));
-byId('add-enrollment-entry').addEventListener('click', () => addManualEntry('enrollment'));
+byId('add-application-entry').addEventListener('click', () => addApplicationEntry());
+byId('add-enrollment-entry').addEventListener('click', () => addEnrollmentEntry());
 byId('application-form').addEventListener('submit', (event) => { void submitApplication(event).catch(() => {}); });
 byId('enrollment-form').addEventListener('submit', (event) => { void submitEnrollment(event).catch(() => {}); });
 byId('semester-create-form').addEventListener('submit', (event) => { void createSemester(event).catch(() => {}); });

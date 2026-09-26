@@ -16,10 +16,8 @@ test('reloads saved records using the catalog and filters shown to the user', as
   const oldSemester = { id: 'old', name: 'Old semester', order: 1 };
   const newSemester = { id: 'new', name: 'New semester', order: 2 };
   const cases = [
-    { action: 'submitApplication', touched: false, expectedSemester: 'new', expectedPage: 1 },
     { action: 'commitImport', touched: false, expectedSemester: 'new', expectedPage: 1, expectedReport: 'new' },
     { action: 'submitEnrollment', touched: false, expectedSemester: 'new', expectedPage: 1, expectedReport: 'new' },
-    { action: 'submitApplication', touched: true, expectedSemester: 'old', expectedPage: 2 },
   ];
 
   for (const request of cases) {
@@ -36,8 +34,7 @@ test('reloads saved records using the catalog and filters shown to the user', as
         : inputs[selector.slice(7, -2)],
     };
     const nodes = {
-      'application-entry-rows': { children: [entry] }, 'enrollment-entry-rows': { children: [entry] },
-      'application-dialog': { close() {} }, 'enrollment-dialog': { close() {} },
+      'enrollment-entry-rows': { children: [entry] }, 'enrollment-dialog': { close() {} },
       'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {},
     };
     const queries = [];
@@ -62,14 +59,18 @@ test('reloads saved records using the catalog and filters shown to the user', as
         return [{ semesterId: filter }];
       },
       recordQuery: () => semesterSelect.value,
-      renderApplications() {}, renderEnrollments() {}, fillDatalist() {},
+      loadApplications: async () => {
+        const items = await context.loadPaged('application', '/applications', semesterSelect.value);
+        context.state.applications = items;
+      },
+      renderEnrollments() {}, fillDatalist() {},
       fillFilterSelect: (id) => { if (id === 'application-semester-filter') semesterSelect.value = 'old'; },
       orderSemesters, currentSemester, applicationSemesterFilterValue,
       run: async (action) => action(), reviewWarnings: async () => '',
       crypto: { randomUUID: () => 'idempotency-key' },
     });
     const functions = [
-      'loadApplications', 'loadEnrollments', 'loadCatalogItems', 'loadCatalogs', 'submitApplication', 'submitEnrollment', 'commitImport',
+      'loadEnrollments', 'loadCatalogItems', 'loadCatalogs', 'submitEnrollment', 'commitImport',
     ].map(appFunction).join('\n');
     vm.runInContext(`${functions}\nconst enrollmentCourseName = () => 'Course';\nglobalThis.save = ${request.action};`, context);
     await context.save({ preventDefault() {}, currentTarget: { dataset: {}, querySelector: () => submit } });
@@ -186,7 +187,6 @@ test('clears a semester selection when another semester replaces the editor cont
 
 test('keeps the latest list and page when earlier filter or page requests finish later', async () => {
   const cases = [
-    { name: 'application', loader: 'loadApplications', rows: 'applications' },
     { name: 'enrollment', loader: 'loadEnrollments', rows: 'enrollments' },
     { name: 'draft', loader: 'loadDrafts', rows: 'drafts' },
   ];
@@ -200,7 +200,6 @@ test('keeps the latest list and page when earlier filter or page requests finish
         URLSearchParams, currentSemester,
         api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
         recordQuery: () => filter, renderPagination() {},
-        renderApplications: () => rendered.push(context.state.applications),
         renderEnrollments: () => rendered.push(context.state.enrollments),
         renderDrafts: () => rendered.push(context.state.drafts),
       });
@@ -230,30 +229,30 @@ test('keeps the latest list and page when earlier filter or page requests finish
   }
 });
 
-test('corrects a removed last page without letting its retry replace a newer list', async () => {
+test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
   for (const interrupted of [false, true]) {
     const pending = [];
     const context = vm.createContext({
-      state: { pagination: { application: { page: 3, limit: 50 } } },
+      state: { semesters: [], pagination: { enrollment: { page: 3, limit: 50 } } },
       URLSearchParams, api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
-      recordQuery: () => '', renderPagination() {}, renderApplications() {},
+      currentSemester, recordQuery: () => '', renderPagination() {}, renderEnrollments() {},
     });
-    vm.runInContext(`${appFunction('loadPaged')}\n${appFunction('loadApplications')}\nglobalThis.load = loadApplications;`, context);
+    vm.runInContext(`${appFunction('loadPaged')}\n${appFunction('loadEnrollments')}\nglobalThis.load = loadEnrollments;`, context);
     const correcting = context.load();
     pending[0].resolve({ items: [], page: 3, limit: 50, total: 51 });
     await new Promise((resolve) => setImmediate(resolve));
     assert.match(pending[1].path, /page=2&limit=50/);
     if (interrupted) {
-      context.state.pagination.application.page = 1;
+      context.state.pagination.enrollment.page = 1;
       const latest = context.load();
       pending[2].resolve({ items: [{ id: 'latest' }], page: 1, limit: 50, total: 1 });
       await latest;
     }
     pending[1].resolve({ items: [{ id: 'corrected' }], page: 2, limit: 50, total: 51 });
     await correcting;
-    assert.equal(context.state.applications[0].id, interrupted ? 'latest' : 'corrected');
-    assert.equal(context.state.pagination.application.page, interrupted ? 1 : 2);
-    assert.equal(context.state.pagination.application.total, interrupted ? 1 : 51);
+    assert.equal(context.state.enrollments[0].id, interrupted ? 'latest' : 'corrected');
+    assert.equal(context.state.pagination.enrollment.page, interrupted ? 1 : 2);
+    assert.equal(context.state.pagination.enrollment.total, interrupted ? 1 : 51);
   }
 });
 

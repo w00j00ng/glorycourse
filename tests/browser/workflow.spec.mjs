@@ -184,12 +184,30 @@ test('an administrator registers applications, reviews allocation, and sees save
   await page.locator('#application-form [type="submit"]').click();
   await expect(page.locator('#application-rows tr')).toHaveCount(2);
 
+  await page.locator('#application-rows tr').first().getByRole('button', { name: '수정' }).click();
+  await expect(page.locator('#application-entry-rows > fieldset')).toHaveCount(1);
+  await page.locator('#application-entry-rows [name="memberName"]').fill('김가나 수정');
+  await page.locator('#application-form [type="submit"]').click();
+  await expect(page.locator('#application-rows')).toContainText('김가나 수정');
+
+  await page.locator('#new-application').click();
+  const temporary = page.locator('#application-entry-rows > fieldset');
+  await temporary.locator('[name="semesterName"]').fill('2026 가을');
+  await temporary.locator('[name="memberName"]').fill('임시 회원');
+  await temporary.locator('[name="applicationOrder"]').fill('3');
+  await temporary.locator('[name="courseName"]').fill('창세기');
+  await page.locator('#application-form [type="submit"]').click();
+  await expect(page.locator('#application-rows tr')).toHaveCount(3);
+  page.once('dialog', (dialog) => { void dialog.accept(); });
+  await page.locator('#application-rows tr').filter({ hasText: '임시 회원' }).getByRole('button', { name: '삭제' }).click();
+  await expect(page.locator('#application-rows tr')).toHaveCount(2);
+
   await page.getByRole('button', { name: '배정초안', exact: true }).click();
   await page.locator('#new-draft').click();
   await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: '2026 가을' });
   await page.locator('#draft-create-form [type="submit"]').click();
   await expect(page.locator('#draft-item-rows tr')).toHaveCount(2);
-  await expect(page.locator('#draft-item-rows tr').first()).toContainText('김가나');
+  await expect(page.locator('#draft-item-rows tr').first()).toContainText('김가나 수정');
   await page.locator('#preview-finalization').click();
   await page.locator('#finalize-form [name="note"]').fill('   ');
   const rejected = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/finalize') && response.status() === 422);
@@ -203,7 +221,7 @@ test('an administrator registers applications, reviews allocation, and sees save
 
   await page.getByRole('button', { name: '수강이력', exact: true }).click();
   await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
-  await expect(page.locator('#enrollment-rows')).toContainText('김가나');
+  await expect(page.locator('#enrollment-rows')).toContainText('김가나 수정');
   await expect(page.locator('#enrollment-rows')).toContainText('박다라');
   await page.getByRole('link', { name: 'Glorycourse 홈으로 이동' }).click();
   await expect(page.getByRole('heading', { name: '업무 대시보드' })).toBeVisible();
