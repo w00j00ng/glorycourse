@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { inspectMigrationHistory, migrateDatabase } from './migrations.ts';
-import { SQLiteAdapter } from './sqlite.ts';
+import { readStoreFromDatabase, SQLiteAdapter } from './sqlite.ts';
 import { createSqliteSnapshot, fileSha256 } from './sqlite-snapshot.ts';
 import { assertValidStore, type DatabaseState } from './store.ts';
 
@@ -87,6 +87,7 @@ export const listBackups = async (backupDirectory: string): Promise<Backup[]> =>
         meta = db.prepare(`SELECT store_revision AS storeRevision, store_epoch AS storeEpoch
           FROM store_meta WHERE id = 1`).get() as typeof meta;
         if (!meta) throw new Error('SQLite store metadata is missing');
+        if (!pending) assertValidStore(readStoreFromDatabase(db));
       } finally { db.close(); }
       backups.push({ ...base, ...meta, databaseVersion, status: pending ? 'OLDER' : 'READY' });
     } catch (error) {

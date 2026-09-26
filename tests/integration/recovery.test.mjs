@@ -84,6 +84,45 @@ test('lists a damaged backup separately without hiding a valid backup', async (t
   ]);
 });
 
+for (const [damage, sql] of [
+  ['missing application table', 'DROP TABLE import_raw_cells'],
+  ['invalid application data', "UPDATE members SET created_at = 'invalid'"],
+]) {
+  test(`replaces a backup with ${damage} instead of reusing it`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'glorycourse-backup-damaged-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const dataFile = join(directory, 'db.sqlite');
+    const store = await openStore(dataFile, emptyStore());
+    let now = new Date('2026-09-22T00:00:00.000Z');
+    const service = new RecoveryService(store, {
+      dataFile, backupDirectory: join(directory, 'backups'), id: randomUUID, now: () => now,
+    });
+    const older = await service.create();
+    await store.write({}, (data) => { data.members.push({
+      id: 'member', name: 'Member', nameKey: 'member', createdAt: now.toISOString(), updatedAt: now.toISOString(),
+    }); });
+    now = new Date('2026-09-23T00:00:00.000Z');
+    const damaged = await service.create();
+    const current = store.read();
+    const db = new DatabaseSync(damaged.file);
+    try { db.exec(sql); } finally { db.close(); }
+
+    now = new Date('2026-09-24T00:00:00.000Z');
+    const replacement = await service.create();
+
+    assert.notEqual(replacement.id, damaged.id);
+    assert.deepEqual(await new SQLiteAdapter(replacement.file).read(), current);
+    assert.deepEqual((await service.list()).map(({ id, status }) => ({ id, status })), [
+      { id: replacement.id, status: 'READY' },
+      { id: damaged.id, status: 'INVALID' },
+      { id: older.id, status: 'READY' },
+    ]);
+    assert.equal((await service.create()).id, replacement.id, 'valid backups still deduplicate');
+    assert.deepEqual(store.read(), current);
+    assert.deepEqual(await new SQLiteAdapter(dataFile).read(), current);
+  });
+}
+
 test('restores a validated backup after backing up current data and changes epoch', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-restore-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
