@@ -24,6 +24,7 @@ const enrollmentPage = (context, rendered = []) => {
   };
   return createEnrollmentsPage({
     state: context.state, byId, showMessage() {}, api: context.api, loadPaged: context.loadPaged,
+    async loadCatalogs() {},
     recordQuery: context.recordQuery, resourceName: () => 'Semester',
     cell: () => ({}), actionsCell: () => ({}), async reviewWarnings() { return ''; },
   });
@@ -35,29 +36,16 @@ const withEnrollmentDocument = async (action) => {
   try { return await action(); } finally { globalThis.document = previousDocument; }
 };
 
-test('reloads saved records using the catalog and filters shown to the user', async () => {
+test('reloads imported records using the catalog and filters shown to the user', async () => {
   const oldSemester = { id: 'old', name: 'Old semester', order: 1 };
   const newSemester = { id: 'new', name: 'New semester', order: 2 };
   const cases = [
     { action: 'commitImport', touched: false, expectedSemester: 'new', expectedPage: 1 },
-    { action: 'submitEnrollment', touched: false, expectedSemester: 'new', expectedPage: 1 },
   ];
 
   for (const request of cases) {
     const semesterSelect = { value: 'old' };
-    const submit = { disabled: false };
-    const inputs = {
-      semesterName: { value: 'New semester' }, memberName: { value: 'Member' },
-      applicationOrder: { value: '1' }, courseId: { value: '' }, newCourseName: { value: 'Course' },
-    };
-    const choice = { querySelector: (selector) => ({ value: selector.includes('preference') ? '1' : 'Course' }) };
-    const entry = {
-      querySelector: (selector) => selector === '.choice-fields'
-        ? { children: [choice] }
-        : inputs[selector.slice(7, -2)],
-    };
     const nodes = {
-      'enrollment-entry-rows': { children: [entry] }, 'enrollment-dialog': { close() {} },
       'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {},
     };
     const queries = [];
@@ -91,10 +79,10 @@ test('reloads saved records using the catalog and filters shown to the user', as
       crypto: { randomUUID: () => 'idempotency-key' },
     });
     const functions = [
-      'loadCatalogItems', 'loadCatalogs', 'submitEnrollment', 'commitImport',
+      'loadCatalogItems', 'loadCatalogs', 'commitImport',
     ].map(appFunction).join('\n');
-    vm.runInContext(`${functions}\nconst enrollmentCourseName = () => 'Course';\nglobalThis.save = ${request.action};`, context);
-    await context.save({ preventDefault() {}, currentTarget: { dataset: {}, querySelector: () => submit } });
+    vm.runInContext(`${functions}\nglobalThis.save = ${request.action};`, context);
+    await context.save();
 
     assert.equal(semesterSelect.value, request.expectedSemester, request.action);
     assert.equal(context.state.pagination.application.page, request.expectedPage, request.action);

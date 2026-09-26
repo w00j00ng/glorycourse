@@ -366,7 +366,12 @@ test('an administrator registers multiple historical enrollments without applica
   await expect(page.locator('#add-enrollment-entry')).toBeHidden();
   await page.locator('#enrollment-entry-rows [name="courseId"]').selectOption({ label: '마태복음' });
   await expect(page.locator('#enrollment-entry-rows [name="newCourseName"]')).toBeHidden();
-  await page.locator('#enrollment-dialog').getByRole('button', { name: '취소' }).click();
+  await page.locator('#enrollment-form [type="submit"]').click();
+  await expect(page.locator('#warning-dialog')).toBeVisible();
+  await page.locator('#warning-form [name="note"]').fill('기존 수강이력의 강좌를 확인했습니다.');
+  await page.locator('#warning-form [type="submit"]').click();
+  await expect(page.locator('#enrollment-dialog')).toBeHidden();
+  await expect(page.locator('#enrollment-rows tr').filter({ hasText: '김가나' })).toContainText('마태복음');
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await expect(page.locator('#catalog-semester-rows')).toContainText('과거 학기');
   await page.locator('[data-catalog-tab="courses"]').click();

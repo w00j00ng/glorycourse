@@ -15,14 +15,15 @@ import { reportFilename } from './download-name.js';
  *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
  *   download: (path: string, filename: string, options?: RequestInit) => Promise<unknown>,
  *   loadPaged: (name: string, path: string, query: string, pagination: object) => Promise<EnrollmentRow[] | undefined>,
+ *   loadCatalogs: () => Promise<void>,
  *   recordQuery: (name: string) => string,
  *   resourceName: (items: { id: string, name: string }[], id: string) => string,
  *   cell: (text: string) => any,
  *   actionsCell: (...actions: any[]) => any,
- *   reviewWarnings: (preview: EnrollmentPreview, issueContext: (issue: import('../backend/src/services/enrollments.ts').EnrollmentIssue) => { memberName: string, courseName: string }) => Promise<string | null>,
+ *   reviewWarnings: (preview: EnrollmentPreview, issueContext: (issue: import('../backend/src/services/enrollments.ts').EnrollmentIssue) => { memberName?: string, courseName?: string }) => Promise<string | null>,
  * }} dependencies
  */
-export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, download, loadPaged, recordQuery,
+export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, download, loadPaged, loadCatalogs, recordQuery,
   resourceName, cell, actionsCell, reviewWarnings }) => {
   /** @param {Partial<EnrollmentRow>} [item] @param {boolean} [editing] */
   const addEnrollmentEntry = (item = {}, editing = false) => {
@@ -129,6 +130,44 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     render();
   };
 
+  /** @param {SubmitEvent} event */
+  const submitEnrollment = async (event) => {
+    event.preventDefault();
+    const form = /** @type {HTMLFormElement} */ (event.currentTarget);
+    const submit = /** @type {HTMLButtonElement} */ (form.querySelector('[type="submit"]'));
+    if (submit.disabled) return;
+    const items = [...byId('enrollment-entry-rows').children].map((entry) => ({
+      semesterName: entry.querySelector('[name="semesterName"]').value,
+      memberName: entry.querySelector('[name="memberName"]').value,
+      courseName: enrollmentCourseName(entry),
+    }));
+    submit.disabled = true;
+    try {
+      const preview = /** @type {EnrollmentPreview} */ (await run(() => api(form.dataset.id ? '/enrollments/preview' : '/enrollments/batch/preview', {
+        method: 'POST',
+        body: JSON.stringify(form.dataset.id
+          ? { ...items[0], action: 'UPDATE', enrollmentId: form.dataset.id, expectedRevision: Number(form.dataset.revision) }
+          : { items }),
+      })));
+      const note = await reviewWarnings(preview, (issue) => {
+        const row = items[Number(issue.detail?.rowNumber ?? 1) - 1];
+        return { memberName: row?.memberName, courseName: row?.courseName };
+      });
+      if (note === null) return;
+      await run(() => api(form.dataset.id ? `/enrollments/${form.dataset.id}` : '/enrollments/batch', {
+        method: form.dataset.id ? 'PATCH' : 'POST',
+        body: JSON.stringify({
+          preparedActionToken: preview.preparedActionToken,
+          acknowledgedWarningDigest: preview.warningDigest,
+          ...(note ? { acknowledgementNote: note } : {}),
+        }),
+      }), form.dataset.id ? '이력을 수정했습니다.' : `이력 ${items.length}건을 등록했습니다.`);
+      byId('enrollment-dialog').close();
+      await loadCatalogs();
+      await load();
+    } finally { submit.disabled = false; }
+  };
+
   /** @param {EnrollmentRow} item */
   const deleteEnrollment = async (item) => {
     if (!window.confirm(`${item.memberName}님의 ${item.semesterName} 수강이력을 삭제할까요?`)) return;
@@ -190,5 +229,5 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     await load();
   };
 
-  return { load, completeReport, addEnrollmentEntry, enrollmentCourseName, openEnrollment, deleteSemesterEnrollments };
+  return { load, completeReport, addEnrollmentEntry, openEnrollment, submitEnrollment, deleteSemesterEnrollments };
 };

@@ -209,43 +209,6 @@ const actionsCell = (...actions) => {
   return td;
 };
 
-const submitEnrollment = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const submit = form.querySelector('[type="submit"]');
-  if (submit.disabled) return;
-  const items = [...byId('enrollment-entry-rows').children].map((entry) => ({
-    semesterName: entry.querySelector('[name="semesterName"]').value,
-    memberName: entry.querySelector('[name="memberName"]').value,
-    courseName: enrollmentCourseName(entry),
-  }));
-  submit.disabled = true;
-  try {
-    const preview = await run(() => api(form.dataset.id ? '/enrollments/preview' : '/enrollments/batch/preview', {
-      method: 'POST',
-      body: JSON.stringify(form.dataset.id
-        ? { ...items[0], action: 'UPDATE', enrollmentId: form.dataset.id, expectedRevision: Number(form.dataset.revision) }
-        : { items }),
-    }));
-    const note = await reviewWarnings(preview, (issue) => {
-      const row = items[(issue.detail?.rowNumber ?? 1) - 1];
-      return { memberName: row?.memberName, courseName: row?.courseName };
-    });
-    if (note === null) return;
-    await run(() => api(form.dataset.id ? `/enrollments/${form.dataset.id}` : '/enrollments/batch', {
-      method: form.dataset.id ? 'PATCH' : 'POST',
-      body: JSON.stringify({
-        preparedActionToken: preview.preparedActionToken,
-        acknowledgedWarningDigest: preview.warningDigest,
-        ...(note ? { acknowledgementNote: note } : {}),
-      }),
-    }), form.dataset.id ? '이력을 수정했습니다.' : `이력 ${items.length}건을 등록했습니다.`);
-    byId('enrollment-dialog').close();
-    await loadCatalogs();
-    await loadEnrollments();
-  } finally { submit.disabled = false; }
-};
-
 let draftOpenRequest = 0;
 const deleteDraft = async (item) => {
   if (!window.confirm('이 배정초안을 삭제할까요? 수강이력은 삭제되지 않습니다.')) return;
@@ -790,8 +753,8 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
 };
 
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,
-  addEnrollmentEntry, enrollmentCourseName, openEnrollment, deleteSemesterEnrollments } = createEnrollmentsPage({
-  state, byId, showMessage, api, run, download, loadPaged, recordQuery, resourceName, cell, actionsCell,
+  addEnrollmentEntry, openEnrollment, submitEnrollment, deleteSemesterEnrollments } = createEnrollmentsPage({
+  state, byId, showMessage, api, run, download, loadPaged, loadCatalogs, recordQuery, resourceName, cell, actionsCell,
   reviewWarnings,
 });
 const { previewFinalization, finalizeDraft } = createFinalizationPage({
