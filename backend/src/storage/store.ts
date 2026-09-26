@@ -275,19 +275,7 @@ export class Store {
     const result = await command(candidate);
     candidate.meta.storeRevision = before.meta.storeRevision + 1;
     assertValidStore(candidate);
-
-    try {
-      await this.adapter.write(candidate);
-    } catch (writeError) {
-      const disk = await this.#readAfterFailure();
-      if (isDeepStrictEqual(disk, before)) throw writeError;
-      if (!isDeepStrictEqual(disk, candidate)) {
-        this.#recoveryRequired = true;
-        throw new StoreRecoveryRequiredError();
-      }
-    }
-
-    this.data = candidate;
+    await this.#persist(candidate);
     return result;
   }
 
@@ -311,6 +299,11 @@ export class Store {
     const candidate = structuredClone(input);
     assertValidStore(candidate);
     await options.backup();
+    await this.#persist(candidate);
+    this.#recoveryRequired = false;
+  }
+
+  async #persist(candidate: DatabaseState): Promise<void> {
     const before = this.data;
     try {
       await this.adapter.write(candidate);
@@ -323,7 +316,6 @@ export class Store {
       }
     }
     this.data = candidate;
-    this.#recoveryRequired = false;
   }
 }
 

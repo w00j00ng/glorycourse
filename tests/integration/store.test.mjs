@@ -129,6 +129,49 @@ test('blocks later writes when disk state cannot be determined', async () => {
   );
 });
 
+test('keeps saves and restores consistent after failed, committed, or uncertain writes', async () => {
+  for (const action of ['save', 'restore']) {
+    for (const outcome of ['unchanged', 'committed', 'different', 'unreadable']) {
+      const original = emptyStore();
+      original.members.push(member('original'));
+      const adapter = new MemoryAdapter(original);
+      const store = await Store.open(adapter, emptyStore());
+      const candidate = emptyStore();
+      candidate.meta.storeEpoch = 'restored';
+      candidate.members.push(member('replacement'));
+      const writeError = new Error('storage write failed');
+      const persist = adapter.write.bind(adapter);
+      adapter.write = async (data) => {
+        if (outcome === 'committed') await persist(data);
+        if (outcome === 'different') await persist(emptyStore());
+        if (outcome === 'unreadable') adapter.read = async () => { throw new Error('storage read failed'); };
+        throw writeError;
+      };
+      const operation = action === 'save'
+        ? store.write({}, (data) => { data.members = candidate.members; return 'saved'; })
+        : store.restore(candidate, {
+          expectedRevision: 0, expectedEpoch: 'epoch-1',
+          backup: async () => assert.deepEqual(store.read(), original),
+        });
+      if (outcome === 'committed') {
+        assert.equal(await operation, action === 'save' ? 'saved' : undefined);
+        assert.equal(store.read().members[0].id, 'replacement');
+        assert.deepEqual(store.read(), await adapter.read());
+      } else {
+        await assert.rejects(operation, outcome === 'unchanged' ? writeError : StoreRecoveryRequiredError);
+        assert.deepEqual(store.read(), original);
+      }
+      adapter.write = persist;
+      if (outcome === 'different' || outcome === 'unreadable') {
+        await assert.rejects(store.write({}, () => {}), StoreRecoveryRequiredError);
+      } else {
+        await store.write({}, (data) => { data.members.push(member('next')); });
+        assert.equal(store.read().members.at(-1).id, 'next');
+      }
+    }
+  }
+});
+
 test('does not replace a malformed existing file with an empty store', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-store-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
