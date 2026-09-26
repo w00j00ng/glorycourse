@@ -285,6 +285,17 @@ export class Store {
     return this.data.finalizationReceipts.filter((item) => item.semesterId === semesterId).at(-1);
   }
 
+  applicationData(): Pick<DatabaseState,
+    'semesters' | 'members' | 'courses' | 'semesterCourses' | 'applications' | 'applicationChoices' | 'enrollments'> {
+    const { semesters, members, courses, semesterCourses, applications, applicationChoices, enrollments } = this.data;
+    return { semesters, members, courses, semesterCourses, applications, applicationChoices, enrollments };
+  }
+
+  enrollmentData(): Pick<DatabaseState, 'meta' | 'semesters' | 'members' | 'courses' | 'semesterCourses' | 'enrollments'> {
+    const { meta, semesters, members, courses, semesterCourses, enrollments } = this.data;
+    return { meta, semesters, members, courses, semesterCourses, enrollments };
+  }
+
   write<T>(
     options: { expectedRevision?: number; expectedEpoch?: string },
     command: (candidate: DatabaseState) => T | Promise<T>,

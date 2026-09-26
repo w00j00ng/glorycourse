@@ -4,7 +4,6 @@ import { produce } from 'immer';
 import {
   StoreEpochConflictError,
   StoreRevisionConflictError,
-  type DatabaseState,
   type EnrollmentRecord as Enrollment,
   type NamedRecord as Named,
   type SemesterCourseRecord as SemesterCourse,
@@ -13,6 +12,7 @@ import {
 } from '../storage/store.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 
+type EnrollmentData = ReturnType<Store['enrollmentData']>;
 type Action = 'CREATE' | 'UPDATE' | 'DELETE';
 export type Acknowledgement = NonNullable<Enrollment['exceptionAcknowledgement']>;
 type PreviewInput = {
@@ -124,7 +124,7 @@ export class EnrollmentService {
 
   preview(input: PreviewInput) {
     const clean = validateInput(input);
-    const data = this.store.read();
+    const data = this.store.enrollmentData();
     validateTarget(data, clean);
     const issues = enrollmentIssues(data, clean);
     const warningDigest = digestEnrollmentWarnings(issues);
@@ -151,7 +151,7 @@ export class EnrollmentService {
 
   previewMany(inputs: BatchInput[]) {
     const clean = validateBatchInput(inputs);
-    const data = this.store.read();
+    const data = this.store.enrollmentData();
     let issues: EnrollmentIssue[] = [];
     produce(data, (candidate) => {
       issues = applyBatchCandidate(candidate, clean, this.dependencies.now().toISOString(), randomUUID).issues;
@@ -261,14 +261,14 @@ export class EnrollmentService {
   }
 
   get(id: string): EnrollmentView {
-    const data = this.store.read();
+    const data = this.store.enrollmentData();
     const enrollment = enrollments(data).find((item) => item.id === id);
     if (!enrollment) throw new EnrollmentNotFoundError();
     return enrollmentView(data, enrollment);
   }
 
   list(filters: EnrollmentListFilters = {}): EnrollmentView[] {
-    const data = this.store.read();
+    const data = this.store.enrollmentData();
     const memberName = filters.memberName?.trim().normalize('NFC');
     return enrollments(data).filter((enrollment) => {
       const semesterCourse = semesterCourses(data).find(({ id }) => id === enrollment.semesterCourseId);
@@ -280,7 +280,7 @@ export class EnrollmentService {
   }
 
   previewSemesterDeletion(semesterId: string) {
-    const data = this.store.read();
+    const data = this.store.enrollmentData();
     const semester = semesters(data).find(({ id }) => id === semesterId);
     if (!semester) throw new EnrollmentNotFoundError();
     const courseIds = new Set(semesterCourses(data)
@@ -328,12 +328,12 @@ export class EnrollmentService {
 }
 
 export const evaluateEnrollmentImport = (
-  data: DatabaseState,
+  data: EnrollmentData,
   input: { semesterName: string; memberName: string; courseName: string },
 ): EnrollmentIssue[] => enrollmentIssues(data, validateInput({ action: 'CREATE', ...input }));
 
 export const evaluateEnrollmentSelection = (
-  data: DatabaseState,
+  data: EnrollmentData,
   input: { semesterCourseId: string; memberId: string },
 ): EnrollmentIssue[] => {
   const semesterCourse = semesterCourses(data).find(({ id }) => id === input.semesterCourseId);
@@ -352,7 +352,7 @@ export const evaluateEnrollmentSelection = (
 };
 
 export const applyEnrollmentImport = (
-  data: DatabaseState,
+  data: EnrollmentData,
   input: { semesterName: string; memberName: string; courseName: string },
   acknowledgedWarningDigest: string,
   acknowledgementNote: string | undefined,
@@ -397,14 +397,14 @@ const validateInput = (input: PreviewInput): CleanInput => {
   return { ...input, semesterName, memberName, courseName };
 };
 
-const validateTarget = (data: DatabaseState, input: CleanInput): void => {
+const validateTarget = (data: EnrollmentData, input: CleanInput): void => {
   if (input.action === 'CREATE') return;
   const target = enrollments(data).find((item) => item.id === input.enrollmentId);
   if (!target) throw new EnrollmentNotFoundError();
   if (target.revision !== input.expectedRevision) throw new EnrollmentStaleError();
 };
 
-const enrollmentIssues = (data: DatabaseState, input: CleanInput): EnrollmentIssue[] => {
+const enrollmentIssues = (data: EnrollmentData, input: CleanInput): EnrollmentIssue[] => {
   if (input.action === 'DELETE') return [];
   const semester = semesters(data).find((item) => item.nameKey === nameKey(input.semesterName));
   const member = members(data).find((item) => item.nameKey === nameKey(input.memberName));
@@ -477,7 +477,7 @@ const issue = (
 });
 
 const applyEnrollmentChange = (
-  data: DatabaseState,
+  data: EnrollmentData,
   input: CleanInput,
   acknowledgement: Acknowledgement | null,
   now: string,
@@ -516,7 +516,7 @@ const applyEnrollmentChange = (
   return enrollmentView(data, current);
 };
 
-const enrollmentView = (data: DatabaseState, enrollment: Enrollment): EnrollmentView => {
+const enrollmentView = (data: EnrollmentData, enrollment: Enrollment): EnrollmentView => {
   const semesterCourse = semesterCourses(data).find((item) => item.id === enrollment.semesterCourseId);
   const semester = semesterCourse && semesters(data).find((item) => item.id === semesterCourse.semesterId);
   const course = semesterCourse && courses(data).find((item) => item.id === semesterCourse.courseId);
@@ -607,7 +607,7 @@ const validateBatchInput = (inputs: BatchInput[]): BatchInput[] => {
   });
 };
 
-const applyBatchCandidate = (data: DatabaseState, inputs: BatchInput[], now: string, id: () => string) => {
+const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: string, id: () => string) => {
   const issues: EnrollmentIssue[] = [];
   const items: EnrollmentView[] = [];
   for (const [index, input] of inputs.entries()) {
@@ -663,7 +663,7 @@ const resolveNamed = (items: Named[], name: string, now: string, id: () => strin
 };
 
 const resolveSemester = (
-  data: DatabaseState,
+  data: EnrollmentData,
   name: string,
   now: string,
   id: () => string,
@@ -685,7 +685,7 @@ const resolveSemester = (
 };
 
 const resolveSemesterCourse = (
-  data: DatabaseState,
+  data: EnrollmentData,
   semesterId: string,
   courseId: string,
   now: string,
@@ -707,8 +707,8 @@ const resolveSemesterCourse = (
   return created;
 };
 
-const semesters = (data: DatabaseState): Semester[] => data.semesters;
-const members = (data: DatabaseState): Named[] => data.members;
-const courses = (data: DatabaseState): Named[] => data.courses;
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
-const enrollments = (data: DatabaseState): Enrollment[] => data.enrollments;
+const semesters = (data: EnrollmentData): Semester[] => data.semesters;
+const members = (data: EnrollmentData): Named[] => data.members;
+const courses = (data: EnrollmentData): Named[] => data.courses;
+const semesterCourses = (data: EnrollmentData): SemesterCourse[] => data.semesterCourses;
+const enrollments = (data: EnrollmentData): Enrollment[] => data.enrollments;
