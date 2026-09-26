@@ -558,8 +558,10 @@ const deleteSemesterEnrollments = async () => {
   await loadEnrollments();
 };
 
+let draftOpenRequest = 0;
 const deleteDraft = async (item) => {
   if (!window.confirm('이 배정초안을 삭제할까요? 수강이력은 삭제되지 않습니다.')) return;
+  draftOpenRequest++;
   await run(() => api(`/allocation-drafts/${item.id}`, {
     method: 'DELETE',
     body: JSON.stringify({ expectedDraftRevision: item.revision }),
@@ -844,6 +846,7 @@ const submitDraft = async (event) => {
     `${item.policyId}\n${item.policyVersion}` === form.elements.policy.value
   ));
   if (!policy) return;
+  const request = ++draftOpenRequest;
   const detail = await run(() => api('/allocation-drafts', {
     method: 'POST',
     body: JSON.stringify({
@@ -856,12 +859,16 @@ const submitDraft = async (event) => {
   }), '배정초안을 생성했습니다.');
   byId('draft-create-dialog').close();
   await loadDrafts();
-  await showDraft(detail, await api(`/semesters/${detail.draft.semesterId}/context`));
+  const context = await api(`/semesters/${detail.draft.semesterId}/context`);
+  if (request === draftOpenRequest) await showDraft(detail, context);
 };
 
 const openDraft = async (id) => {
+  const request = ++draftOpenRequest;
   const detail = await api(`/allocation-drafts/${id}`);
+  if (request !== draftOpenRequest) return;
   const context = await api(`/semesters/${detail.draft.semesterId}/context`);
+  if (request !== draftOpenRequest) return;
   await showDraft(detail, context);
 };
 

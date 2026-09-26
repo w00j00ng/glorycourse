@@ -231,6 +231,57 @@ test('draft readiness follows the semester currently selected', async ({ page, a
   }
 });
 
+test('a late draft detail does not replace the draft selected afterward', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  for (const name of ['첫째 학기', '둘째 학기']) {
+    await page.locator('#new-semester').click();
+    await page.locator('#semester-create-form [name="name"]').fill(name);
+    await page.locator('#semester-create-form [type="submit"]').click();
+    await expect(page.locator('#catalog-semester-rows')).toContainText(name);
+  }
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  for (const name of ['첫째 학기', '둘째 학기']) {
+    await page.locator('#new-draft').click();
+    await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: name });
+    await page.locator('#draft-create-form [name="mode"]').selectOption('MANUAL');
+    await page.locator('#draft-create-form [type="submit"]').click();
+    await expect(page.locator('#draft-dialog-title')).toContainText(name);
+    await page.locator('#draft-dialog .close-dialog').first().click();
+  }
+  await expect(page.locator('#draft-rows tr')).toHaveCount(2);
+
+  let releaseOldResponse;
+  const holdOldResponse = new Promise((resolve) => { releaseOldResponse = resolve; });
+  let oldResponseReady;
+  const oldResponseCaptured = new Promise((resolve) => { oldResponseReady = resolve; });
+  let delayed = false;
+  let oldDetailUrl;
+  await page.route('**/api/v1/allocation-drafts/*', async (route) => {
+    if (route.request().method() !== 'GET' || delayed) return route.continue();
+    delayed = true;
+    oldDetailUrl = route.request().url();
+    const response = await route.fetch();
+    oldResponseReady();
+    await holdOldResponse;
+    await route.fulfill({ response });
+  });
+
+  try {
+    await page.locator('#draft-rows tr').filter({ hasText: '첫째 학기' }).getByRole('button', { name: '검토' }).click();
+    await oldResponseCaptured;
+    await page.locator('#draft-rows tr').filter({ hasText: '둘째 학기' }).getByRole('button', { name: '검토' }).click();
+    await expect(page.locator('#draft-dialog-title')).toContainText('둘째 학기');
+
+    const oldDetailReturned = page.waitForResponse((response) => response.url() === oldDetailUrl);
+    releaseOldResponse();
+    await oldDetailReturned;
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('#draft-dialog-title')).toContainText('둘째 학기');
+  } finally {
+    releaseOldResponse();
+  }
+});
+
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();
