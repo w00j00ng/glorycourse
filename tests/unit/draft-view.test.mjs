@@ -7,6 +7,7 @@ import {
   draftDecisionChanged,
   draftFinalSelection,
   filterDraftItems,
+  draftItemPage,
   sortDraftItems,
 } from '../../frontend/draft-view.js';
 
@@ -34,6 +35,26 @@ const items = [
     finalDecision: 'SELECTED', finalSemesterCourseId: 'course-acting', finalReasonCode: null,
   },
 ];
+
+test('pages a large draft after filtering and sorting without losing the selected page', () => {
+  const rows = Array.from({ length: 10_000 }, (_, index) => ({ memberId: `member-${index + 1}` }));
+  const cases = [
+    { input: rows, page: 1, expectedPage: 1, count: 50, first: 'member-1', last: 'member-50' },
+    { input: rows, page: 2, expectedPage: 2, count: 50, first: 'member-51', last: 'member-100' },
+    { input: rows, page: 201, expectedPage: 200, count: 50, first: 'member-9951', last: 'member-10000' },
+    { input: rows.slice(0, 3), page: 20, expectedPage: 1, count: 3, first: 'member-1', last: 'member-3' },
+    { input: [], page: 20, expectedPage: 1, count: 0 },
+  ];
+  for (const { input, page, expectedPage, count, first, last } of cases) {
+    const result = draftItemPage(input, page, 50);
+    assert.equal(result.page, expectedPage);
+    assert.equal(result.total, input.length);
+    assert.equal(result.items.length, count);
+    assert.equal(result.items[0]?.memberId, first);
+    assert.equal(result.items.at(-1)?.memberId, last);
+  }
+  assert.equal(rows.length, 10_000);
+});
 
 test('shows application order separately and keeps ranked choices concise in a draft', () => {
   const snapshot = {

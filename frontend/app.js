@@ -3,6 +3,7 @@ import {
   draftApplicationSummaries,
   draftDecisionChanged,
   draftFinalSelection,
+  draftItemPage,
   filterDraftItems,
   reasonLabel,
   sortDraftItems,
@@ -32,6 +33,7 @@ const state = {
     application: { page: 1, limit: PAGE_LIMIT, total: 0 },
     enrollment: { page: 1, limit: PAGE_LIMIT, total: 0 },
     draft: { page: 1, limit: PAGE_LIMIT, total: 0 },
+    'draft-item': { page: 1, limit: PAGE_LIMIT, total: 0 },
   },
 };
 const byId = (id) => document.getElementById(id);
@@ -1216,6 +1218,7 @@ const showDraft = async (detail, context) => {
   state.draftContext = context;
   state.draftApplicationSummaries = draftApplicationSummaries(detail.applicationSnapshot);
   if (changedDraft) {
+    state.pagination['draft-item'].page = 1;
     byId('draft-search').value = '';
     byId('draft-result-filter').value = 'ALL';
     byId('draft-grouping').value = 'STUDENT';
@@ -1247,14 +1250,23 @@ const renderDraftItems = () => {
     result: byId('draft-result-filter').value,
     courseName: draftCourseName,
   }), { applications: state.draftApplicationSummaries, courseView, courseName: draftCourseName, sort: byId('draft-sort').value });
-  byId('draft-item-rows').replaceChildren(...items.map((item) => {
+  const { items: visibleItems, ...pagination } = draftItemPage(items, state.pagination['draft-item'].page, PAGE_LIMIT);
+  state.pagination['draft-item'] = pagination;
+  renderPagination('draft-item');
+  byId('draft-item-rows').replaceChildren(...visibleItems.map((item) => {
     const row = document.createElement('tr');
     row.classList.toggle('draft-row-changed', draftDecisionChanged(item));
     const finalSelect = document.createElement('select');
     finalSelect.setAttribute('aria-label', `${item.memberNameAtGeneration} 최종 배정`);
-    fillSelect(finalSelect, state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '제외');
+    fillSelect(finalSelect, item.finalDecision === 'SELECTED'
+      ? [{ id: item.finalSemesterCourseId, name: draftCourseName(item.finalSemesterCourseId) }] : [], '제외');
     finalSelect.value = item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : '';
     finalSelect.disabled = readonly;
+    if (!readonly) finalSelect.addEventListener('focus', () => {
+      const selected = finalSelect.value;
+      fillSelect(finalSelect, state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '제외');
+      finalSelect.value = selected;
+    }, { once: true });
     const finalCell = document.createElement('td');
     finalCell.append(finalSelect);
     const application = state.draftApplicationSummaries.get(item.sourceApplicationId);
@@ -1291,11 +1303,14 @@ const draftReasonCell = (item) => {
   summary.textContent = reasonLabel(item.autoReasonCode);
   const list = document.createElement('ul');
   list.className = 'draft-reason-list';
-  list.append(...describeAllocationEvidence(item, draftCourseName).map((text) => {
-    const line = document.createElement('li');
-    line.textContent = text;
-    return line;
-  }));
+  details.addEventListener('toggle', () => {
+    if (!details.open || list.childElementCount) return;
+    list.append(...describeAllocationEvidence(item, draftCourseName).map((text) => {
+      const line = document.createElement('li');
+      line.textContent = text;
+      return line;
+    }));
+  });
   details.append(summary, list);
   td.append(details);
   return td;
@@ -1378,17 +1393,23 @@ const finalizeDraft = async (event) => {
   event.preventDefault();
   const finalization = state.finalization;
   if (!finalization) return;
-  finalization.request ??= {
+  const request = finalization.request ??= {
     preparedActionToken: finalization.preview.preparedActionToken,
     expectedDraftRevision: finalization.preview.draftRevision,
     acknowledgedWarningDigest: finalization.preview.warningDigest,
     acknowledgementNote: event.currentTarget.elements.note.value,
   };
-  const receipt = await run(() => api(`/allocation-drafts/${finalization.draftId}/finalize`, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': finalization.idempotencyKey },
-    body: JSON.stringify(finalization.request),
-  }), '배정초안을 확정하고 수강이력을 생성했습니다.');
+  let receipt;
+  try {
+    receipt = await run(() => api(`/allocation-drafts/${finalization.draftId}/finalize`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': finalization.idempotencyKey },
+      body: JSON.stringify(request),
+    }), '배정초안을 확정하고 수강이력을 생성했습니다.');
+  } catch (error) {
+    if (error.code === 'UNPROCESSABLE' && finalization.request === request) finalization.request = null;
+    throw error;
+  }
   byId('finalize-dialog').close();
   byId('draft-dialog').close();
   state.finalization = null;
@@ -1442,7 +1463,7 @@ const submitRestore = async (event) => {
     return;
   }
   const restore = state.restore;
-  restore.request ??= {
+  const request = restore.request ??= {
     preparedActionToken: restore.preview.preparedActionToken,
     acknowledgedWarningDigest: restore.preview.warningDigest,
     acknowledgementNote: form.elements.note.value,
@@ -1452,9 +1473,10 @@ const submitRestore = async (event) => {
     receipt = await run(() => api('/restores', {
       method: 'POST',
       headers: { 'Idempotency-Key': restore.idempotencyKey },
-      body: JSON.stringify(restore.request),
+      body: JSON.stringify(request),
     }), '백업 파일로 자료를 복원했습니다.');
   } catch (error) {
+    if (error.code === 'UNPROCESSABLE' && restore.request === request) restore.request = null;
     if (error.code === 'PREVIEW_STALE') clearRestorePreview();
     throw error;
   }
@@ -1714,10 +1736,12 @@ byId('refresh-catalog').addEventListener('click', () => {
 byId('draft-create-form').addEventListener('submit', (event) => { void submitDraft(event).catch(() => {}); });
 byId('draft-create-form').elements.policy.addEventListener('change', showPolicyDescription);
 byId('draft-create-form').elements.semesterId.addEventListener('change', () => { void showDraftReadiness().catch(() => {}); });
-byId('draft-grouping').addEventListener('change', renderDraftItems);
-byId('draft-sort').addEventListener('change', renderDraftItems);
-byId('draft-result-filter').addEventListener('change', renderDraftItems);
-byId('draft-search').addEventListener('input', renderDraftItems);
+byId('draft-grouping').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
+byId('draft-sort').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
+byId('draft-result-filter').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
+byId('draft-search').addEventListener('input', () => resetPage('draft-item', renderDraftItems));
+byId('draft-item-previous-page').addEventListener('click', () => changePage('draft-item', -1, renderDraftItems));
+byId('draft-item-next-page').addEventListener('click', () => changePage('draft-item', 1, renderDraftItems));
 byId('add-draft-item').addEventListener('click', () => { void addDraftItem().catch(() => {}); });
 byId('preview-finalization').addEventListener('click', () => { void previewFinalization().catch(() => {}); });
 byId('finalize-form').addEventListener('submit', (event) => { void finalizeDraft(event).catch(() => {}); });

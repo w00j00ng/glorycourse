@@ -321,3 +321,92 @@ test('shows only the latest semester editor when semester selections finish out 
     if (expected) assert.equal(nodes['semester-form'].elements.name.value, `Semester ${expected.toUpperCase()} ${sequence.length - 1}`);
   }
 });
+
+for (const { action, operation } of [
+  { action: 'finalizeDraft', operation: 'finalization' },
+  { action: 'submitRestore', operation: 'restore' },
+]) {
+  test(`accepts a corrected ${operation} note after rejection and preserves uncertain retries`, async () => {
+    for (const code of ['UNPROCESSABLE', 'INTERNAL_ERROR', undefined]) {
+      const note = { value: code === 'UNPROCESSABLE' ? '   ' : 'Original acknowledgement' };
+      const failure = Object.assign(new Error('Request failed'), code ? { code } : {});
+      const requests = [];
+      const closed = [];
+      const context = vm.createContext({
+        state: {
+          [operation]: {
+            preview: { preparedActionToken: 'preview-token', warningDigest: 'warnings', draftRevision: 3 },
+            draftId: 'draft', idempotencyKey: 'same-operation-key', request: null,
+          },
+          draft: { draft: { id: 'draft' } },
+        },
+        byId: (id) => ({ close: () => closed.push(id) }),
+        api: async (path, options) => {
+          requests.push({ path, body: options.body, key: options.headers['Idempotency-Key'] });
+          if (requests.length === 1) throw failure;
+          if (!JSON.parse(options.body).acknowledgementNote.trim()) throw failure;
+          return { createdCount: 2, storeRevision: 4 };
+        },
+        run: async (callback) => callback(), showMessage() {},
+        loadCatalogs: async () => {}, loadApplications: async () => {}, loadEnrollments: async () => {},
+        loadDrafts: async () => {}, loadBackups: async () => {},
+      });
+      vm.runInContext(`${appFunction(action)}\nglobalThis.submit = ${action};`, context);
+      const event = { preventDefault() {}, currentTarget: { elements: { note } } };
+      await assert.rejects(context.submit(event), (error) => error === failure);
+      note.value = 'Corrected acknowledgement';
+      await context.submit(event);
+
+      assert.equal(requests.length, 2, code);
+      assert.equal(requests[1].path, requests[0].path, code);
+      assert.equal(requests[1].key, requests[0].key, code);
+      const original = JSON.parse(requests[0].body);
+      const retried = JSON.parse(requests[1].body);
+      if (code === 'UNPROCESSABLE') {
+        assert.deepEqual(retried, { ...original, acknowledgementNote: 'Corrected acknowledgement' });
+      } else {
+        assert.equal(requests[1].body, requests[0].body, 'an uncertain outcome must replay the identical request');
+      }
+      assert.equal(context.state[operation], null, code);
+      assert.ok(closed.includes(operation === 'restore' ? 'restore-dialog' : 'finalize-dialog'), code);
+    }
+  });
+
+  test(`preserves a corrected ${operation} retry when an older duplicate is rejected later`, async () => {
+    const note = { value: '   ' };
+    const pending = [];
+    const context = vm.createContext({
+      state: {
+        [operation]: {
+          preview: { preparedActionToken: 'preview-token', warningDigest: 'warnings', draftRevision: 3 },
+          draftId: 'draft', idempotencyKey: 'same-operation-key', request: null,
+        },
+      },
+      byId: () => ({ close() {} }),
+      api: (_path, options) => new Promise((resolve, reject) => pending.push({ options, resolve, reject })),
+      run: async (callback) => callback(), showMessage() {},
+      loadCatalogs: async () => {}, loadApplications: async () => {}, loadEnrollments: async () => {},
+      loadDrafts: async () => {}, loadBackups: async () => {},
+    });
+    vm.runInContext(`${appFunction(action)}\nglobalThis.submit = ${action};`, context);
+    const event = { preventDefault() {}, currentTarget: { elements: { note } } };
+    const rejected = Object.assign(new Error('Invalid acknowledgement'), { code: 'UNPROCESSABLE' });
+    const first = assert.rejects(context.submit(event), { code: 'UNPROCESSABLE' });
+    const duplicate = assert.rejects(context.submit(event), { code: 'UNPROCESSABLE' });
+    pending[0].reject(rejected);
+    await first;
+    note.value = 'Corrected acknowledgement';
+    const corrected = assert.rejects(context.submit(event), /Connection lost/);
+    pending[1].reject(rejected);
+    await duplicate;
+    pending[2].reject(new Error('Connection lost'));
+    await corrected;
+    note.value = 'Further edited acknowledgement';
+    const retried = context.submit(event);
+    assert.equal(pending[3].options.body, pending[2].options.body);
+    assert.equal(pending[3].options.headers['Idempotency-Key'], pending[2].options.headers['Idempotency-Key']);
+    pending[3].resolve({ createdCount: 2, storeRevision: 4 });
+    await retried;
+    assert.equal(context.state[operation], null);
+  });
+}

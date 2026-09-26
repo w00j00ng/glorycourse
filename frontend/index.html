@@ -343,6 +343,11 @@
         </table>
         <p id="draft-item-empty" class="empty">검토할 학생이 없습니다.</p>
       </div>
+      <nav class="pagination" aria-label="배정초안 상세 페이지">
+        <button class="secondary" id="draft-item-previous-page" type="button">이전</button>
+        <span id="draft-item-page-status" aria-live="polite"></span>
+        <button class="secondary" id="draft-item-next-page" type="button">다음</button>
+      </nav>
       <fieldset id="draft-add-item">
         <legend>신청 없는 회원 추가</legend>
         <div class="form-grid"><label>회원<select id="draft-add-member"></select></label><label>배정 강좌<select id="draft-add-course"></select></label></div>

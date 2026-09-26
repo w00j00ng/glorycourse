@@ -66,6 +66,11 @@ export const sortDraftItems = (items, { applications, courseView, courseName, so
     || left.memberId.localeCompare(right.memberId);
 });
 
+export const draftItemPage = (items, requestedPage, limit) => {
+  const page = Math.min(Math.max(1, requestedPage), Math.max(1, Math.ceil(items.length / limit)));
+  return { items: items.slice((page - 1) * limit, page * limit), page, limit, total: items.length };
+};
+
 export const draftFinalSelection = (item, semesterCourseId) => {
   const automaticCourseId = item.autoDecision === 'SELECTED' ? item.autoSemesterCourseId : '';
   const changed = semesterCourseId !== automaticCourseId;
