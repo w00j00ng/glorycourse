@@ -333,12 +333,19 @@ test('an administrator reviews a completed application template before importing
   await page.locator('#import-preview-action [type="submit"]').click();
   await expect(page.locator('#import-source-count')).toHaveText('1');
   await expect(page.locator('#import-insert-count')).toHaveText('1');
+  await expect(page.locator('#import-candidates')).toContainText('양식 회원');
+  await expect(page.locator('#import-candidates')).toContainText('창세기');
   await expect(page.locator('#application-rows tr')).toHaveCount(0);
   await page.locator('#commit-import').click();
   await expect(page.locator('#import-preview-status')).toContainText('반영됨');
   await page.locator('#import-dialog .close-dialog').first().click();
   await expect(page.locator('#application-rows tr')).toHaveCount(1);
   await expect(page.locator('#application-rows')).toContainText('양식 회원');
+  await page.locator('#applications-view .import-open').click();
+  await expect(page.locator('#import-dialog-title')).toHaveText('수강신청 Excel 검토');
+  await expect(page.locator('#import-preview')).toBeHidden();
+  await expect(page.locator('#import-preview-action')).toBeVisible();
+  await page.locator('#import-dialog .close-dialog').first().click();
 });
 
 test('an administrator registers multiple historical enrollments without applications or catalog setup', async ({ page, app }) => {

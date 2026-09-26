@@ -17,6 +17,7 @@ import { createFinalizationPage } from './finalization-page.js';
 import { createApplicationsPage } from './applications-page.js';
 import { createCatalogPage } from './catalog-page.js';
 import { createEnrollmentsPage } from './enrollments-page.js';
+import { createImportsPage } from './imports-page.js';
 import { PAGE_HELP } from './help-content.js';
 import { issueText } from './issue-view.js';
 
@@ -260,133 +261,6 @@ const reviewWarnings = (preview, issueContext = () => ({})) => {
   });
 };
 
-const openImport = (kind) => {
-  const form = byId('import-form');
-  form.reset();
-  form.elements.kind.value = kind;
-  state.importPreview = null;
-  byId('import-dialog-title').textContent = kind === 'APPLICATIONS' ? '수강신청 Excel 검토' : '수강이력 Excel 검토';
-  byId('import-mode-field').hidden = kind === 'ENROLLMENTS';
-  byId('import-preview').hidden = true;
-  byId('import-preview-action').hidden = false;
-  byId('import-dialog').showModal();
-};
-
-const submitImport = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const payload = new FormData(form);
-  if (form.elements.kind.value === 'ENROLLMENTS') payload.set('mode', 'MERGE_KEEP_EXISTING');
-  const preview = await run(() => api('/imports/preview', { method: 'POST', body: payload }));
-  state.importPreview = preview;
-  byId('import-source-count').textContent = String(preview.sourceRowCount);
-  byId('import-insert-count').textContent = String(preview.insertCandidates);
-  byId('import-identical-count').textContent = String(preview.identicalRows);
-  byId('import-conflict-count').textContent = String(preview.conflicts);
-  byId('import-preview-status').textContent = `아직 저장되지 않음 · ${new Date(preview.expiresAt).toLocaleTimeString()}까지 유효`;
-  byId('import-issues').replaceChildren(...(
-    preview.issues.length ? preview.issues : [{ severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]
-  ).map((issue) => {
-    const item = document.createElement('li');
-    item.textContent = issueText(issue);
-    if (issue.severity === 'INFO') {
-      item.classList.add('information');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'secondary import-issue-dismiss';
-      button.textContent = '닫기';
-      button.setAttribute('aria-label', `${issueText(issue)} 닫기`);
-      button.addEventListener('click', () => item.remove());
-      item.append(' ', button);
-    }
-    return item;
-  }));
-  renderImportCandidates(preview);
-  renderImportResolutions(preview);
-  const blocksCommit = preview.issues.some((issue) => (
-    issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
-  )) || (preview.kind === 'ENROLLMENTS' && preview.conflicts > 0);
-  byId('commit-import').disabled = blocksCommit;
-  byId('import-preview').hidden = false;
-  byId('import-preview-action').hidden = true;
-};
-
-const renderImportCandidates = (preview) => {
-  const candidates = preview.kind === 'APPLICATIONS' ? preview.applications : preview.enrollments;
-  byId('import-candidates').replaceChildren(...candidates.map((candidate) => {
-    const card = document.createElement('div');
-    card.className = 'import-candidate';
-    const title = document.createElement('strong');
-    title.textContent = `${candidate.semesterName || '학기 미정'} · ${candidate.memberName || '회원 미정'}`;
-    const detail = document.createElement('small');
-    detail.textContent = preview.kind === 'APPLICATIONS'
-      ? `신청순서 ${candidate.applicationOrder ?? '미정'} · ${candidate.choices.map(({ courseName, preference }) => `${preference ?? '?'}순위 ${courseName || '강좌 미정'}`).join(', ')}`
-      : candidate.courseName || '강좌 미정';
-    card.append(title, detail);
-    return card;
-  }));
-};
-
-const renderImportResolutions = (preview) => {
-  const rows = [];
-  preview.applications.forEach((candidate, index) => {
-    if (preview.conflicts > 0) {
-      rows.push(resolutionSelect(
-        `신청 충돌 · ${candidate.semesterName} · ${candidate.memberName}`,
-        `application-action-${index}`,
-        [['KEEP_EXISTING', '기존 신청 유지'], ['REPLACE_APPLICATION', '파일 신청으로 교체']],
-        preview.mode === 'REPLACE_APPLICATION' ? 'REPLACE_APPLICATION' : 'KEEP_EXISTING',
-      ));
-    }
-    if (candidate.applicationOrderStatus !== 'NORMAL') {
-      rows.push(resolutionNumber(
-        `신청순서 확인 · ${candidate.semesterName} · ${candidate.memberName}`,
-        `application-order-${index}`,
-      ));
-    }
-  });
-  preview.contextChanges.forEach((change, index) => {
-    if (change.status !== 'EXISTING_CONFLICT') return;
-    rows.push(resolutionSelect(
-      `${change.semesterName}${change.courseName ? ` · ${change.courseName}` : ''} ${change.field === 'order' ? '순서' : '정원'}`,
-      `context-action-${index}`,
-      [['KEEP_EXISTING', '기존 값 유지'], ['APPLY_FILE_VALUE', `파일 값 적용 (${change.fileValue})`]],
-      'KEEP_EXISTING',
-    ));
-  });
-  byId('import-resolutions').replaceChildren(...rows);
-};
-
-const resolutionSelect = (text, name, options, selected) => {
-  const row = document.createElement('label');
-  row.className = 'resolution-row';
-  row.append(document.createTextNode(text));
-  const select = document.createElement('select');
-  select.name = name;
-  for (const [value, label] of options) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    option.selected = value === selected;
-    select.append(option);
-  }
-  row.append(select);
-  return row;
-};
-
-const resolutionNumber = (text, name) => {
-  const row = document.createElement('label');
-  row.className = 'resolution-row';
-  row.append(document.createTextNode(text));
-  const input = document.createElement('input');
-  input.name = name;
-  input.type = 'number';
-  input.min = '1';
-  input.step = '1';
-  input.required = true;
-  row.append(input);
-  return row;
-};
 
 const commitImport = async () => {
   const preview = state.importPreview;
@@ -757,6 +631,7 @@ const { load: loadEnrollments, completeReport: completeEnrollmentReport,
   state, byId, showMessage, api, run, download, loadPaged, loadCatalogs, recordQuery, resourceName, cell, actionsCell,
   reviewWarnings,
 });
+const { open: openImport, submit: submitImport } = createImportsPage({ state, byId, api, run });
 const { previewFinalization, finalizeDraft } = createFinalizationPage({
   state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
 });
