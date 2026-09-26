@@ -11,6 +11,7 @@ import {
   type InputChange,
 } from '../allocation/snapshot.ts';
 import {
+  cloneStoreValue,
   type AllocationDraftItemRecord as DraftItemRecord,
   type AllocationDraftRecord as DraftRecord,
   type DatabaseState,
@@ -143,7 +144,7 @@ export class DraftService {
         policyId,
         policyVersion,
         engineVersion: ALLOCATION_ENGINE_VERSION,
-        policySettings: structuredClone(policySettings),
+        policySettings: cloneStoreValue(policySettings),
         randomSeed,
         sourceRevision: replay?.sourceRevision ?? semester!.allocationInputRevision,
         inputFingerprint: allocationFingerprint(snapshot, {
@@ -151,7 +152,7 @@ export class DraftService {
           policyVersion,
           settings: policySettings,
         }),
-        inputSnapshot: structuredClone(snapshot),
+        inputSnapshot: cloneStoreValue(snapshot),
         createdAt: now,
         updatedAt: now,
         finalizedAt: null,

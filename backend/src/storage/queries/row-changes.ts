@@ -28,11 +28,12 @@ export const prepareRow = (db: DatabaseSync, table: string, columnList: string) 
 export const changedRecords = <T extends RecordKey>(
   items: T[], previous: T[] = [], resetChildren: (item: T) => boolean = () => false,
 ): { item: T; position: number; before?: T }[] => {
+  if (items === previous) return [];
   const old = new Map(previous.map((item, position) => [keyOf(item), { item, position }]));
   return items.flatMap((item, position) => {
     const stored = old.get(keyOf(item));
     const reset = stored !== undefined && resetChildren(stored.item);
-    if (!reset && stored?.position === position && isDeepStrictEqual(item, stored.item)) return [];
+    if (!reset && stored?.position === position && (item === stored.item || isDeepStrictEqual(item, stored.item))) return [];
     return [{ item, position, before: reset ? undefined : stored?.item }];
   });
 };
@@ -41,7 +42,7 @@ export const prepareChanges = <T extends RecordKey>(
   db: DatabaseSync, table: string, items: T[], previous: T[],
   uniqueFields: [string, (item: T) => string][] = [],
 ): void => {
-  if (previous.length === 0) return;
+  if (items === previous || previous.length === 0) return;
   const keyColumn = 'idempotencyKey' in previous[0] ? 'idempotency_key' : 'id';
   const current = new Map(items.map((item, position) => [keyOf(item), { item, position }]));
   if (current.size !== items.length) throw new Error(`Duplicate ${table} key`);

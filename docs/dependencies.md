@@ -12,10 +12,11 @@
 | `@excel.js/jszip` 0.2.0 | XLSX 압축 항목 크기·외부 링크 사전 검사 | MIT | <https://github.com/excel-js/excel-js/tree/main/packages/jszip> |
 | `ajv` 8.20.0 | 실행 중 저장 자료의 JSON Schema 검증 | MIT | <https://github.com/ajv-validator/ajv> |
 | `ajv-formats` 3.0.1 | 저장 자료의 날짜 등 format 검증 | MIT | <https://github.com/ajv-validator/ajv-formats> |
+| `immer` 11.1.18 | 저장 명령에서 변경된 경로만 복사 | MIT | <https://github.com/immerjs/immer> |
 
 저장은 Node.js 내장 `node:sqlite`를 사용하며 별도 SQLite 패키지를 설치하지 않는다. 기준 런타임 Node.js 22.14의 해당 API는 experimental 상태다. [공식 API 문서](https://nodejs.org/download/release/v22.14.0/docs/api/sqlite.html)를 기준으로 사용한다.
 
-배포본의 Node.js는 [release-config.json](../scripts/release-config.json)에 고정한 22.23.3을 사용한다. 공식 바이너리의 SHA-256을 확인하고 Node LICENSE와 production 의존성의 원래 라이선스 파일을 동봉한다. `ajv`와 `ajv-formats`는 개발 도구 없이도 필요한 실행 의존성이다. JSON Schema는 저장 전 구조 검증용이며 SQLite에 업무 자료를 JSON으로 보관한다는 의미가 아니다.
+배포본의 Node.js는 [release-config.json](../scripts/release-config.json)에 고정한 22.23.3을 사용한다. 공식 바이너리의 SHA-256을 확인하고 Node LICENSE와 production 의존성의 원래 라이선스 파일을 동봉한다. `ajv`, `ajv-formats`, `immer`는 개발 도구 없이도 필요한 실행 의존성이다. JSON Schema는 저장 전 구조 검증용이며 SQLite에 업무 자료를 JSON으로 보관한다는 의미가 아니다.
 
 ## 개발 의존성
 

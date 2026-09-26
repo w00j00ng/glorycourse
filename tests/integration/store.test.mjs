@@ -84,6 +84,45 @@ test('rejects an invalid candidate before writing it', async () => {
   assert.deepEqual(store.read(), emptyStore());
 });
 
+test('editing one member preserves unrelated rows and returns a usable result', async () => {
+  const initial = emptyStore();
+  initial.members.push(member('member-a'), member('member-b'));
+  initial.courses.push(member('course-a'));
+  let saved;
+  const adapter = {
+    read: async () => structuredClone(initial),
+    write: async (candidate, previous) => { saved = { candidate, previous }; },
+  };
+  const store = await Store.open(adapter, initial);
+
+  const result = await store.write({}, (candidate) => {
+    candidate.members[0].name = '수정 회원';
+    candidate.members[0].nameKey = '수정 회원';
+    return { member: candidate.members[0], course: candidate.courses[0] };
+  });
+
+  assert.equal(result.member.name, '수정 회원');
+  assert.equal(result.course.id, 'course-a');
+  assert.equal(store.read().members[0].name, '수정 회원');
+  assert.equal(saved.candidate.members[1], saved.previous.members[1]);
+  assert.equal(saved.candidate.courses, saved.previous.courses);
+  assert.equal(saved.candidate.meta.storeRevision, 1);
+});
+
+test('rejects an invalid edit of an existing row without changing saved data', async () => {
+  const initial = emptyStore();
+  initial.members.push(member('member-a'));
+  const adapter = new MemoryAdapter(initial);
+  const store = await Store.open(adapter, initial);
+
+  await assert.rejects(store.write({}, (candidate) => {
+    candidate.members[0].name = '';
+  }), StoreValidationError);
+
+  assert.equal(adapter.writeCount, 0);
+  assert.deepEqual(store.read(), initial);
+});
+
 test('recovers success when an adapter reports an error after persisting the candidate', async () => {
   const adapter = new WriteThenFailAdapter(emptyStore());
   const store = await Store.open(adapter, emptyStore());

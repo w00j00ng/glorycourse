@@ -1,9 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
+import { current, Immer, isDraft } from 'immer';
 
 import type { AllocationSnapshot, PolicySettings } from '../allocation/engine.ts';
 import { SQLiteAdapter } from './sqlite.ts';
 import { migrateDatabase } from './migrations.ts';
-import { assertValidStore } from './validate-store.ts';
+import { assertValidStore, assertValidStoreChanges } from './validate-store.ts';
 
 export { assertValidStore, StoreValidationError } from './validate-store.ts';
 
@@ -214,6 +215,19 @@ export class StoreRecoveryRequiredError extends Error {
   }
 }
 
+const drafts = new Immer({ autoFreeze: false });
+
+const detachResult = (value: unknown): unknown => {
+  if (isDraft(value)) return current(value);
+  if (Array.isArray(value)) return value.map(detachResult);
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, detachResult(item)]));
+  }
+  return value;
+};
+
+export const cloneStoreValue = <T>(value: T): T => structuredClone(detachResult(value)) as T;
+
 export class Store {
   #tail = Promise.resolve();
   #recoveryRequired = false;
@@ -271,10 +285,11 @@ export class Store {
     }
 
     const before = this.data;
-    const candidate = structuredClone(before);
-    const result = await command(candidate);
-    candidate.meta.storeRevision = before.meta.storeRevision + 1;
-    assertValidStore(candidate);
+    const draft = drafts.createDraft(before);
+    const result = cloneStoreValue(await command(draft));
+    draft.meta.storeRevision = before.meta.storeRevision + 1;
+    const candidate = drafts.finishDraft(draft);
+    assertValidStoreChanges(before, candidate);
     await this.#persist(candidate, before);
     return result;
   }

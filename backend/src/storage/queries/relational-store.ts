@@ -343,9 +343,10 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
     'id, position, application_id, semester_course_id, preference, created_at, updated_at');
   const sourceInsert = db.prepare(`INSERT INTO application_choice_source_refs
     (application_choice_id, position, import_batch_id, sheet, row_number) VALUES (?, ?, ?, ?, ?)`);
-  const applicationIds = new Set(data.applications.map((item) => item.id));
+  const applicationIds = data.applicationChoices === previous?.applicationChoices
+    ? null : new Set(data.applications.map((item) => item.id));
   const changedChoices = changedRecords(data.applicationChoices, previous?.applicationChoices,
-    (item) => !applicationIds.has(item.applicationId));
+    (item) => applicationIds !== null && !applicationIds.has(item.applicationId));
   changedChoices.forEach(({ item, position, before }) => {
     choiceInsert.run(item.id, position, item.applicationId, item.semesterCourseId, item.preference, item.createdAt, item.updatedAt);
     if (replaceChildren(db, 'application_choice_source_refs', 'application_choice_id', item.id, before?.sourceRefs, item.sourceRefs)) {
@@ -514,8 +515,9 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     (allocation_draft_item_id, position, semester_course_id) VALUES (?, ?, ?)`);
   const finalReasonInsert = db.prepare(`INSERT INTO allocation_item_final_reasons
     (allocation_draft_item_id, note) VALUES (?, ?)`);
-  const draftIds = new Set(drafts.map((draft) => draft.id));
-  const changedItems = changedRecords(items, previous?.allocationDraftItems, (item) => !draftIds.has(item.draftId));
+  const draftIds = items === previous?.allocationDraftItems ? null : new Set(drafts.map((draft) => draft.id));
+  const changedItems = changedRecords(items, previous?.allocationDraftItems,
+    (item) => draftIds !== null && !draftIds.has(item.draftId));
   changedItems.forEach(({ item, position, before }) => {
     itemInsert.run(item.id, position, item.draftId, item.memberId, item.sourceApplicationId,
       item.memberNameAtGeneration, item.autoSemesterCourseId, item.autoDecision,
