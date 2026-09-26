@@ -262,66 +262,6 @@ const reviewWarnings = (preview, issueContext = () => ({})) => {
 };
 
 
-const commitImport = async () => {
-  const preview = state.importPreview;
-  if (!preview) return;
-  let invalidOrder = '';
-  const note = await reviewWarnings(preview);
-  if (note === null) return;
-  const resolutions = preview.kind === 'ENROLLMENTS' && note
-    ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
-      entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
-      warningDigest: preview.warningDigest, acknowledgementNote: note,
-    }))
-    : [];
-  preview.applications.forEach((candidate, index) => {
-    const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
-    if (action) resolutions.push({
-      entity: 'APPLICATION', action,
-      semesterName: candidate.semesterName, memberName: candidate.memberName,
-    });
-    if (candidate.applicationOrderStatus !== 'NORMAL') {
-      const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
-      if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
-        invalidOrder = candidate.memberName;
-        return;
-      }
-      resolutions.push({
-        entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
-        semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
-      });
-    }
-  });
-  if (invalidOrder) {
-    showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
-    return;
-  }
-  preview.contextChanges.forEach((change, index) => {
-    if (change.status !== 'EXISTING_CONFLICT') return;
-    resolutions.push({
-      entity: change.entity,
-      action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
-      field: change.field,
-      semesterName: change.semesterName,
-      ...(change.courseName ? { courseName: change.courseName } : {}),
-    });
-  });
-  const receipt = await run(() => api(`/imports/${preview.previewId}/commit`, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify({
-      storeRevision: preview.storeRevision,
-      storeEpoch: preview.storeEpoch,
-      warningDigest: preview.warningDigest,
-      resolutions,
-    }),
-  }), 'Excel 자료를 반영했습니다.');
-  byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
-  byId('commit-import').disabled = true;
-  await loadCatalogs();
-  await Promise.all([loadApplications(), loadEnrollments()]);
-};
-
 let draftReadinessRequest = 0;
 const openDraftCreate = async () => {
   draftReadinessRequest++;
@@ -631,7 +571,6 @@ const { load: loadEnrollments, completeReport: completeEnrollmentReport,
   state, byId, showMessage, api, run, download, loadPaged, loadCatalogs, recordQuery, resourceName, cell, actionsCell,
   reviewWarnings,
 });
-const { open: openImport, submit: submitImport } = createImportsPage({ state, byId, api, run });
 const { previewFinalization, finalizeDraft } = createFinalizationPage({
   state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
 });
@@ -654,6 +593,9 @@ const {
   state, byId, api, fillSelect, showMessage, run, download,
   cell, choicesCell, badgeCell, actionsCell,
   loadPaged, recordQuery, loadCatalogs,
+});
+const { open: openImport, submit: submitImport, commit: commitImport } = createImportsPage({
+  state, byId, api, run, reviewWarnings, showMessage, loadCatalogs, loadApplications, loadEnrollments,
 });
 
 const {

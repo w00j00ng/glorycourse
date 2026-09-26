@@ -3,13 +3,15 @@ import { issueText } from './issue-view.js';
 /**
  * @typedef {{
  *   kind: 'APPLICATIONS' | 'ENROLLMENTS', mode: 'MERGE_KEEP_EXISTING' | 'REPLACE_APPLICATION',
+ *   previewId: string, storeRevision: number, storeEpoch: string, warningDigest: string,
  *   sourceRowCount: number, insertCandidates: number, identicalRows: number, conflicts: number, expiresAt: string,
  *   issues: { code: string, severity: 'ERROR' | 'WARNING' | 'INFO', message: string,
  *     blockingStages: string[], source?: { sheet?: string, row?: number, column?: string } }[],
  *   applications: { semesterName: string, memberName: string, applicationOrder: number | null,
  *     applicationOrderStatus: string, choices: { courseName: string, preference: number | null }[] }[],
  *   enrollments: { semesterName: string, memberName: string, courseName: string }[],
- *   contextChanges: { status: string, semesterName: string, courseName?: string, field: string, fileValue: number | null }[],
+ *   contextChanges: { entity: string, status: string, semesterName: string, courseName?: string,
+ *     field: string, fileValue: number | null }[],
  * }} ImportPreview
  */
 /**
@@ -17,10 +19,16 @@ import { issueText } from './issue-view.js';
  *   state: { importPreview: ImportPreview | null },
  *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<unknown>,
- *   run: (action: () => Promise<unknown>) => Promise<unknown>,
+ *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
+ *   reviewWarnings: (preview: ImportPreview) => Promise<string | null>,
+ *   showMessage: (message: string, isError?: boolean) => void,
+ *   loadCatalogs: () => Promise<void>,
+ *   loadApplications: () => Promise<void>,
+ *   loadEnrollments: () => Promise<void>,
  * }} dependencies
  */
-export const createImportsPage = ({ state, byId, api, run }) => {
+export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showMessage,
+  loadCatalogs, loadApplications, loadEnrollments }) => {
   /** @param {ImportPreview['kind']} kind */
   const open = (kind) => {
     const form = byId('import-form');
@@ -156,5 +164,66 @@ export const createImportsPage = ({ state, byId, api, run }) => {
     byId('import-preview-action').hidden = true;
   };
 
-  return { open, submit };
+  const commit = async () => {
+    const preview = state.importPreview;
+    if (!preview) return;
+    let invalidOrder = '';
+    const note = await reviewWarnings(preview);
+    if (note === null) return;
+    /** @type {Record<string, unknown>[]} */
+    const resolutions = preview.kind === 'ENROLLMENTS' && note
+      ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+        entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+        warningDigest: preview.warningDigest, acknowledgementNote: note,
+      }))
+      : [];
+    preview.applications.forEach((candidate, index) => {
+      const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
+      if (action) resolutions.push({
+        entity: 'APPLICATION', action,
+        semesterName: candidate.semesterName, memberName: candidate.memberName,
+      });
+      if (candidate.applicationOrderStatus !== 'NORMAL') {
+        const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
+        if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
+          invalidOrder = candidate.memberName;
+          return;
+        }
+        resolutions.push({
+          entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
+          semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+        });
+      }
+    });
+    if (invalidOrder) {
+      showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
+      return;
+    }
+    preview.contextChanges.forEach((change, index) => {
+      if (change.status !== 'EXISTING_CONFLICT') return;
+      resolutions.push({
+        entity: change.entity,
+        action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
+        field: change.field,
+        semesterName: change.semesterName,
+        ...(change.courseName ? { courseName: change.courseName } : {}),
+      });
+    });
+    const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${preview.previewId}/commit`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({
+        storeRevision: preview.storeRevision,
+        storeEpoch: preview.storeEpoch,
+        warningDigest: preview.warningDigest,
+        resolutions,
+      }),
+    }), 'Excel 자료를 반영했습니다.'));
+    byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
+    byId('commit-import').disabled = true;
+    await loadCatalogs();
+    await Promise.all([loadApplications(), loadEnrollments()]);
+  };
+
+  return { open, submit, commit };
 };

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
 import { createEnrollmentsPage } from '../../frontend/enrollments-page.js';
+import { createImportsPage } from '../../frontend/imports-page.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
 
 const source = await readFile(new URL('../../frontend/app.js', import.meta.url), 'utf8');
@@ -39,59 +40,64 @@ const withEnrollmentDocument = async (action) => {
 test('reloads imported records using the catalog and filters shown to the user', async () => {
   const oldSemester = { id: 'old', name: 'Old semester', order: 1 };
   const newSemester = { id: 'new', name: 'New semester', order: 2 };
-  const cases = [
-    { action: 'commitImport', touched: false, expectedSemester: 'new', expectedPage: 1 },
-  ];
+  const semesterSelect = { value: 'old' };
+  const nodes = {
+    'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {},
+  };
+  const queries = [];
+  let loadedSemester;
+  let imported;
+  const context = vm.createContext({
+    catalogLoadRequest: 0,
+    state: {
+      semesters: [oldSemester], courses: [], applicationSemesterFilterTouched: false,
+      pagination: { application: { page: 2 } },
+      importPreview: {
+        kind: 'APPLICATIONS', previewId: 'preview', storeRevision: 1, storeEpoch: 'epoch',
+        warningDigest: '', applications: [], contextChanges: [], issues: [],
+      },
+    },
+    byId: (id) => nodes[id],
+    api: async (path) => {
+      if (path === '/imports/preview/commit') {
+        imported = true;
+        return { inserted: 1, updated: 0, skipped: 0 };
+      }
+      if (path.startsWith('/semesters?')) return { items: [newSemester, oldSemester], page: 1, limit: 200, total: 2 };
+      return { items: [], page: 1, limit: 200, total: 0 };
+    },
+    loadPaged: async (name, _path, filter) => {
+      queries.push({ name, filter });
+      return [{ semesterId: filter }];
+    },
+    recordQuery: () => semesterSelect.value,
+    loadApplications: async () => {
+      const items = await context.loadPaged('application', '/applications', semesterSelect.value);
+      context.state.applications = items;
+    },
+    loadEnrollments: async () => { loadedSemester = currentSemester(context.state.semesters)?.id; },
+    fillDatalist() {},
+    fillFilterSelect: (id) => { if (id === 'application-semester-filter') semesterSelect.value = 'old'; },
+    orderSemesters, currentSemester, applicationSemesterFilterValue,
+    run: async (action) => action(),
+  });
+  const functions = ['loadCatalogItems', 'loadCatalogs'].map(appFunction).join('\n');
+  vm.runInContext(`${functions}\nglobalThis.loadCatalogs = loadCatalogs;`, context);
+  const { commit } = createImportsPage({
+    state: context.state, byId: context.byId, api: context.api, run: context.run,
+    reviewWarnings: async () => '', showMessage() {}, loadCatalogs: context.loadCatalogs,
+    loadApplications: context.loadApplications, loadEnrollments: context.loadEnrollments,
+  });
+  await commit();
 
-  for (const request of cases) {
-    const semesterSelect = { value: 'old' };
-    const nodes = {
-      'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {},
-    };
-    const queries = [];
-    let loadedSemester;
-    const context = vm.createContext({
-      catalogLoadRequest: 0,
-      state: {
-        semesters: [oldSemester], courses: [], applicationSemesterFilterTouched: request.touched,
-        pagination: { application: { page: 2 } },
-        importPreview: { kind: 'APPLICATIONS', previewId: 'preview', applications: [], contextChanges: [] },
-      },
-      byId: (id) => nodes[id],
-      api: async (path) => {
-        if (path.startsWith('/semesters?')) return { items: [newSemester, oldSemester], page: 1, limit: 200, total: 2 };
-        return { items: [], page: 1, limit: 200, total: 0 };
-      },
-      loadPaged: async (name, _path, filter) => {
-        queries.push({ name, filter });
-        return [{ semesterId: filter }];
-      },
-      recordQuery: () => semesterSelect.value,
-      loadApplications: async () => {
-        const items = await context.loadPaged('application', '/applications', semesterSelect.value);
-        context.state.applications = items;
-      },
-      loadEnrollments: async () => { loadedSemester = currentSemester(context.state.semesters)?.id; },
-      fillDatalist() {},
-      fillFilterSelect: (id) => { if (id === 'application-semester-filter') semesterSelect.value = 'old'; },
-      orderSemesters, currentSemester, applicationSemesterFilterValue,
-      run: async (action) => action(), reviewWarnings: async () => '',
-      crypto: { randomUUID: () => 'idempotency-key' },
-    });
-    const functions = [
-      'loadCatalogItems', 'loadCatalogs', 'commitImport',
-    ].map(appFunction).join('\n');
-    vm.runInContext(`${functions}\nglobalThis.save = ${request.action};`, context);
-    await context.save();
-
-    assert.equal(semesterSelect.value, request.expectedSemester, request.action);
-    assert.equal(context.state.pagination.application.page, request.expectedPage, request.action);
-    for (const query of queries.filter(({ name }) => name === 'application')) {
-      assert.equal(query.filter, request.expectedSemester, request.action);
-      assert.equal(context.state.applications[0].semesterId, request.expectedSemester, request.action);
-    }
-    assert.equal(loadedSemester, request.expectedSemester, request.action);
-  }
+  assert.equal(imported, true);
+  assert.equal(nodes['import-preview-status'].textContent, '반영됨 · 추가 1 · 수정 0 · 동일 0');
+  assert.equal(nodes['commit-import'].disabled, true);
+  assert.equal(semesterSelect.value, 'new');
+  assert.equal(context.state.pagination.application.page, 1);
+  assert.deepEqual(queries.filter(({ name }) => name === 'application').map(({ filter }) => filter), ['new']);
+  assert.equal(context.state.applications[0].semesterId, 'new');
+  assert.equal(loadedSemester, 'new');
 });
 
 test('keeps all catalog choices beyond 200 records and preserves the selected filters', async () => {
