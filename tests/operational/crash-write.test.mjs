@@ -25,7 +25,7 @@ const emptyStore = () => ({
   restoreReceipts: [],
 });
 
-for (const mode of ['full', 'incremental']) test(`restarts with the complete old or new store after the ${mode} writer is terminated`, async (t) => {
+test('restarts with the complete old or new store after an incremental writer is terminated', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-crash-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataFile = join(directory, 'db.sqlite');
@@ -41,7 +41,6 @@ for (const mode of ['full', 'incremental']) test(`restarts with the complete old
     fileURLToPath(new URL('./write-large-store.mjs', import.meta.url)),
     dataFile,
     '200000',
-    mode,
   ], { stdio: 'ignore' });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const exited = once(child, 'exit');

@@ -84,7 +84,7 @@ export class RecoveryService {
   }
 
   async #createBackup(): Promise<Backup> {
-    const current = this.#store.read().meta;
+    const current = this.#store.version();
     const latest = (await this.list()).find(({ status }) => status === 'READY');
     if (latest?.storeEpoch === current.storeEpoch && latest.storeRevision === current.storeRevision) return latest;
     return createBackup(this.#dependencies.dataFile, this.#dependencies.backupDirectory, {
@@ -94,7 +94,7 @@ export class RecoveryService {
 
   async preview(file: string): Promise<RestorePreview> {
     const candidate = await readBackupFile(file, join(dirname(this.#dependencies.dataFile), 'recovery-work'));
-    const current = this.#store.read();
+    const current = this.#store.version();
     const preparedActionToken = this.#dependencies.id();
     const expiresAt = new Date(this.#dependencies.now().getTime() + this.#dependencies.ttlMs).toISOString();
     const issues: RecoveryIssue[] = [{
@@ -106,15 +106,15 @@ export class RecoveryService {
       subject: { entityType: 'store' },
       source: {},
       detail: {
-        currentStoreRevision: current.meta.storeRevision,
+        currentStoreRevision: current.storeRevision,
         backupStoreRevision: candidate.meta.storeRevision,
       },
     }];
     const preview: PreparedRestore = {
       preparedActionToken,
       warningDigest: digest(issues),
-      storeRevision: current.meta.storeRevision,
-      storeEpoch: current.meta.storeEpoch,
+      storeRevision: current.storeRevision,
+      storeEpoch: current.storeEpoch,
       expiresAt,
       issues,
       backupStoreRevision: candidate.meta.storeRevision,

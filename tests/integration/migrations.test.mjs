@@ -165,7 +165,7 @@ test('skipped-release migrations run in order and retain a pre-upgrade SQLite ba
     id: 'member-1', name: '이전 이름', nameKey: '이전 이름',
     createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z',
   }] };
-  await new SQLiteAdapter(file).write(original);
+  await new SQLiteAdapter(file).write(original, empty);
   const first = '1790380800_rename_member.sql';
   const second = '1790467200_add_index.sql';
   await writeFile(join(migrationDirectory, first), "UPDATE members SET name = '새 이름', name_key = '새 이름' WHERE id = 'member-1';\n");

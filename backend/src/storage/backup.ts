@@ -173,7 +173,7 @@ export const restoreBackup = async (options: {
   const current = await adapter.read();
   assertValidStore(current);
   candidate.restoreReceipts = current.restoreReceipts;
-  await adapter.write(candidate);
+  await adapter.write(candidate, current);
   const restored = await adapter.read();
   assertValidStore(restored);
   if (restored.meta.storeEpoch !== options.newEpoch) throw new Error('Restore verification failed');
@@ -198,5 +198,5 @@ const readBackupCandidate = async (file: string, migrationDirectory?: string): P
   await migrateDatabase(file, undefined, { directory: migrationDirectory, skipBackup: true, rotateEpoch: false });
   const data = await new SQLiteAdapter(file).read();
   assertValidStore(data);
-  return structuredClone(data);
+  return data;
 };

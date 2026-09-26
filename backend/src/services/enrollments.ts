@@ -219,10 +219,10 @@ export class EnrollmentService {
     if (this.dependencies.now().getTime() >= Date.parse(payload.expiresAt)) {
       throw new EnrollmentTokenError();
     }
-    const current = this.store.read();
+    const current = this.store.version();
     if (
-      current.meta.storeEpoch !== payload.storeEpoch
-      || current.meta.storeRevision !== payload.storeRevision
+      current.storeEpoch !== payload.storeEpoch
+      || current.storeRevision !== payload.storeRevision
     ) throw new EnrollmentStaleError();
 
     try {

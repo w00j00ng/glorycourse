@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
@@ -80,6 +81,45 @@ test('read reuses an immutable snapshot until a write commits', async () => {
   assert.equal(after.members[0].id, 'saved');
   assert.equal(restored.members[0].id, 'restored');
   assert.throws(() => restored.members.push(member('not-saved')), TypeError);
+});
+
+test('version returns only the committed epoch and revision across writes and restore', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const before = store.version();
+  assert.deepEqual(before, { storeEpoch: 'epoch-1', storeRevision: 0 });
+  assert.throws(() => { before.storeRevision = 99; }, TypeError);
+
+  await store.write({}, (candidate) => candidate.members.push(member('saved')));
+  assert.deepEqual(before, { storeEpoch: 'epoch-1', storeRevision: 0 });
+  assert.deepEqual(store.version(), { storeEpoch: 'epoch-1', storeRevision: 1 });
+
+  const replacement = emptyStore();
+  replacement.meta.storeEpoch = 'restored';
+  await store.restore(replacement, { expectedRevision: 1, expectedEpoch: 'epoch-1', backup: async () => {} });
+  assert.deepEqual(store.version(), { storeEpoch: 'restored', storeRevision: 0 });
+});
+
+test('restoring one changed member keeps unrelated SQLite rows untouched', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-restore-rows-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'db.sqlite');
+  const initial = emptyStore();
+  initial.members.push(member('changed'), member('untouched'));
+  const store = await openStore(file, initial);
+  const replacement = structuredClone(store.read());
+  replacement.meta.storeEpoch = 'restored';
+  replacement.members[0].name = '수정된 회원';
+  replacement.members[0].nameKey = '수정된 회원';
+
+  const db = new DatabaseSync(file);
+  try {
+    db.exec(`CREATE TRIGGER protect_untouched BEFORE DELETE ON members
+      WHEN OLD.id = 'untouched' BEGIN SELECT RAISE(ABORT, 'unrelated member deleted'); END`);
+  } finally { db.close(); }
+
+  await store.restore(replacement, { expectedRevision: 0, expectedEpoch: 'epoch-1', backup: async () => {} });
+  assert.deepEqual((await openStore(file, emptyStore())).read(), replacement);
+  assert.equal(store.read().members[1].name, 'untouched');
 });
 
 test('rejects stale revisions without changing committed state', async () => {
@@ -283,8 +323,8 @@ class WriteThenFailFileAdapter {
     return this.adapter.read();
   }
 
-  async write(data) {
-    await this.adapter.write(data);
+  async write(data, previous) {
+    await this.adapter.write(data, previous);
     throw new Error('response lost after file replacement');
   }
 }

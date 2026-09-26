@@ -252,6 +252,10 @@ export class Store {
     return this.data;
   }
 
+  version(): DatabaseState['meta'] {
+    return this.data.meta;
+  }
+
   write<T>(
     options: { expectedRevision?: number; expectedEpoch?: string },
     command: (candidate: DatabaseState) => T | Promise<T>,
@@ -315,7 +319,7 @@ export class Store {
     const candidate = structuredClone(input);
     assertValidStore(candidate);
     await options.backup();
-    await this.#persist(candidate);
+    await this.#persist(candidate, this.data);
     this.#recoveryRequired = false;
   }
 

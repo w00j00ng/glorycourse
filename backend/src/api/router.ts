@@ -267,11 +267,12 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
       if (request.method !== 'POST') return methodNotAllowed();
       const input = json<{ storeRevision: number; storeEpoch: string }>(request);
       const preview = importPreviews.getPreview(stageImport[1]);
+      const version = store.version();
       if (
         input.storeRevision !== preview.storeRevision
         || input.storeEpoch !== preview.storeEpoch
-        || store.read().meta.storeRevision !== preview.storeRevision
-        || store.read().meta.storeEpoch !== preview.storeEpoch
+        || version.storeRevision !== preview.storeRevision
+        || version.storeEpoch !== preview.storeEpoch
       ) throw new HttpError(409, 'CONFLICT', '현재 자료와 미리보기가 일치하지 않습니다.');
       return { status: 201, json: await importPreviews.stage(stageImport[1]) };
     }
@@ -378,7 +379,7 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
     if (enrollmentReport) {
       if (request.method === 'GET') return ok(finalization.reportStatus(enrollmentReport[1]));
       if (request.method !== 'POST') return methodNotAllowed();
-      const expectedStore = store.read().meta;
+      const expectedStore = store.version();
       const body = await enrollmentWorkbook(enrollments.list({ semesterId: enrollmentReport[1] }));
       await finalization.recordEnrollmentReportDownload(enrollmentReport[1], expectedStore);
       return xlsx(body, 'glorycourse-enrollments.xlsx');
