@@ -143,7 +143,10 @@ const shutdown = async () => {
 };
 
 const loadApplications = async () => {
-  state.applications = await loadPaged('application', '/applications', recordQuery('application'));
+  const pagination = state.pagination.application = { ...state.pagination.application };
+  const items = await loadPaged('application', '/applications', recordQuery('application'), pagination);
+  if (state.pagination.application !== pagination) return;
+  state.applications = items;
   renderApplications();
 };
 
@@ -170,11 +173,15 @@ const renderApplications = () => {
 };
 
 const loadEnrollments = async () => {
-  state.enrollments = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'));
+  const pagination = state.pagination.enrollment = { ...state.pagination.enrollment };
+  const items = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'), pagination);
+  if (state.pagination.enrollment !== pagination) return;
   const semester = currentSemester(state.semesters);
   const report = semester
     ? await api(`/semesters/${encodeURIComponent(semester.id)}/enrollment-report`)
     : null;
+  if (state.pagination.enrollment !== pagination) return;
+  state.enrollments = items;
   state.enrollmentReport = report?.finalized && !report.enrollmentReportIsCurrent
     ? report
     : null;
@@ -219,7 +226,10 @@ const completeEnrollmentReport = async () => {
 };
 
 const loadDrafts = async () => {
-  state.drafts = await loadPaged('draft', '/allocation-drafts');
+  const pagination = state.pagination.draft = { ...state.pagination.draft };
+  const items = await loadPaged('draft', '/allocation-drafts', '', pagination);
+  if (state.pagination.draft !== pagination) return;
+  state.drafts = items;
   renderDrafts();
 };
 
@@ -692,21 +702,24 @@ const copyCatalogCourses = (event) => {
 };
 
 const loadCatalogManagement = async (preferredId) => {
+  const request = state.catalogRequest = Symbol();
   const select = byId('catalog-semester');
   const preferred = preferredId || select.value || state.catalogContext?.semester.id;
   const selected = state.semesters.find(({ id }) => id === preferred)?.id || state.semesters[0]?.id;
+  state.catalogContext = null;
+  byId('semester-form').hidden = true;
+  byId('catalog-form').hidden = true;
   if (state.selectedSemesterId !== selected) state.selectedSemesterId = null;
   fillSelect(select, state.semesters, '학기를 선택하세요.');
   renderSemesterRows();
   if (!selected) {
-    state.catalogContext = null;
-    byId('semester-form').hidden = true;
-    byId('catalog-form').hidden = true;
     byId('catalog-empty').hidden = false;
     return;
   }
   select.value = selected;
-  renderCatalogContext(await api(`/semesters/${selected}/context`));
+  const context = await api(`/semesters/${selected}/context`);
+  if (state.catalogRequest !== request) return;
+  renderCatalogContext(context);
 };
 
 const createSemester = async (event) => {
@@ -1505,16 +1518,16 @@ const recordQuery = (prefix) => new URLSearchParams([
   ...(prefix === 'application' ? [['sort', byId('application-sort').value]] : []),
 ].filter(([, value]) => value)).toString();
 
-const loadPaged = async (name, path, filters = '') => {
-  const pagination = state.pagination[name];
+const loadPaged = async (name, path, filters = '', pagination = state.pagination[name]) => {
   const query = new URLSearchParams(filters);
   query.set('page', String(pagination.page));
   query.set('limit', String(pagination.limit));
   const result = await api(`${path}?${query}`);
+  if (state.pagination[name] !== pagination) return;
   const lastPage = Math.max(1, Math.ceil(result.total / result.limit));
   if (result.page > lastPage) {
     pagination.page = lastPage;
-    return loadPaged(name, path, filters);
+    return loadPaged(name, path, filters, pagination);
   }
   Object.assign(pagination, { page: result.page, limit: result.limit, total: result.total });
   renderPagination(name);
