@@ -233,7 +233,7 @@ export class FinalizationService {
   async finalize(draftId: string, input: FinalizeInput): Promise<FinalizationReceipt> {
     validateFinalizeInput(draftId, input);
     const requestHash = hashRequest(draftId, input);
-    const previous = findFinalization(this.#store.read(), input.idempotencyKey);
+    const previous = this.#store.finalizationReceipt(input.idempotencyKey);
     if (previous) return matchingReceipt(previous, requestHash);
 
     const payload = verify(input.preparedActionToken, this.#dependencies.secret);
@@ -290,7 +290,7 @@ export class FinalizationService {
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError) {
-        const raced = findFinalization(this.#store.read(), input.idempotencyKey);
+        const raced = this.#store.finalizationReceipt(input.idempotencyKey);
         if (raced) return matchingReceipt(raced, requestHash);
         throw new FinalizationStaleError();
       }
@@ -300,12 +300,12 @@ export class FinalizationService {
 
   reportStatus(semesterId: string) {
     requireId(semesterId, 'semesterId');
-    const data = this.#store.read();
-    const receipt = latestReceipt(data, semesterId);
+    const current = this.#store.version();
+    const receipt = this.#store.latestFinalizationReceipt(semesterId);
     return {
       semesterId,
       finalized: Boolean(receipt),
-      enrollmentReportIsCurrent: receipt?.enrollmentReportStoreRevision === data.meta.storeRevision,
+      enrollmentReportIsCurrent: receipt?.enrollmentReportStoreRevision === current.storeRevision,
       enrollmentReportDownloadedAt: receipt?.enrollmentReportDownloadedAt ?? null,
     };
   }
@@ -315,14 +315,14 @@ export class FinalizationService {
     expected: { storeRevision: number; storeEpoch: string },
   ): Promise<void> {
     requireId(semesterId, 'semesterId');
-    const current = this.#store.read();
-    if (current.meta.storeEpoch !== expected.storeEpoch) throw new StoreEpochConflictError();
-    if (current.meta.storeRevision !== expected.storeRevision) {
-      throw new StoreRevisionConflictError(current.meta.storeRevision);
+    const current = this.#store.version();
+    if (current.storeEpoch !== expected.storeEpoch) throw new StoreEpochConflictError();
+    if (current.storeRevision !== expected.storeRevision) {
+      throw new StoreRevisionConflictError(current.storeRevision);
     }
-    const receipt = latestReceipt(current, semesterId);
+    const receipt = this.#store.latestFinalizationReceipt(semesterId);
     if (!receipt) throw new FinalizationValidationError('No finalized allocation exists for this semester');
-    if (receipt.enrollmentReportStoreRevision === current.meta.storeRevision) return;
+    if (receipt.enrollmentReportStoreRevision === current.storeRevision) return;
     await this.#store.write({ expectedRevision: expected.storeRevision, expectedEpoch: expected.storeEpoch }, (data) => {
       const latest = latestReceipt(data, semesterId);
       if (!latest || latest.idempotencyKey !== receipt.idempotencyKey) throw new FinalizationStaleError();

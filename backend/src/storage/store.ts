@@ -277,6 +277,14 @@ export class Store {
     return this.data.restoreReceipts;
   }
 
+  finalizationReceipt(idempotencyKey: string): Readonly<FinalizationReceiptRecord> | undefined {
+    return this.data.finalizationReceipts.find((item) => item.idempotencyKey === idempotencyKey);
+  }
+
+  latestFinalizationReceipt(semesterId: string): Readonly<FinalizationReceiptRecord> | undefined {
+    return this.data.finalizationReceipts.filter((item) => item.semesterId === semesterId).at(-1);
+  }
+
   write<T>(
     options: { expectedRevision?: number; expectedEpoch?: string },
     command: (candidate: DatabaseState) => T | Promise<T>,
