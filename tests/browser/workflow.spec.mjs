@@ -438,9 +438,17 @@ test('an administrator registers applications, reviews allocation, and sees save
   await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
   await expect(page.locator('#enrollment-rows')).toContainText('김가나 수정');
   await expect(page.locator('#enrollment-rows')).toContainText('박다라');
+  await expect(page.locator('#enrollment-report-task')).toBeVisible();
+  const [enrollmentReport] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#complete-enrollment-report').click(),
+  ]);
+  expect(enrollmentReport.suggestedFilename()).toMatch(/^수강이력_현황_\d{12}\.xlsx$/);
+  await expect(page.locator('#enrollment-report-task')).toBeHidden();
   await page.getByRole('link', { name: 'Glorycourse 홈으로 이동' }).click();
   await expect(page.getByRole('heading', { name: '업무 대시보드' })).toBeVisible();
   await expect(page.locator('#dashboard-enrollment-count')).toHaveText('2');
+  await expect(page.locator('#dashboard-next-title')).toHaveText('현재 학기 업무가 완료되었습니다');
   await page.getByRole('button', { name: '수강이력', exact: true }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: '수강이력' })).toBeVisible();

@@ -10,12 +10,13 @@ import {
 } from './draft-view.js';
 import { applicationSemesterFilterValue, choiceSummary, paginationView, viewFromHash } from './list-view.js';
 import { reportFilename, templateFilename } from './download-name.js';
-import { currentSemester, orderSemesters } from './dashboard-view.js';
+import { orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
 import { createBackupsPage } from './backups-page.js';
 import { createFinalizationPage } from './finalization-page.js';
 import { createApplicationsPage } from './applications-page.js';
 import { createCatalogPage } from './catalog-page.js';
+import { createEnrollmentsPage } from './enrollments-page.js';
 import { PAGE_HELP } from './help-content.js';
 import { issueText } from './issue-view.js';
 
@@ -141,59 +142,6 @@ const shutdown = async () => {
     setStatus('종료 확인 필요');
     showMessage('종료 완료를 확인하지 못했습니다. 잠시 기다린 뒤 배포 폴더의 종료 파일을 실행하세요. 저장 중인 프로그램을 강제로 종료하지 마세요.', true);
   }
-};
-
-const loadEnrollments = async () => {
-  const pagination = state.pagination.enrollment = { ...state.pagination.enrollment };
-  const items = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'), pagination);
-  if (state.pagination.enrollment !== pagination) return;
-  const semester = currentSemester(state.semesters);
-  const report = semester
-    ? await api(`/semesters/${encodeURIComponent(semester.id)}/enrollment-report`)
-    : null;
-  if (state.pagination.enrollment !== pagination) return;
-  state.enrollments = items;
-  state.enrollmentReport = report?.finalized && !report.enrollmentReportIsCurrent
-    ? report
-    : null;
-  renderEnrollments();
-};
-
-const renderEnrollments = () => {
-  const body = byId('enrollment-rows');
-  body.replaceChildren(...state.enrollments.map((item) => {
-    const row = document.createElement('tr');
-    row.append(
-      cell(item.semesterName),
-      cell(item.memberName),
-      cell(item.courseName),
-      actionsCell(
-        ['수정', () => openEnrollment(item)],
-        ['삭제', () => deleteEnrollment(item), 'delete'],
-      ),
-    );
-    return row;
-  }));
-  byId('enrollment-empty').hidden = state.enrollments.length !== 0;
-  byId('enrollment-count').textContent = String(state.pagination.enrollment.total);
-  byId('delete-semester-enrollments').disabled = !byId('enrollment-semester-filter').value;
-  const reportTask = byId('enrollment-report-task');
-  reportTask.hidden = !state.enrollmentReport;
-  if (state.enrollmentReport) {
-    const semesterName = resourceName(state.semesters, state.enrollmentReport.semesterId);
-    byId('enrollment-report-task-description').textContent = `${semesterName} 수강이력을 확인한 뒤 현황 파일을 내려받으면 이번 학기 업무가 완료됩니다.`;
-  }
-};
-
-const completeEnrollmentReport = async () => {
-  const report = state.enrollmentReport;
-  if (!report) return;
-  await run(() => download(
-    `/semesters/${encodeURIComponent(report.semesterId)}/enrollment-report`,
-    reportFilename('수강이력'),
-    { method: 'POST' },
-  ), '현재 학기 수강이력 현황을 다운로드했습니다.');
-  await loadEnrollments();
 };
 
 const loadDrafts = async () => {
@@ -877,9 +825,6 @@ const policyName = (policyId, policyVersion) => state.policies.find((policy) => 
   policy.policyId === policyId && policy.policyVersion === policyVersion
 ))?.name ?? `${policyId} ${policyVersion}`;
 const draftCourseName = (id) => id ? state.draftContext?.semesterCourses.find((course) => course.id === id)?.courseName ?? id : '제외';
-const { previewFinalization, finalizeDraft } = createFinalizationPage({
-  state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
-});
 const fillSelect = (select, items, placeholder) => {
   const empty = document.createElement('option');
   empty.value = '';
@@ -955,6 +900,14 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   renderPagination(name);
   return result.items;
 };
+
+const { load: loadEnrollments, completeReport: completeEnrollmentReport } = createEnrollmentsPage({
+  state, byId, api, run, download, loadPaged, recordQuery, resourceName, cell, actionsCell,
+  openEnrollment, deleteEnrollment,
+});
+const { previewFinalization, finalizeDraft } = createFinalizationPage({
+  state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
+});
 
 const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,
   submitCatalog, setCatalogTab, openCatalogAdd, addCatalogCourses, copyCatalogCourses,

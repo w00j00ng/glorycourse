@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
+import { createEnrollmentsPage } from '../../frontend/enrollments-page.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
 
 const source = await readFile(new URL('../../frontend/app.js', import.meta.url), 'utf8');
@@ -12,12 +13,34 @@ const appFunction = (name) => {
   return source.slice(start, source.indexOf('\n};', start) + 3);
 };
 
+const enrollmentPage = (context, rendered = []) => {
+  const nodes = new Map();
+  const byId = (id) => {
+    if (!nodes.has(id)) nodes.set(id, {
+      value: '', hidden: false, disabled: false, textContent: '',
+      replaceChildren() { if (id === 'enrollment-rows') rendered.push(context.state.enrollments); },
+    });
+    return nodes.get(id);
+  };
+  return createEnrollmentsPage({
+    state: context.state, byId, api: context.api, loadPaged: context.loadPaged,
+    recordQuery: context.recordQuery, resourceName: () => 'Semester',
+    cell: () => ({}), actionsCell: () => ({}), openEnrollment() {}, async deleteEnrollment() {},
+  });
+};
+
+const withEnrollmentDocument = async (action) => {
+  const previousDocument = globalThis.document;
+  globalThis.document = { createElement: () => ({ append() {} }) };
+  try { return await action(); } finally { globalThis.document = previousDocument; }
+};
+
 test('reloads saved records using the catalog and filters shown to the user', async () => {
   const oldSemester = { id: 'old', name: 'Old semester', order: 1 };
   const newSemester = { id: 'new', name: 'New semester', order: 2 };
   const cases = [
-    { action: 'commitImport', touched: false, expectedSemester: 'new', expectedPage: 1, expectedReport: 'new' },
-    { action: 'submitEnrollment', touched: false, expectedSemester: 'new', expectedPage: 1, expectedReport: 'new' },
+    { action: 'commitImport', touched: false, expectedSemester: 'new', expectedPage: 1 },
+    { action: 'submitEnrollment', touched: false, expectedSemester: 'new', expectedPage: 1 },
   ];
 
   for (const request of cases) {
@@ -38,7 +61,7 @@ test('reloads saved records using the catalog and filters shown to the user', as
       'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {},
     };
     const queries = [];
-    let reportSemester;
+    let loadedSemester;
     const context = vm.createContext({
       catalogLoadRequest: 0,
       state: {
@@ -49,10 +72,6 @@ test('reloads saved records using the catalog and filters shown to the user', as
       byId: (id) => nodes[id],
       api: async (path) => {
         if (path.startsWith('/semesters?')) return { items: [newSemester, oldSemester], page: 1, limit: 200, total: 2 };
-        if (path.endsWith('/enrollment-report')) {
-          reportSemester = path.split('/')[2];
-          return { finalized: false };
-        }
         return { items: [], page: 1, limit: 200, total: 0 };
       },
       loadPaged: async (name, _path, filter) => {
@@ -64,14 +83,15 @@ test('reloads saved records using the catalog and filters shown to the user', as
         const items = await context.loadPaged('application', '/applications', semesterSelect.value);
         context.state.applications = items;
       },
-      renderEnrollments() {}, fillDatalist() {},
+      loadEnrollments: async () => { loadedSemester = currentSemester(context.state.semesters)?.id; },
+      fillDatalist() {},
       fillFilterSelect: (id) => { if (id === 'application-semester-filter') semesterSelect.value = 'old'; },
       orderSemesters, currentSemester, applicationSemesterFilterValue,
       run: async (action) => action(), reviewWarnings: async () => '',
       crypto: { randomUUID: () => 'idempotency-key' },
     });
     const functions = [
-      'loadEnrollments', 'loadCatalogItems', 'loadCatalogs', 'submitEnrollment', 'commitImport',
+      'loadCatalogItems', 'loadCatalogs', 'submitEnrollment', 'commitImport',
     ].map(appFunction).join('\n');
     vm.runInContext(`${functions}\nconst enrollmentCourseName = () => 'Course';\nglobalThis.save = ${request.action};`, context);
     await context.save({ preventDefault() {}, currentTarget: { dataset: {}, querySelector: () => submit } });
@@ -82,7 +102,7 @@ test('reloads saved records using the catalog and filters shown to the user', as
       assert.equal(query.filter, request.expectedSemester, request.action);
       assert.equal(context.state.applications[0].semesterId, request.expectedSemester, request.action);
     }
-    if (request.expectedReport) assert.equal(reportSemester, request.expectedReport, request.action);
+    assert.equal(loadedSemester, request.expectedSemester, request.action);
   }
 });
 
@@ -146,100 +166,125 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
   }
 });
 
-test('keeps the latest list and page when earlier filter or page requests finish later', async () => {
-  const cases = [
-    { name: 'enrollment', loader: 'loadEnrollments', rows: 'enrollments' },
-    { name: 'draft', loader: 'loadDrafts', rows: 'drafts' },
-  ];
-  for (const request of cases) {
+test('keeps the latest draft list and page when earlier requests finish later', async () => {
+  for (const oldTotal of [0, 100]) {
+    const pending = [];
+    const rendered = [];
+    const context = vm.createContext({
+      state: { pagination: { draft: { page: 2, limit: 50, total: 100 } } },
+      URLSearchParams,
+      api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+      renderPagination() {},
+      renderDrafts: () => rendered.push(context.state.drafts),
+    });
+    vm.runInContext(`${appFunction('loadPaged')}\n${appFunction('loadDrafts')}\nglobalThis.load = loadDrafts;`, context);
+    const earlier = context.load();
+    context.state.pagination.draft.page = 1;
+    context.state.pagination.draft.limit = 25;
+    const latest = context.load();
+    assert.match(pending[0].path, /page=2&limit=50/);
+    assert.match(pending[1].path, /page=1&limit=25/);
+    pending[1].resolve({ items: [{ id: 'latest' }], page: 1, limit: 25, total: 1 });
+    await latest;
+    pending[0].resolve({ items: [{ id: 'earlier' }], page: 2, limit: 50, total: oldTotal });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(pending.length, 2);
+    await earlier;
+    assert.equal(context.state.drafts[0].id, 'latest');
+    assert.deepEqual(rendered.map((items) => items[0].id), ['latest']);
+    const { page, limit, total } = context.state.pagination.draft;
+    assert.deepEqual({ page, limit, total }, { page: 1, limit: 25, total: 1 });
+  }
+});
+
+test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
+  await withEnrollmentDocument(async () => {
+    for (const interrupted of [false, true]) {
+      const pending = [];
+      const context = vm.createContext({
+        state: { semesters: [], pagination: { enrollment: { page: 3, limit: 50 } } },
+        URLSearchParams, api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+        recordQuery: () => '', renderPagination() {},
+      });
+      vm.runInContext(`${appFunction('loadPaged')}\nglobalThis.loadPaged = loadPaged;`, context);
+      const { load } = enrollmentPage(context);
+      const correcting = load();
+      pending[0].resolve({ items: [], page: 3, limit: 50, total: 51 });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.match(pending[1].path, /page=2&limit=50/);
+      if (interrupted) {
+        context.state.pagination.enrollment.page = 1;
+        const latest = load();
+        pending[2].resolve({ items: [{ id: 'latest' }], page: 1, limit: 50, total: 1 });
+        await latest;
+      }
+      pending[1].resolve({ items: [{ id: 'corrected' }], page: 2, limit: 50, total: 51 });
+      await correcting;
+      assert.equal(context.state.enrollments[0].id, interrupted ? 'latest' : 'corrected');
+      assert.equal(context.state.pagination.enrollment.page, interrupted ? 1 : 2);
+      assert.equal(context.state.pagination.enrollment.total, interrupted ? 1 : 51);
+    }
+  });
+});
+
+test('keeps the latest enrollment filter and page when an earlier request finishes later', async () => {
+  await withEnrollmentDocument(async () => {
     for (const oldTotal of [0, 100]) {
       const pending = [];
       const rendered = [];
       let filter = 'semesterId=old';
       const context = vm.createContext({
-        state: { semesters: [], pagination: { [request.name]: { page: 2, limit: 50, total: 100 } } },
-        URLSearchParams, currentSemester,
-        api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+        state: { semesters: [], pagination: { enrollment: { page: 2, limit: 50, total: 100 } } },
+        URLSearchParams, api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
         recordQuery: () => filter, renderPagination() {},
-        renderEnrollments: () => rendered.push(context.state.enrollments),
-        renderDrafts: () => rendered.push(context.state.drafts),
       });
-      vm.runInContext(`${appFunction('loadPaged')}\n${appFunction(request.loader)}\nglobalThis.load = ${request.loader};`, context);
-      const earlier = context.load();
+      vm.runInContext(`${appFunction('loadPaged')}\nglobalThis.loadPaged = loadPaged;`, context);
+      const { load } = enrollmentPage(context, rendered);
+      const earlier = load();
       filter = 'semesterId=new';
-      context.state.pagination[request.name].page = 1;
-      context.state.pagination[request.name].limit = 25;
-      const latest = context.load();
-      assert.match(pending[0].path, /page=2&limit=50/);
-      assert.match(pending[1].path, /page=1&limit=25/);
-      if (request.name !== 'draft') {
-        assert.match(pending[0].path, /semesterId=old/);
-        assert.match(pending[1].path, /semesterId=new/);
-      }
+      context.state.pagination.enrollment.page = 1;
+      context.state.pagination.enrollment.limit = 25;
+      const latest = load();
+      assert.match(pending[0].path, /semesterId=old.*page=2&limit=50/);
+      assert.match(pending[1].path, /semesterId=new.*page=1&limit=25/);
       pending[1].resolve({ items: [{ id: 'latest' }], page: 1, limit: 25, total: 1 });
       await latest;
       pending[0].resolve({ items: [{ id: 'earlier' }], page: 2, limit: 50, total: oldTotal });
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(pending.length, 2, `${request.name}: stale pages must not trigger another request`);
       await earlier;
-      assert.equal(context.state[request.rows][0].id, 'latest', request.name);
-      assert.deepEqual(rendered.map((items) => items[0].id), ['latest'], request.name);
-      const { page, limit, total } = context.state.pagination[request.name];
-      assert.deepEqual({ page, limit, total }, { page: 1, limit: 25, total: 1 }, request.name);
+      assert.equal(pending.length, 2);
+      assert.equal(context.state.enrollments[0].id, 'latest');
+      assert.deepEqual(rendered.map((items) => items[0].id), ['latest']);
+      const { page, limit, total } = context.state.pagination.enrollment;
+      assert.deepEqual({ page, limit, total }, { page: 1, limit: 25, total: 1 });
     }
-  }
-});
-
-test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
-  for (const interrupted of [false, true]) {
-    const pending = [];
-    const context = vm.createContext({
-      state: { semesters: [], pagination: { enrollment: { page: 3, limit: 50 } } },
-      URLSearchParams, api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
-      currentSemester, recordQuery: () => '', renderPagination() {}, renderEnrollments() {},
-    });
-    vm.runInContext(`${appFunction('loadPaged')}\n${appFunction('loadEnrollments')}\nglobalThis.load = loadEnrollments;`, context);
-    const correcting = context.load();
-    pending[0].resolve({ items: [], page: 3, limit: 50, total: 51 });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.match(pending[1].path, /page=2&limit=50/);
-    if (interrupted) {
-      context.state.pagination.enrollment.page = 1;
-      const latest = context.load();
-      pending[2].resolve({ items: [{ id: 'latest' }], page: 1, limit: 50, total: 1 });
-      await latest;
-    }
-    pending[1].resolve({ items: [{ id: 'corrected' }], page: 2, limit: 50, total: 51 });
-    await correcting;
-    assert.equal(context.state.enrollments[0].id, interrupted ? 'latest' : 'corrected');
-    assert.equal(context.state.pagination.enrollment.page, interrupted ? 1 : 2);
-    assert.equal(context.state.pagination.enrollment.total, interrupted ? 1 : 51);
-  }
+  });
 });
 
 test('keeps the latest enrollment report when an earlier report finishes later', async () => {
-  const reports = [];
-  const rendered = [];
-  let list = 0;
-  const context = vm.createContext({
-    state: { semesters: [{ id: 'semester', order: 1 }], pagination: { enrollment: { page: 1, limit: 50 } } },
-    URLSearchParams, currentSemester,
-    api: (path) => path.endsWith('/enrollment-report')
-      ? new Promise((resolve) => reports.push(resolve))
-      : Promise.resolve({ items: [{ id: ++list }], page: 1, limit: 50, total: 1 }),
-    recordQuery: () => '', renderPagination() {},
-    renderEnrollments: () => rendered.push(context.state.enrollmentReport),
+  await withEnrollmentDocument(async () => {
+    const reports = [];
+    const rendered = [];
+    let list = 0;
+    const context = vm.createContext({
+      state: { semesters: [{ id: 'semester', order: 1 }], pagination: { enrollment: { page: 1, limit: 50 } } },
+      URLSearchParams,
+      api: (path) => path.endsWith('/enrollment-report')
+        ? new Promise((resolve) => reports.push(resolve))
+        : Promise.resolve({ items: [{ id: ++list }], page: 1, limit: 50, total: 1 }),
+      recordQuery: () => '', renderPagination() {},
+    });
+    vm.runInContext(`${appFunction('loadPaged')}\nglobalThis.loadPaged = loadPaged;`, context);
+    const { load } = enrollmentPage(context, rendered);
+    const earlier = load();
+    await new Promise((resolve) => setImmediate(resolve));
+    const latest = load();
+    await new Promise((resolve) => setImmediate(resolve));
+    reports[1]({ finalized: true, enrollmentReportIsCurrent: true });
+    await latest;
+    reports[0]({ finalized: true, enrollmentReportIsCurrent: false });
+    await earlier;
+    assert.equal(context.state.enrollmentReport, null);
+    assert.equal(context.state.enrollments[0].id, 2);
+    assert.deepEqual(rendered.map((items) => items[0].id), [2]);
   });
-  vm.runInContext(`${appFunction('loadPaged')}\n${appFunction('loadEnrollments')}\nglobalThis.load = loadEnrollments;`, context);
-  const earlier = context.load();
-  await new Promise((resolve) => setImmediate(resolve));
-  const latest = context.load();
-  await new Promise((resolve) => setImmediate(resolve));
-  reports[1]({ finalized: true, enrollmentReportIsCurrent: true });
-  await latest;
-  reports[0]({ finalized: true, enrollmentReportIsCurrent: false });
-  await earlier;
-  assert.equal(context.state.enrollmentReport, null);
-  assert.equal(context.state.enrollments[0].id, 2);
-  assert.deepEqual(rendered, [null]);
 });
