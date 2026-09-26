@@ -12,6 +12,7 @@
   "include": [
     "frontend/applications-page.js",
     "frontend/backups-page.js",
+    "frontend/catalog-page.js",
     "frontend/catalog-view.js",
     "frontend/dashboard-page.js",
     "frontend/draft-view.js",

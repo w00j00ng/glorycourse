@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
+import { createCatalogPage } from '../../frontend/catalog-page.js';
 
 const source = await readFile(new URL('../../frontend/app.js', import.meta.url), 'utf8');
 const appFunction = (name) => {
@@ -164,8 +165,15 @@ test('clears a semester selection when another semester replaces the editor cont
       renderSemesterRows() {}, catalogCourseRow() {}, fillSelect: () => { select.value = ''; },
       loadCatalogs: async () => {}, run: async (operation) => operation(),
     });
-    const functions = ['selectSemesterRow', 'loadCatalogManagement', 'renderCatalogContext', 'moveSemester'].map(appFunction).join('\n');
-    vm.runInContext(`${functions}\nglobalThis.selectSemesterRow = selectSemesterRow; globalThis.loadCatalogManagement = loadCatalogManagement; globalThis.moveSemester = moveSemester;`, context);
+    const functions = ['loadCatalogManagement', 'renderCatalogContext'].map(appFunction).join('\n');
+    vm.runInContext(`${functions}\nglobalThis.loadCatalogManagement = loadCatalogManagement;`, context);
+    const page = createCatalogPage({
+      state: context.state, byId: context.byId, api: context.api, run: context.run,
+      loadCatalogs: context.loadCatalogs, loadCatalogManagement: context.loadCatalogManagement,
+      showMessage() {}, cell() {}, actionsCell() {},
+    });
+    context.selectSemesterRow = page.selectSemesterRow;
+    context.moveSemester = page.moveSemester;
 
     await context.selectSemesterRow('a');
     assert.equal(semesterForm.hidden, false);
@@ -299,8 +307,12 @@ test('shows only the latest semester editor when semester selections finish out 
       api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
       fillSelect: () => { select.value = ''; }, renderSemesterRows() {}, catalogCourseRow() {},
     });
-    const functions = ['selectSemesterRow', 'loadCatalogManagement', 'renderCatalogContext'].map(appFunction).join('\n');
-    vm.runInContext(`${functions}\nglobalThis.select = selectSemesterRow; globalThis.load = loadCatalogManagement;`, context);
+    const functions = ['loadCatalogManagement', 'renderCatalogContext'].map(appFunction).join('\n');
+    vm.runInContext(`${functions}\nglobalThis.load = loadCatalogManagement;`, context);
+    const page = createCatalogPage({
+      state: context.state, byId: context.byId, loadCatalogManagement: context.load,
+    });
+    context.select = page.selectSemesterRow;
     const requests = [];
     for (const id of sequence) {
       if (id) requests.push(context.select(id));

@@ -87,6 +87,28 @@ test('an administrator reuses an unchanged backup and restores its reviewed data
   await expect(page.locator('#catalog-semester-rows')).not.toContainText('복원으로 제거할 학기');
 });
 
+test('an administrator deselects a semester and moves it with the keyboard', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  for (const name of ['2026 봄', '2026 가을']) {
+    await page.locator('#new-semester').click();
+    await page.locator('#semester-create-form [name="name"]').fill(name);
+    await page.locator('#semester-create-form [type="submit"]').click();
+  }
+
+  const latest = page.locator('#catalog-semester-rows tr').filter({ hasText: '2026 가을' });
+  await latest.getByRole('button', { name: '선택됨' }).click();
+  await expect(page.locator('#semester-form')).toBeHidden();
+  const earlier = page.locator('#catalog-semester-rows tr').filter({ hasText: '2026 봄' });
+  await earlier.getByRole('button', { name: '수정' }).click();
+  await expect(page.locator('#semester-form')).toBeVisible();
+  await earlier.getByRole('button', { name: '선택됨' }).click();
+  await expect(page.locator('#semester-form')).toBeHidden();
+
+  await earlier.focus();
+  await earlier.press('ArrowUp');
+  await expect(page.locator('#catalog-semester-rows tr').first()).toContainText('2026 봄');
+});
+
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();
