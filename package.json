@@ -16,7 +16,7 @@
     "test:browser": "playwright test tests/browser --workers=1",
     "test:workbook-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/workbook-scale.test.mjs",
     "test:openapi": "redocly lint openapi/openapi.yaml --extends=spec",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --allowJs --checkJs --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2023 frontend/dashboard-page.js",
     "test:launcher": "node tests/operational/launcher.test.mjs",
     "test:desktop": "node tests/operational/desktop-open.test.mjs",
     "docs:html": "node scripts/build-guide.mjs",

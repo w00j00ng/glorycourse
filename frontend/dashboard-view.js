@@ -1,15 +1,23 @@
+/** @typedef {{ id: string, name: string, order: number | null }} Semester */
+/** @typedef {{ status: 'DRAFT' | 'ARCHIVED', id: string, revision: number, isStale?: boolean } | { status: 'FINALIZED', enrollmentReportIsCurrent: boolean, isStale?: boolean }} DraftState */
+/** @typedef {{ semester: Semester | null, courseCount: number, unresolvedCapacityCount: number, applicationCount: number, latestDraft: DraftState | null, enrollmentCount: number }} DashboardSummary */
+
+/** @param {Semester[]} semesters */
 export const orderSemesters = (semesters) => [...semesters].sort((left, right) => {
   if (left.order === null) return right.order === null ? 0 : 1;
   if (right.order === null) return -1;
   return right.order - left.order;
 });
 
+/** @param {Semester[]} semesters */
 export const currentSemester = (semesters) => (
   orderSemesters(semesters).find(({ order }) => order !== null) ?? null
 );
 
+/** @param {string} label @param {string} description @param {string} view @param {string} action @param {number} stage */
 const task = (label, description, view, action, stage) => ({ label, description, view, action, stage });
 
+/** @param {DashboardSummary} summary */
 export const nextDashboardTask = (summary) => {
   if (!summary.semester) {
     return task('학기 추가', '수강신청을 받기 전에 새 학기를 추가하세요.', 'catalog', '학기·강좌 관리로 이동', 0);
@@ -44,6 +52,7 @@ export const nextDashboardTask = (summary) => {
   return task('배정초안 생성', '등록된 신청을 바탕으로 배정초안을 만드세요.', 'drafts', '배정초안 만들러 가기', 2);
 };
 
+/** @param {DraftState | null} draft */
 export const allocationDraftStatus = (draft) => {
   if (!draft) return '없음';
   if (draft.isStale) return '원본 변경됨';

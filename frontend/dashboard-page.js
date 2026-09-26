@@ -1,7 +1,15 @@
 import { allocationDraftStatus, currentSemester, nextDashboardTask } from './dashboard-view.js';
 import { PROGRESS_WORKFLOW, WORKFLOW } from './help-content.js';
 
+/**
+ * @typedef {{ semesterCourses: { capacity: number | null }[] }} SemesterContext
+ * @typedef {{ total: number }} PageCount
+ * @typedef {{ items: { id: string, status: 'DRAFT' | 'ARCHIVED', revision: number }[] }} DraftPage
+ * @typedef {{ finalized: boolean, enrollmentReportIsCurrent: boolean }} ReportStatus
+ * @param {{ state: { semesters: import('./dashboard-view.js').Semester[] }, api: (path: string) => Promise<unknown>, byId: (id: string) => HTMLElement }} dependencies
+ */
 export const createDashboardPage = ({ state, api, byId }) => {
+  /** @param {import('./dashboard-view.js').DashboardSummary} summary */
   const render = (summary) => {
     const next = nextDashboardTask(summary);
     byId('dashboard-semester').textContent = summary.semester?.name ?? '없음';
@@ -33,17 +41,18 @@ export const createDashboardPage = ({ state, api, byId }) => {
       return;
     }
     const semesterId = encodeURIComponent(semester.id);
-    const [context, applications, drafts, enrollments, report] = await Promise.all([
+    const [context, applications, drafts, enrollments, report] = /** @type {[SemesterContext, PageCount, DraftPage, PageCount, ReportStatus]} */ (await Promise.all([
       api(`/semesters/${semesterId}/context`),
       api(`/applications?semesterId=${semesterId}&page=1&limit=1`),
       api(`/allocation-drafts?semesterId=${semesterId}&page=1&limit=1`),
       api(`/enrollments?semesterId=${semesterId}&page=1&limit=1`),
       api(`/semesters/${semesterId}/enrollment-report`),
-    ]);
+    ]));
+    /** @type {import('./dashboard-view.js').DraftState | null} */
     let latestDraft = drafts.items[0] ? { ...drafts.items[0], isStale: false }
       : report.finalized ? { status: 'FINALIZED', enrollmentReportIsCurrent: report.enrollmentReportIsCurrent } : null;
     if (latestDraft?.status === 'DRAFT') {
-      const detail = await api(`/allocation-drafts/${encodeURIComponent(latestDraft.id)}`);
+      const detail = /** @type {{ isStale: boolean }} */ (await api(`/allocation-drafts/${encodeURIComponent(latestDraft.id)}`));
       latestDraft = { ...latestDraft, isStale: detail.isStale };
     }
     render({
