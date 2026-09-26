@@ -361,6 +361,12 @@ test('an administrator registers multiple historical enrollments without applica
   await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
   await expect(page.locator('#enrollment-rows')).toContainText('김가나');
   await expect(page.locator('#enrollment-rows')).toContainText('박다라');
+  await page.locator('#enrollment-rows tr').filter({ hasText: '김가나' }).getByRole('button', { name: '수정' }).click();
+  await expect(page.locator('#enrollment-entry-rows > fieldset')).toHaveCount(1);
+  await expect(page.locator('#add-enrollment-entry')).toBeHidden();
+  await page.locator('#enrollment-entry-rows [name="courseId"]').selectOption({ label: '마태복음' });
+  await expect(page.locator('#enrollment-entry-rows [name="newCourseName"]')).toBeHidden();
+  await page.locator('#enrollment-dialog').getByRole('button', { name: '취소' }).click();
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await expect(page.locator('#catalog-semester-rows')).toContainText('과거 학기');
   await page.locator('[data-catalog-tab="courses"]').click();
