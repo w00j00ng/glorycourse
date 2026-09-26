@@ -12,6 +12,7 @@ import { applicationSemesterFilterValue, choiceSummary, paginationView, viewFrom
 import { reportFilename, templateFilename } from './download-name.js';
 import { orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
+import { createDraftsPage } from './drafts-page.js';
 import { createBackupsPage } from './backups-page.js';
 import { createFinalizationPage } from './finalization-page.js';
 import { createApplicationsPage } from './applications-page.js';
@@ -143,33 +144,6 @@ const shutdown = async () => {
     setStatus('종료 확인 필요');
     showMessage('종료 완료를 확인하지 못했습니다. 잠시 기다린 뒤 배포 폴더의 종료 파일을 실행하세요. 저장 중인 프로그램을 강제로 종료하지 마세요.', true);
   }
-};
-
-const loadDrafts = async () => {
-  const pagination = state.pagination.draft = { ...state.pagination.draft };
-  const items = await loadPaged('draft', '/allocation-drafts', '', pagination);
-  if (state.pagination.draft !== pagination) return;
-  state.drafts = items;
-  renderDrafts();
-};
-
-const renderDrafts = () => {
-  byId('draft-rows').replaceChildren(...state.drafts.map((item) => {
-    const row = document.createElement('tr');
-    row.append(
-      cell(resourceName(state.semesters, item.semesterId)),
-      cell(item.mode === 'AUTO' ? '자동' : '수동'),
-      cell(policyName(item.policyId, item.policyVersion)),
-      cell(new Date(item.updatedAt).toLocaleString()),
-      actionsCell(
-        ['검토', () => openDraft(item.id)],
-        ['삭제', () => deleteDraft(item), 'delete'],
-      ),
-    );
-    return row;
-  }));
-  byId('draft-empty').hidden = state.drafts.length !== 0;
-  byId('draft-count').textContent = String(state.pagination.draft.total);
 };
 
 const cell = (text) => {
@@ -565,6 +539,10 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   renderPagination(name);
   return result.items;
 };
+
+const { load: loadDrafts } = createDraftsPage({
+  state, byId, loadPaged, cell, actionsCell, resourceName, policyName, openDraft, deleteDraft,
+});
 
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,
   addEnrollmentEntry, openEnrollment, submitEnrollment, deleteSemesterEnrollments } = createEnrollmentsPage({

@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
+import { createDraftsPage } from '../../frontend/drafts-page.js';
 import { createEnrollmentsPage } from '../../frontend/enrollments-page.js';
 import { createImportsPage } from '../../frontend/imports-page.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
@@ -31,7 +32,7 @@ const enrollmentPage = (context, rendered = []) => {
   });
 };
 
-const withEnrollmentDocument = async (action) => {
+const withRowDocument = async (action) => {
   const previousDocument = globalThis.document;
   globalThis.document = { createElement: () => ({ append() {} }) };
   try { return await action(); } finally { globalThis.document = previousDocument; }
@@ -161,38 +162,49 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
 });
 
 test('keeps the latest draft list and page when earlier requests finish later', async () => {
-  for (const oldTotal of [0, 100]) {
-    const pending = [];
-    const rendered = [];
-    const context = vm.createContext({
-      state: { pagination: { draft: { page: 2, limit: 50, total: 100 } } },
-      URLSearchParams,
-      api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
-      renderPagination() {},
-      renderDrafts: () => rendered.push(context.state.drafts),
-    });
-    vm.runInContext(`${appFunction('loadPaged')}\n${appFunction('loadDrafts')}\nglobalThis.load = loadDrafts;`, context);
-    const earlier = context.load();
-    context.state.pagination.draft.page = 1;
-    context.state.pagination.draft.limit = 25;
-    const latest = context.load();
-    assert.match(pending[0].path, /page=2&limit=50/);
-    assert.match(pending[1].path, /page=1&limit=25/);
-    pending[1].resolve({ items: [{ id: 'latest' }], page: 1, limit: 25, total: 1 });
-    await latest;
-    pending[0].resolve({ items: [{ id: 'earlier' }], page: 2, limit: 50, total: oldTotal });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(pending.length, 2);
-    await earlier;
-    assert.equal(context.state.drafts[0].id, 'latest');
-    assert.deepEqual(rendered.map((items) => items[0].id), ['latest']);
-    const { page, limit, total } = context.state.pagination.draft;
-    assert.deepEqual({ page, limit, total }, { page: 1, limit: 25, total: 1 });
-  }
+  await withRowDocument(async () => {
+    for (const oldTotal of [0, 100]) {
+      const pending = [];
+      const rendered = [];
+      const nodes = {
+        'draft-rows': { replaceChildren() { rendered.push(context.state.drafts); } },
+        'draft-empty': { hidden: true }, 'draft-count': { textContent: '' },
+      };
+      const context = vm.createContext({
+        state: { drafts: [], semesters: [], pagination: { draft: { page: 2, limit: 50, total: 100 } } },
+        URLSearchParams,
+        api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
+        renderPagination() {},
+      });
+      vm.runInContext(`${appFunction('loadPaged')}\nglobalThis.loadPaged = loadPaged;`, context);
+      const { load } = createDraftsPage({
+        state: context.state, byId: (id) => nodes[id], loadPaged: context.loadPaged,
+        cell: () => ({}), actionsCell: () => ({}), resourceName: () => '', policyName: () => '',
+        openDraft: async () => {}, deleteDraft: async () => {},
+      });
+      const earlier = load();
+      context.state.pagination.draft.page = 1;
+      context.state.pagination.draft.limit = 25;
+      const latest = load();
+      assert.match(pending[0].path, /page=2&limit=50/);
+      assert.match(pending[1].path, /page=1&limit=25/);
+      pending[1].resolve({ items: [{ id: 'latest' }], page: 1, limit: 25, total: 1 });
+      await latest;
+      pending[0].resolve({ items: [{ id: 'earlier' }], page: 2, limit: 50, total: oldTotal });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(pending.length, 2);
+      await earlier;
+      assert.equal(context.state.drafts[0].id, 'latest');
+      assert.deepEqual(rendered.map((items) => items[0].id), ['latest']);
+      assert.equal(nodes['draft-count'].textContent, '1');
+      const { page, limit, total } = context.state.pagination.draft;
+      assert.deepEqual({ page, limit, total }, { page: 1, limit: 25, total: 1 });
+    }
+  });
 });
 
 test('corrects a removed enrollment page without letting its retry replace a newer list', async () => {
-  await withEnrollmentDocument(async () => {
+  await withRowDocument(async () => {
     for (const interrupted of [false, true]) {
       const pending = [];
       const context = vm.createContext({
@@ -222,7 +234,7 @@ test('corrects a removed enrollment page without letting its retry replace a new
 });
 
 test('keeps the latest enrollment filter and page when an earlier request finishes later', async () => {
-  await withEnrollmentDocument(async () => {
+  await withRowDocument(async () => {
     for (const oldTotal of [0, 100]) {
       const pending = [];
       const rendered = [];
@@ -255,7 +267,7 @@ test('keeps the latest enrollment filter and page when an earlier request finish
 });
 
 test('keeps the latest enrollment report when an earlier report finishes later', async () => {
-  await withEnrollmentDocument(async () => {
+  await withRowDocument(async () => {
     const reports = [];
     const rendered = [];
     let list = 0;

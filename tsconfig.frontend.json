@@ -15,6 +15,7 @@
     "frontend/catalog-page.js",
     "frontend/catalog-view.js",
     "frontend/dashboard-page.js",
+    "frontend/drafts-page.js",
     "frontend/draft-view.js",
     "frontend/enrollments-page.js",
     "frontend/finalization-page.js",
