@@ -9,7 +9,6 @@ import {
   sortDraftItems,
 } from './draft-view.js';
 import { applicationSemesterFilterValue, choiceSummary, paginationView, viewFromHash } from './list-view.js';
-import { copySemesterCourses, parseSemesterCourses } from './catalog-view.js';
 import { reportFilename, templateFilename } from './download-name.js';
 import { currentSemester, orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
@@ -312,111 +311,6 @@ const enrollmentCourseName = (entry) => (
   state.courses.find(({ id }) => id === entry.querySelector('[name="courseId"]').value)?.name
   ?? entry.querySelector('[name="newCourseName"]').value
 );
-
-const catalogCourseRow = (course = {}) => {
-  const row = document.createElement('tr');
-  row.dataset.id = course.id ?? '';
-  const nameCell = document.createElement('td');
-  const name = document.createElement('input');
-  name.name = 'courseName';
-  name.required = true;
-  name.maxLength = 200;
-  name.value = course.courseName ?? '';
-  name.setAttribute('list', 'course-options');
-  name.setAttribute('aria-label', '강좌명');
-  nameCell.append(name);
-  const capacityCell = document.createElement('td');
-  const capacity = document.createElement('input');
-  capacity.name = 'capacity';
-  capacity.type = 'number';
-  capacity.min = '0';
-  capacity.step = '1';
-  capacity.required = !course.id;
-  capacity.placeholder = course.id ? '미정' : '정원 입력';
-  capacity.value = course.capacity ?? '';
-  capacity.setAttribute('aria-label', course.id ? '정원' : '새 강좌 정원 (필수)');
-  capacityCell.append(capacity);
-  const usage = course.id
-    ? course.enrollmentCount > 0
-      ? `수강이력 ${course.enrollmentCount}건 · 삭제 불가`
-      : course.applicationCount > 0
-        ? `수강신청 ${course.applicationCount}건`
-        : '사용 없음'
-    : '저장 전';
-  const action = course.id
-    ? actionsCell(['삭제', () => deleteSemesterCourse(course), 'delete'])
-    : actionsCell(['추가 취소', () => {
-      row.remove();
-      byId('catalog-course-empty').hidden = byId('catalog-course-rows').children.length !== 0;
-    }, 'delete']);
-  const deleteButton = action.querySelector('button');
-  if (course.enrollmentCount > 0) {
-    deleteButton.disabled = true;
-    deleteButton.title = '수강이력이 있는 강좌는 삭제할 수 없습니다.';
-  }
-  row.append(nameCell, capacityCell, cell(usage), action);
-  return row;
-};
-
-const setCatalogTab = (tab) => {
-  byId('catalog-semesters-panel').hidden = tab !== 'semesters';
-  byId('catalog-courses-panel').hidden = tab !== 'courses';
-  document.querySelectorAll('[data-catalog-tab]').forEach((button) => {
-    const active = button.dataset.catalogTab === tab;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-};
-
-const openCatalogAdd = () => {
-  const form = byId('catalog-add-form');
-  form.reset();
-  byId('catalog-add-errors').replaceChildren();
-  byId('catalog-add-errors').hidden = true;
-  byId('catalog-add-dialog').showModal();
-  form.elements.courses.focus();
-};
-
-const addCatalogCourses = (event) => {
-  event.preventDefault();
-  const { courses, errors } = parseSemesterCourses(event.currentTarget.elements.courses.value);
-  const errorList = byId('catalog-add-errors');
-  const messages = courses.length === 0 && errors.length === 0 ? ['추가할 강좌를 입력하세요.'] : errors;
-  errorList.replaceChildren(...messages.map((message) => {
-    const item = document.createElement('li');
-    item.textContent = message;
-    return item;
-  }));
-  errorList.hidden = messages.length === 0;
-  if (messages.length) return;
-
-  const rows = byId('catalog-course-rows');
-  const existingNames = [...rows.children].map((row) => row.querySelector('[name="courseName"]').value);
-  const added = copySemesterCourses(existingNames, courses);
-  rows.append(...added.map(catalogCourseRow));
-  byId('catalog-course-empty').hidden = rows.children.length !== 0;
-  byId('catalog-add-dialog').close();
-  const skipped = courses.length - added.length;
-  showMessage(`강좌 ${added.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
-};
-
-const copyCatalogCourses = (event) => {
-  event.preventDefault();
-  const selectedIds = new Set([...event.currentTarget.querySelectorAll('[name="courseId"]:checked')].map(({ value }) => value));
-  if (selectedIds.size === 0) {
-    showMessage('복사할 강좌를 선택하세요.', true);
-    return;
-  }
-  const selected = state.catalogCopyCourses.filter(({ id }) => selectedIds.has(id));
-  const rows = byId('catalog-course-rows');
-  const existingNames = [...rows.children].map((row) => row.querySelector('[name="courseName"]').value);
-  const copied = copySemesterCourses(existingNames, selected);
-  rows.append(...copied.map(catalogCourseRow));
-  byId('catalog-course-empty').hidden = rows.children.length !== 0;
-  byId('catalog-copy-dialog').close();
-  const skipped = selected.length - copied.length;
-  showMessage(`강좌 ${copied.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
-};
 
 const openEnrollment = (item) => {
   const form = byId('enrollment-form');
@@ -1063,8 +957,9 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
 };
 
 const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,
-  submitCatalog, deleteSemesterCourse, openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
-  state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell,
+  submitCatalog, setCatalogTab, openCatalogAdd, addCatalogCourses, copyCatalogCourses,
+  openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
+  state, byId, api, run, showMessage, loadCatalogs, fillSelect, cell, actionsCell,
 });
 
 const {
