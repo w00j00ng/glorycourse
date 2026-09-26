@@ -187,7 +187,7 @@ export type DatabaseState = {
 
 export type StoreAdapter = {
   read(): Promise<DatabaseState | null>;
-  write(data: DatabaseState): Promise<void>;
+  write(data: DatabaseState, previous?: DatabaseState): Promise<void>;
 };
 
 export class StoreRevisionConflictError extends Error {
@@ -275,7 +275,7 @@ export class Store {
     const result = await command(candidate);
     candidate.meta.storeRevision = before.meta.storeRevision + 1;
     assertValidStore(candidate);
-    await this.#persist(candidate);
+    await this.#persist(candidate, before);
     return result;
   }
 
@@ -303,10 +303,10 @@ export class Store {
     this.#recoveryRequired = false;
   }
 
-  async #persist(candidate: DatabaseState): Promise<void> {
+  async #persist(candidate: DatabaseState, previous?: DatabaseState): Promise<void> {
     const before = this.data;
     try {
-      await this.adapter.write(candidate);
+      await this.adapter.write(candidate, previous);
     } catch (writeError) {
       const disk = await this.#readAfterFailure();
       if (isDeepStrictEqual(disk, before)) throw writeError;

@@ -2,6 +2,7 @@ import './contract/openapi.test.mjs';
 import './contract/store-schema.test.mjs';
 import './integration/store.test.mjs';
 import './integration/sqlite.test.mjs';
+import './integration/sqlite-incremental.test.mjs';
 import './integration/migrations.test.mjs';
 import './integration/bulk-registration.test.mjs';
 import './integration/recovery.test.mjs';

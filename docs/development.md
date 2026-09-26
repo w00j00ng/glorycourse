@@ -52,6 +52,8 @@ npm start
 
 DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `schema_migrations`로 관리한다. 업무 자료는 JSON 문서가 아니라 명시 컬럼과 자식 테이블에 저장한다. 실행 전에 이력을 확인하고, 미적용 SQL이 있으면 `update-backups/`에 SQLite 백업을 만든 뒤 한 트랜잭션으로 적용한다. `npm run migrations:manifest`로 manifest를 갱신하고 `npm run migrations:check`로 검증한다. 미배포 개발용 `db.json` 및 이력 테이블이 없는 SQLite DB는 자동 이전하지 않는다.
 
+일반 저장은 직전 상태와 후보를 비교해 변경된 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성·백업 복원은 전체 교체 경로를 사용한다. 메모리의 전체 후보 복제·검증·비교 비용은 여전히 자료량에 비례한다.
+
 1. 기존 최대 버전보다 큰 Unix 초 timestamp로 새 `.sql` 파일을 추가한다. 이미 배포한 파일의 이름·내용은 수정하거나 삭제하지 않는다.
 2. SQL은 UTF-8 BOM 없이 LF 줄바꿈으로 작성한다. 트랜잭션은 실행기가 관리하므로 `BEGIN`·`COMMIT`이나 `schema_migrations` 직접 변경문을 넣지 않는다.
 3. `store.ts`, `store-schema.json`, `storage/queries/`와 필요한 API 계약을 함께 갱신한다. 반복 값은 자식 테이블, 단일 값은 개별 컬럼으로 저장한다.
@@ -78,6 +80,7 @@ DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `
 npm run verify
 npm run test:coverage
 npm run test:scale
+npm run test:storage-scale
 npm run test:workbook-scale
 ```
 
@@ -87,6 +90,7 @@ npm run test:workbook-scale
 - README 상단의 Backend·Frontend 배지는 `https://w00j00ng.github.io/glorycourse/coverage/` 아래의 고정 경로를 참조한다. 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다.
 - PR에서는 Backend·Frontend 각각의 줄 커버리지가 80% 미만이면 해당 영역과 수치를 GitHub Actions 경고 annotation과 실행 요약에 표시한다. 80% 이상이면 경고하지 않으며, 커버리지 미달 자체는 테스트 실패나 병합 차단으로 처리하지 않는다.
 - `test:scale`: 10,000명·1,000강좌와 대체 배정 부하 검증
+- `test:storage-scale`: 회원 1천·1만 명의 신청·이력·Excel 원본·초안이 섞인 자료에서 회원 한 건 수정의 시간과 SQLite 변경 건수를 측정한다. 복원용 전체 교체 경로와 일반 부분 저장을 비교하고 재시작 후 자료 일치도 검사한다. 시간은 환경에 따라 달라지며 변경 건수 회귀를 중점적으로 확인한다.
 - `test:workbook-scale`: xlsx 기본 행 한도의 생성·재파싱 검증. 약 700MiB heap을 사용할 수 있어 별도로 실행한다.
 - `test:desktop`: 로그인한 데스크톱에서 기본 브라우저를 실제로 열고 시험 페이지 요청까지 확인한다. 브라우저 탭 하나가 열리며 확인 후 닫아도 된다. GUI가 없는 CI의 `verify`에는 포함하지 않는다.
 

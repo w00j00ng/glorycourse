@@ -12,6 +12,7 @@
     "test:coverage": "c8 npm run verify && node scripts/coverage-report.mjs",
     "test:crash": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/crash-write.test.mjs",
     "test:scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/allocation-scale.test.mjs",
+    "test:storage-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/storage-scale.test.mjs",
     "test:workbook-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/workbook-scale.test.mjs",
     "test:openapi": "redocly lint openapi/openapi.yaml --extends=spec",
     "typecheck": "tsc --noEmit",

@@ -12,6 +12,8 @@
 
 `schema/store-schema.json`이 서비스가 만드는 관계형 상태의 논리 계약이다. SQLite의 `store_meta`와 업무 테이블은 모든 값을 명시 컬럼에 저장하고, 반복·중첩 값은 부모 FK와 `position`을 가진 자식 테이블에 저장한다. 범용 전체 저장 DTO와 JSON `document` 컬럼은 사용하지 않는다. 한 업무 명령의 전체 후보는 한 SQLite 트랜잭션으로 반영한다. DB 스키마는 `schema/migrations/`의 Unix timestamp SQL과 `schema_migrations`로 관리한다. 백업은 SQLite 파일이며, 미배포 개발용 `db.json`은 자동 이전하지 않는다.
 
+일반 명령은 직전 자료와 다른 행 및 변경된 자식 자료만 저장한다. 수정되지 않은 가져오기 원본과 배정 스냅샷을 다시 기록하지 않는다. 트랜잭션을 시작한 뒤 DB의 epoch·revision이 직전 자료와 같은지 확인하며, 전체 교체는 초기화·복원에 한정한다. UNIQUE 값 교환에 사용하는 임시 값은 트랜잭션 안에서만 존재하고 커밋 시 FK·고유성 제약을 만족해야 한다.
+
 `inputSnapshot`은 대상 학기, 개설 강좌, 신청, 희망, 관련 과거 이력, 동일 학기 기존 이력만 담는다. `sourceApplicationId`와 생성 당시 choice ID는 역사적 식별값이며 live FK가 아니다. 현재 final 회원·강좌와 업무 테이블 참조만 live 검증 대상이다.
 
 수강이력은 수강신청과 배정초안의 생명주기에 종속되지 않는다. 확정으로 생성된 이력도 초안 식별자를 저장하지 않으며, 신청 또는 초안을 삭제해도 수강이력은 유지된다.
