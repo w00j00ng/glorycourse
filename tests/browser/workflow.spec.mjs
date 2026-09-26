@@ -147,6 +147,46 @@ test('an administrator copies selected courses from a previous semester', async 
   await expect(page.locator('#catalog-course-rows tr')).toHaveAttribute('data-id', /.+/);
 });
 
+test('a late catalog refresh does not hide a semester added afterward', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('기존 학기');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await expect(page.locator('#catalog-semester-rows')).toContainText('기존 학기');
+
+  let releaseOldResponse;
+  const holdOldResponse = new Promise((resolve) => { releaseOldResponse = resolve; });
+  let oldSnapshotReady;
+  const oldSnapshot = new Promise((resolve) => { oldSnapshotReady = resolve; });
+  let delayed = false;
+  await page.route('**/api/v1/semesters?page=*', async (route) => {
+    if (delayed) return route.continue();
+    delayed = true;
+    const response = await route.fetch();
+    oldSnapshotReady();
+    await holdOldResponse;
+    await route.fulfill({ response });
+  });
+
+  try {
+    await page.locator('#refresh-catalog').click();
+    await oldSnapshot;
+    await page.locator('#new-semester').click();
+    await page.locator('#semester-create-form [name="name"]').fill('새 학기');
+    await page.locator('#semester-create-form [type="submit"]').click();
+    await expect(page.locator('#catalog-semester-rows')).toContainText('새 학기');
+    await expect(page.locator('#semester-form')).toBeVisible();
+
+    const refreshContinued = page.waitForRequest((request) =>
+      request.method() === 'GET' && /\/api\/v1\/semesters\/[^/]+\/context$/.test(request.url()));
+    releaseOldResponse();
+    await refreshContinued;
+    await expect(page.locator('#catalog-semester-rows')).toContainText('새 학기');
+  } finally {
+    releaseOldResponse();
+  }
+});
+
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();

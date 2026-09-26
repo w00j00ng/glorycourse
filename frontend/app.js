@@ -1035,10 +1035,13 @@ const loadCatalogItems = async (path) => {
   }
 };
 
+let catalogLoadRequest = 0;
 const loadCatalogs = async () => {
+  const request = ++catalogLoadRequest;
   const [semesters, members, courses] = await Promise.all([
     loadCatalogItems('/semesters'), loadCatalogItems('/members'), loadCatalogItems('/courses'),
   ]);
+  if (request !== catalogLoadRequest) return;
   state.semesters = orderSemesters(semesters);
   state.members = members;
   state.courses = courses;

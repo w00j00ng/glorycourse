@@ -40,6 +40,7 @@ test('reloads saved records using the catalog and filters shown to the user', as
     const queries = [];
     let reportSemester;
     const context = vm.createContext({
+      catalogLoadRequest: 0,
       state: {
         semesters: [oldSemester], courses: [], applicationSemesterFilterTouched: request.touched,
         pagination: { application: { page: 2 } },
@@ -105,6 +106,7 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
       };
       const requested = [];
       const context = vm.createContext({
+        catalogLoadRequest: 0,
         state: {
           semesters: [], members: [], courses: [], applicationSemesterFilterTouched: touched,
           pagination: { application: { page: 2 } },
