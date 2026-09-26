@@ -2,6 +2,7 @@ import { currentSemester } from './dashboard-view.js';
 import { reportFilename } from './download-name.js';
 
 /** @typedef {import('../backend/src/services/enrollments.ts').EnrollmentView} EnrollmentRow */
+/** @typedef {ReturnType<import('../backend/src/services/enrollments.ts').EnrollmentService['preview']>} EnrollmentPreview */
 /** @typedef {{ semesterId: string, finalized: boolean, enrollmentReportIsCurrent: boolean }} EnrollmentReport */
 /**
  * @param {{
@@ -18,11 +19,11 @@ import { reportFilename } from './download-name.js';
  *   resourceName: (items: { id: string, name: string }[], id: string) => string,
  *   cell: (text: string) => any,
  *   actionsCell: (...actions: any[]) => any,
- *   deleteEnrollment: (item: EnrollmentRow) => Promise<void>,
+ *   reviewWarnings: (preview: EnrollmentPreview, issueContext: (issue: import('../backend/src/services/enrollments.ts').EnrollmentIssue) => { memberName: string, courseName: string }) => Promise<string | null>,
  * }} dependencies
  */
 export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, download, loadPaged, recordQuery,
-  resourceName, cell, actionsCell, deleteEnrollment }) => {
+  resourceName, cell, actionsCell, reviewWarnings }) => {
   /** @param {Partial<EnrollmentRow>} [item] @param {boolean} [editing] */
   const addEnrollmentEntry = (item = {}, editing = false) => {
     const container = byId('enrollment-entry-rows');
@@ -126,6 +127,29 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     state.enrollments = items ?? [];
     state.enrollmentReport = report?.finalized && !report.enrollmentReportIsCurrent ? report : null;
     render();
+  };
+
+  /** @param {EnrollmentRow} item */
+  const deleteEnrollment = async (item) => {
+    if (!window.confirm(`${item.memberName}님의 ${item.semesterName} 수강이력을 삭제할까요?`)) return;
+    const preview = /** @type {EnrollmentPreview} */ (await run(() => api('/enrollments/preview', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'DELETE', enrollmentId: item.id, expectedRevision: item.revision,
+        semesterName: item.semesterName, memberName: item.memberName, courseName: item.courseName,
+      }),
+    })));
+    const note = await reviewWarnings(preview, () => ({ memberName: item.memberName, courseName: item.courseName }));
+    if (note === null) return;
+    await run(() => api(`/enrollments/${item.id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        preparedActionToken: preview.preparedActionToken,
+        acknowledgedWarningDigest: preview.warningDigest,
+        ...(note ? { acknowledgementNote: note } : {}),
+      }),
+    }), '이력을 삭제했습니다.');
+    await load();
   };
 
   const completeReport = async () => {

@@ -246,28 +246,6 @@ const submitEnrollment = async (event) => {
   } finally { submit.disabled = false; }
 };
 
-const deleteEnrollment = async (item) => {
-  if (!window.confirm(`${item.memberName}님의 ${item.semesterName} 수강이력을 삭제할까요?`)) return;
-  const preview = await run(() => api('/enrollments/preview', {
-    method: 'POST',
-    body: JSON.stringify({
-      action: 'DELETE', enrollmentId: item.id, expectedRevision: item.revision,
-      semesterName: item.semesterName, memberName: item.memberName, courseName: item.courseName,
-    }),
-  }));
-  const note = await reviewWarnings(preview, () => ({ memberName: item.memberName, courseName: item.courseName }));
-  if (note === null) return;
-  await run(() => api(`/enrollments/${item.id}`, {
-    method: 'DELETE',
-    body: JSON.stringify({
-      preparedActionToken: preview.preparedActionToken,
-      acknowledgedWarningDigest: preview.warningDigest,
-      ...(note ? { acknowledgementNote: note } : {}),
-    }),
-  }), '이력을 삭제했습니다.');
-  await loadEnrollments();
-};
-
 let draftOpenRequest = 0;
 const deleteDraft = async (item) => {
   if (!window.confirm('이 배정초안을 삭제할까요? 수강이력은 삭제되지 않습니다.')) return;
@@ -814,7 +792,7 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,
   addEnrollmentEntry, enrollmentCourseName, openEnrollment, deleteSemesterEnrollments } = createEnrollmentsPage({
   state, byId, showMessage, api, run, download, loadPaged, recordQuery, resourceName, cell, actionsCell,
-  deleteEnrollment,
+  reviewWarnings,
 });
 const { previewFinalization, finalizeDraft } = createFinalizationPage({
   state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,

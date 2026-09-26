@@ -25,7 +25,7 @@ const enrollmentPage = (context, rendered = []) => {
   return createEnrollmentsPage({
     state: context.state, byId, showMessage() {}, api: context.api, loadPaged: context.loadPaged,
     recordQuery: context.recordQuery, resourceName: () => 'Semester',
-    cell: () => ({}), actionsCell: () => ({}), async deleteEnrollment() {},
+    cell: () => ({}), actionsCell: () => ({}), async reviewWarnings() { return ''; },
   });
 };
 
