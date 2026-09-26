@@ -22,6 +22,7 @@
     "frontend/imports-page.js",
     "frontend/download-name.js",
     "frontend/issue-view.js",
-    "frontend/list-view.js"
+    "frontend/list-view.js",
+    "frontend/warning-dialog.js"
   ]
 }
