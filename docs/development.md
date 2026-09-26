@@ -87,7 +87,7 @@ npm run test:workbook-scale
 
 - `verify`: migration manifest, OpenAPI, 타입, 기능·계약·실제 파일 저장, 강제 종료 복구와 실행기 검증. 패키지·부하·실제 GUI 검증은 별도다.
 - `typecheck`: 백엔드 TypeScript와 대시보드 화면·판단 모듈의 JavaScript를 `checkJs`로 검사한다. 다른 프런트엔드 화면은 아직 타입 검사 대상이 아니다.
-- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 학기·강좌 등록 → 신청 → 초안 검토·확정 → 이력 확인과 대량 초안 페이지 처리를 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
+- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 초안 검토·확정, 대량 초안 페이지 처리, 수동 백업·복원을 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
 - `test:coverage`: `verify`를 [c8](https://github.com/bcoe/c8)으로 실행해 `coverage/index.html`, `coverage/lcov.info`, `coverage/coverage-summary.json`과 요약을 생성한다. 백엔드 전체, 프런트엔드 JavaScript 전체, `launcher.mjs`와 `runtime-paths.mjs`가 대상이다. 별도로 실행하는 브라우저 테스트의 사용 줄은 이 수치에 합산되지 않아 `frontend/app.js`처럼 Node 테스트에서 실행하지 않는 파일은 0%로 포함된다. 빌드·검증 스크립트와 테스트 자체는 집계하지 않는다.
 - 기본 브랜치의 성공한 CI는 `coverage/pages/`의 정적 SVG 배지와 HTML 요약을 GitHub Pages에 배포한다. 저장소 설정의 **Pages → Build and deployment → Source**는 `GitHub Actions`로 한 번 지정해야 한다. CI는 README를 수정하거나 커밋하지 않으며 개인 토큰이나 외부 커버리지 서비스도 사용하지 않는다.
 - README 상단의 Backend·Frontend 배지는 `https://w00j00ng.github.io/glorycourse/coverage/` 아래의 고정 경로를 참조한다. 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다.

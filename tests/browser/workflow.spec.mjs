@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -26,6 +26,13 @@ const test = base.extend({
       if (message.type !== 'ready') throw new Error(`Browser test server did not start: ${errorOutput}`);
       await page.goto(message.origin);
       await use({
+        backupFile: async () => join(dataDirectory, 'backups', (await readdir(join(dataDirectory, 'backups')))[0]),
+        completeApplicationTemplate: async (bytes) => {
+          child.send({ type: 'complete-template', bytes: bytes.toString('base64') });
+          const [result] = await once(child, 'message', { signal: AbortSignal.timeout(20_000) });
+          if (result.type !== 'template-completed') throw new Error(result.message);
+          return { ...result, buffer: Buffer.from(result.bytes, 'base64') };
+        },
         seedLarge: async () => {
           child.send({ type: 'seed-large' });
           const [result] = await once(child, 'message', { signal: AbortSignal.timeout(20_000) });
@@ -42,6 +49,81 @@ const test = base.extend({
       await rm(dataDirectory, { recursive: true, force: true });
     }
   },
+});
+
+test('an administrator reuses an unchanged backup and restores its reviewed data', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('원래 학기');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await expect(page.locator('#catalog-semester-rows')).toContainText('원래 학기');
+
+  await page.getByRole('button', { name: '자료 관리', exact: true }).click();
+  await page.locator('#create-backup').click();
+  await expect(page.locator('#backup-count')).toHaveText('1');
+  const backupFile = await app.backupFile();
+  await page.locator('#create-backup').click();
+  await expect(page.locator('#backup-count')).toHaveText('1');
+
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('복원으로 제거할 학기');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await expect(page.locator('#catalog-semester-rows')).toContainText('복원으로 제거할 학기');
+
+  await page.getByRole('button', { name: '자료 관리', exact: true }).click();
+  await page.locator('#open-restore').click();
+  await page.locator('#restore-form [name="file"]').setInputFiles(backupFile);
+  await page.locator('#restore-submit').click();
+  await expect(page.locator('#restore-preview')).toBeVisible();
+  await expect(page.locator('#restore-current-revision')).toHaveText('2');
+  await expect(page.locator('#restore-backup-revision')).toHaveText('1');
+  await page.locator('#restore-form [name="note"]').fill('백업 이후 추가한 학기가 제거됨을 확인했습니다.');
+  await page.locator('#restore-submit').click();
+  await expect(page.locator('#restore-dialog')).toBeHidden();
+
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await expect(page.locator('#catalog-semester-rows')).toContainText('원래 학기');
+  await expect(page.locator('#catalog-semester-rows')).not.toContainText('복원으로 제거할 학기');
+});
+
+test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('양식 학기');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#catalog-semester').selectOption({ label: '양식 학기' });
+  await page.locator('#add-catalog-course').click();
+  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 2');
+  await page.locator('#catalog-add-form [type="submit"]').click();
+  await page.locator('#catalog-form [type="submit"]').click();
+
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await page.locator('#application-template').click();
+  await page.locator('#application-template-form [name="semesterId"]').selectOption({ label: '양식 학기' });
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#application-template-form [type="submit"]').click(),
+  ]);
+  const completed = await app.completeApplicationTemplate(await readFile(await download.path()));
+  expect([completed.semesterName, completed.courseName, completed.capacity]).toEqual(['양식 학기', '창세기', 2]);
+
+  await page.locator('#applications-view .import-open').click();
+  await page.locator('#import-form [name="file"]').setInputFiles({
+    name: '수강신청.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: completed.buffer,
+  });
+  await page.locator('#import-preview-action [type="submit"]').click();
+  await expect(page.locator('#import-source-count')).toHaveText('1');
+  await expect(page.locator('#import-insert-count')).toHaveText('1');
+  await expect(page.locator('#application-rows tr')).toHaveCount(0);
+  await page.locator('#commit-import').click();
+  await expect(page.locator('#import-preview-status')).toContainText('반영됨');
+  await page.locator('#import-dialog .close-dialog').first().click();
+  await expect(page.locator('#application-rows tr')).toHaveCount(1);
+  await expect(page.locator('#application-rows')).toContainText('양식 회원');
 });
 
 test('an administrator registers applications, reviews allocation, and sees saved enrollment history', async ({ page, app }) => {
