@@ -1,3 +1,4 @@
+/** @type {Record<string, string>} */
 const messages = {
   SAME_SEMESTER_ENROLLMENT: '같은 학기에 수강이력이 이미 있습니다. 기존 이력을 확인하세요.',
   SEMESTER_ORDER_UNRESOLVED: '학기 순서를 확인하세요. 과거 수강이력이 있으면 해당 학기의 순서도 입력하세요.',
@@ -61,26 +62,32 @@ const messages = {
   CHOICE_APPLICATION_INVALID: '희망 강좌가 신청 내역과 연결되지 않았습니다. 신청을 확인하세요.',
 };
 
+/** @type {Record<string, string>} */
 const informationMessages = {
   SEMESTER_ORDER_UNRESOLVED: '새 학기는 다음 순서로 등록됩니다.',
   CAPACITY_UNRESOLVED: '새 개설강좌는 정원 미정으로 등록됩니다.',
 };
 
+/** @param {string} code */
 const contextMessage = (code) => {
   const match = /^(SEMESTER_ORDER|SEMESTER_COURSE_CAPACITY)_(EXISTING_CONFLICT|MISSING|INVALID|SOURCE_CONFLICT)$/.exec(code);
   if (!match) return null;
   const field = match[1] === 'SEMESTER_ORDER' ? '학기 순서' : '정원';
   const subject = field === '정원' ? '정원이' : '학기 순서가';
-  return {
+  return /** @type {Record<string, string>} */ ({
     EXISTING_CONFLICT: `파일의 ${subject} 기존 값과 다릅니다. 아래에서 유지할 값을 선택하세요.`,
     MISSING: `${subject} 비어 있습니다. 엑셀 파일을 확인하세요.`,
     INVALID: `해당 행의 ${field === '정원' ? '학기명·강좌명과 정원' : '학기명과 순서'} 값을 확인하세요.`,
     SOURCE_CONFLICT: `파일에서 같은 ${field}의 값이 서로 다릅니다. 엑셀 파일을 확인하세요.`,
-  }[match[2]];
+  })[match[2]];
 };
 
+/**
+ * @param {{ code: string, severity: string, source?: { sheet?: string, row?: number, column?: string }, location?: string, detail?: { rowNumber?: number }, message?: string }} issue
+ * @param {{ memberName?: string, courseName?: string }} context
+ */
 export const issueText = (issue, context = {}) => {
-  const severity = { WARNING: '주의', ERROR: '오류', INFO: '안내' }[issue.severity] ?? '오류';
+  const severity = /** @type {Record<string, string>} */ ({ WARNING: '주의', ERROR: '오류', INFO: '안내' })[issue.severity] ?? '오류';
   const source = issue.source ?? {};
   const location = issue.location?.includes('!')
     ? issue.location.replace('!', ' ')
@@ -91,6 +98,6 @@ export const issueText = (issue, context = {}) => {
   const subject = [place, context.memberName, context.courseName].filter(Boolean).join(' · ');
   const message = (issue.severity === 'INFO' ? informationMessages[issue.code] : null)
     ?? messages[issue.code] ?? contextMessage(issue.code)
-    ?? (/[가-힣]/.test(issue.message ?? '') && !/[A-Za-z]/.test(issue.message) ? issue.message : '자료를 확인한 뒤 다시 시도하세요.');
+    ?? (/[가-힣]/.test(issue.message ?? '') && !/[A-Za-z]/.test(issue.message ?? '') ? issue.message : '자료를 확인한 뒤 다시 시도하세요.');
   return `${severity}${subject ? ` · ${subject}` : ''}: ${message}`;
 };

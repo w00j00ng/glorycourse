@@ -11,6 +11,7 @@ import {
   type InputChange,
 } from '../allocation/snapshot.ts';
 import {
+  cloneStoreValue,
   type AllocationDraftItemRecord as DraftItemRecord,
   type AllocationDraftRecord as DraftRecord,
   type DatabaseState,
@@ -143,7 +144,7 @@ export class DraftService {
         policyId,
         policyVersion,
         engineVersion: ALLOCATION_ENGINE_VERSION,
-        policySettings: structuredClone(policySettings),
+        policySettings: cloneStoreValue(policySettings),
         randomSeed,
         sourceRevision: replay?.sourceRevision ?? semester!.allocationInputRevision,
         inputFingerprint: allocationFingerprint(snapshot, {
@@ -151,7 +152,7 @@ export class DraftService {
           policyVersion,
           settings: policySettings,
         }),
-        inputSnapshot: structuredClone(snapshot),
+        inputSnapshot: cloneStoreValue(snapshot),
         createdAt: now,
         updatedAt: now,
         finalizedAt: null,
@@ -357,10 +358,10 @@ const validateCreateInput = (input: CreateDraftInput): void => {
   requireId(input.policyId, 'policyId');
   requireId(input.policyVersion, 'policyVersion');
   if (!['AUTO', 'MANUAL'].includes(input.mode)) throw new DraftValidationError('mode is invalid');
-  if (!['NEW_FIRST', 'RANK_FIRST'].includes(input.policySettings.preferenceMode)) {
+  if (!['NEW_FIRST', 'RANK_FIRST'].includes(input.policySettings?.preferenceMode)) {
     throw new DraftValidationError('preferenceMode is invalid');
   }
-  if (input.policySettings.fallbackMode !== 'MAX_CARDINALITY_PRIORITIZED') {
+  if (input.policySettings?.fallbackMode !== 'MAX_CARDINALITY_PRIORITIZED') {
     throw new DraftValidationError('fallbackMode is invalid');
   }
   if (input.replayFromDraftId !== undefined) requireId(input.replayFromDraftId, 'replayFromDraftId');

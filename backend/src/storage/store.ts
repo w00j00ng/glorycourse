@@ -1,9 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
+import { current, Immer, isDraft } from 'immer';
 
 import type { AllocationSnapshot, PolicySettings } from '../allocation/engine.ts';
 import { SQLiteAdapter } from './sqlite.ts';
 import { migrateDatabase } from './migrations.ts';
-import { assertValidStore } from './validate-store.ts';
+import { assertValidStore, assertValidStoreChanges } from './validate-store.ts';
 
 export { assertValidStore, StoreValidationError } from './validate-store.ts';
 
@@ -187,7 +188,7 @@ export type DatabaseState = {
 
 export type StoreAdapter = {
   read(): Promise<DatabaseState | null>;
-  write(data: DatabaseState): Promise<void>;
+  write(data: DatabaseState, previous?: DatabaseState): Promise<void>;
 };
 
 export class StoreRevisionConflictError extends Error {
@@ -213,6 +214,19 @@ export class StoreRecoveryRequiredError extends Error {
     this.name = 'StoreRecoveryRequiredError';
   }
 }
+
+const drafts = new Immer({ autoFreeze: false });
+
+const detachResult = (value: unknown): unknown => {
+  if (isDraft(value)) return current(value);
+  if (Array.isArray(value)) return value.map(detachResult);
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, detachResult(item)]));
+  }
+  return value;
+};
+
+export const cloneStoreValue = <T>(value: T): T => structuredClone(detachResult(value)) as T;
 
 export class Store {
   #tail = Promise.resolve();
@@ -271,23 +285,12 @@ export class Store {
     }
 
     const before = this.data;
-    const candidate = structuredClone(before);
-    const result = await command(candidate);
-    candidate.meta.storeRevision = before.meta.storeRevision + 1;
-    assertValidStore(candidate);
-
-    try {
-      await this.adapter.write(candidate);
-    } catch (writeError) {
-      const disk = await this.#readAfterFailure();
-      if (isDeepStrictEqual(disk, before)) throw writeError;
-      if (!isDeepStrictEqual(disk, candidate)) {
-        this.#recoveryRequired = true;
-        throw new StoreRecoveryRequiredError();
-      }
-    }
-
-    this.data = candidate;
+    const draft = drafts.createDraft(before);
+    const result = cloneStoreValue(await command(draft));
+    draft.meta.storeRevision = before.meta.storeRevision + 1;
+    const candidate = drafts.finishDraft(draft);
+    assertValidStoreChanges(before, candidate);
+    await this.#persist(candidate, before);
     return result;
   }
 
@@ -311,9 +314,14 @@ export class Store {
     const candidate = structuredClone(input);
     assertValidStore(candidate);
     await options.backup();
+    await this.#persist(candidate);
+    this.#recoveryRequired = false;
+  }
+
+  async #persist(candidate: DatabaseState, previous?: DatabaseState): Promise<void> {
     const before = this.data;
     try {
-      await this.adapter.write(candidate);
+      await this.adapter.write(candidate, previous);
     } catch (writeError) {
       const disk = await this.#readAfterFailure();
       if (isDeepStrictEqual(disk, before)) throw writeError;
@@ -323,7 +331,6 @@ export class Store {
       }
     }
     this.data = candidate;
-    this.#recoveryRequired = false;
   }
 }
 

@@ -1,10 +1,10 @@
 # 배포 관리자 안내
 
-고객의 다운로드·실행·종료·업데이트 절차는 [README](../README.md), 업무 화면 사용법은 [사용 설명서](usage.md)에 있다. 이 문서는 배포 파일을 만들고 GitHub Release로 제공하는 담당자를 위한 절차다.
+고객의 다운로드·실행·종료·업데이트 절차는 [README](../README.md), 업무 화면 사용법은 [사용 설명서](usage.md), 증상별 안내는 [문제 해결](troubleshooting.md)에 있다. 이 문서는 배포 파일을 만들고 GitHub Release로 제공하는 담당자를 위한 절차다.
 
 ## 현재 검증 범위
 
-Windows용 ZIP은 로컬에서 생성하고 별도 임시 폴더에 추출해 검증한다. 기존에 기록된 2026-09-25 [Portable release 실행](https://github.com/w00j00ng/glorycourse/actions/runs/36091456318)은 Windows 2022 x64, macOS 15 arm64, Ubuntu 24.04 x64 패키지 검증 결과다. 이 과거 결과가 새 커밋의 검증을 대신하지 않는다. 실제 GUI 첫 실행은 별도 검증 대상이다. 특히 Mac은 서명·공증 없는 시험 배포이며 일반 고객용 정식 지원으로 전환하기 전에 Finder/Gatekeeper 검증이 필요하다.
+Windows용 ZIP은 로컬에서 생성하고 별도 임시 폴더에 추출해 검증한다. 태그를 push한 뒤에는 **그 태그의** Portable release 실행에서 Windows 2022 x64, macOS 15 arm64, Ubuntu 24.04 x64 패키지 검증 결과를 확인한다. CI의 실행기 검증만으로 일반 사용자 PC의 GUI 첫 실행이 확인되지는 않는다. Mac/Linux는 README에 시험 배포 대상으로 표시하고, Mac은 서명·공증과 Finder/Gatekeeper 검증 전까지 정식 지원으로 안내하지 않는다.
 
 ## 배포 전 로컬 확인
 
@@ -19,6 +19,8 @@ npm run test:package
 
 `dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations` 전체 이력과 manifest, 저장 스키마, 실행기, production 의존성, Node 및 라이선스를 포함한다. 개발자의 자료 폴더와 작업 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다.
 
+고객용 `사용설명서.html`과 `문제해결.html`은 배포 시 `docs/usage.md`와 `docs/troubleshooting.md`에서 생성해 압축 파일의 `Glorycourse` 폴더 바로 아래에 넣는다. 두 HTML 파일은 인터넷 연결이나 별도 프로그램 없이 기본 브라우저로 열 수 있다. 문구를 바꿀 때 생성된 HTML을 직접 수정하지 말고 Markdown 원본을 수정한다.
+
 압축본 검증은 개발 폴더 밖의 한글·공백 경로에 추출하고 시스템 Node 검색 경로를 제거한 상태에서 실제 Windows/Linux 실행 파일을 호출한다. Mac CI는 앱 안의 동봉 Node와 실행기를 검증하며 Finder 실행은 별도 수동 검사다. 신청 등록, xlsx 생성/가져오기 미리보기, 백업/복원, 중복 실행, 종료, 재시작 후 자료 보존을 확인한다.
 
 ## GitHub에서 준비하기
@@ -26,8 +28,8 @@ npm run test:package
 1. 배포할 변경과 사용 설명서를 검토·커밋·push한다. `package.json`과 lockfile의 버전을 맞추고 공개할 커밋을 확정한다.
 2. Actions의 **Portable release**를 수동 실행하면 세 OS 빌드와 검증만 수행한다. 테스트용 artifact는 workflow 실행 화면에서 내려받는다.
 3. 공개할 커밋에 버전과 같은 `v0.1.0` 형식의 태그를 만들어 push한다. 세 OS 검증이 전부 통과하면 **초안 Release**와 압축 파일 3개, `SHA256SUMS`를 만든다. 태그와 버전이 다르면 실패한다.
-4. 해당 초안의 파일을 일반 사용자 환경으로 내려받아 아래 점검표를 수행한다. Windows 11, macOS 15 Apple Silicon, Ubuntu 24.04 GNOME에서 각기 확인한다. macOS 서명·공증과 조직 정책은 별도 조건이다.
-5. 검증 상태와 변경 내용을 Release 본문에 기록하고 관리자가 **Publish release**를 누른다. 정식 버전만 latest로 지정한다. 미검증 버전은 초안 또는 사전 배포 상태로 유지한다.
+4. 해당 초안의 파일을 일반 사용자 환경으로 내려받아 아래 점검표를 수행한다. Windows의 시작·종료와 브라우저 열기를 확인하고, Mac/Linux를 직접 확인하지 못했다면 시험 배포 및 미검증 범위를 Release 본문에 명시한다. Mac 서명·공증과 조직 정책은 별도 조건이다.
+5. Windows 검증과 세 OS 패키지 CI가 통과하면 확인한 범위와 변경 내용을 Release 본문에 기록하고 **Publish release**를 누른다. README의 `latest` 다운로드 링크는 사전 배포가 아닌 공개 Release가 있어야 동작한다. Windows 첫 실행을 확인하지 못한 버전은 초안 또는 사전 배포로 유지한다.
 
 자동화는 공개된 Release를 덮어쓰지 않는다. 같은 태그를 재실행할 때는 아직 초안인 경우에만 파일을 교체한다. 배포 권한은 초안 생성 job에만 부여한다. 개인 토큰을 소스에 넣지 않고 GitHub의 기본 `GITHUB_TOKEN`을 사용한다.
 
@@ -40,6 +42,7 @@ npm run test:package
 시험용 자료 폴더와 가상 회원명을 사용한다. 기존 고객의 실제 자료로 삭제·복원 시험을 하지 않는다.
 
 - [ ] README의 OS별 다운로드 파일명과 실제 Release 자산이 일치한다.
+- [ ] 압축을 푼 폴더의 `사용설명서.html`과 `문제해결.html`이 오프라인에서 열리고 두 문서 사이의 링크가 작동한다.
 - [ ] 개발 도구 없는 PC에서 압축 해제 후 시작·중복 시작·종료·재시작이 된다. 읽기 전용 배포 폴더에서도 사용자 자료 폴더를 사용한다.
 - [ ] 실제 데스크톱에서 브라우저와 자료 폴더가 열리며, 보안 경고와 대응 안내가 해당 OS에서 맞는다.
 - [ ] 로그인한 데스크톱에서 `npm run test:desktop`으로 실제 기본 브라우저의 페이지 요청을 확인한다. OS 열기 명령의 종료 코드만으로 브라우저 열기 성공을 판단하지 않는다.
@@ -65,7 +68,7 @@ Release 본문에는 주요 변경, 지원·시험 대상 OS, DB 형식 변경 �
 
 ## 문서 유지
 
-- 화면 용어·버튼·업무 순서: [사용 설명서](usage.md)와 README의 빠른 안내를 갱신한다.
+- 화면 용어·버튼·업무 순서: [사용 설명서](usage.md), [문제 해결](troubleshooting.md), README의 빠른 안내를 갱신한다. `npm run docs:html`로 `dist/guide-preview`의 HTML을 확인한다.
 - 개발 명령·DB 관리·검증: [개발 환경](development.md)과 실제 npm scripts를 맞춘다.
 - API·저장·완료 조건: [계약 결정 기록](contract-decisions.md), OpenAPI, schema를 확인한다.
 - 런타임·패키지: [직접 의존성](dependencies.md), lockfile, release config와 동봉 라이선스를 확인한다.

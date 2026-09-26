@@ -25,17 +25,23 @@ const emptyStore = () => ({
   restoreReceipts: [],
 });
 
-test('restarts with the complete old or new store after the writer process is terminated', async (t) => {
+for (const mode of ['full', 'incremental']) test(`restarts with the complete old or new store after the ${mode} writer is terminated`, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-crash-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataFile = join(directory, 'db.sqlite');
   const journalFile = `${dataFile}-journal`;
-  await openStore(dataFile, emptyStore());
+  const initial = emptyStore();
+  initial.members.push({
+    id: 'original-member', name: '기존 회원', nameKey: '기존 회원',
+    createdAt: '2026-09-22T00:00:00.000Z', updatedAt: '2026-09-22T00:00:00.000Z',
+  });
+  await openStore(dataFile, initial);
   const child = spawn(process.execPath, [
     '--experimental-strip-types', '--disable-warning=ExperimentalWarning',
     fileURLToPath(new URL('./write-large-store.mjs', import.meta.url)),
     dataFile,
     '200000',
+    mode,
   ], { stdio: 'ignore' });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const exited = once(child, 'exit');
@@ -56,8 +62,18 @@ test('restarts with the complete old or new store after the writer process is te
 
   const reopened = await openStore(dataFile, emptyStore());
   const data = reopened.read();
-  assert.ok([0, 200000].includes(data.members.length));
-  assert.equal(data.meta.storeRevision, data.members.length === 0 ? 0 : 1);
+  assert.ok([1, 200000].includes(data.members.length));
+  if (data.members.length === 1) {
+    assert.deepEqual(data, initial);
+  } else {
+    assert.deepEqual(data, {
+      ...emptyStore(), meta: { storeEpoch: 'epoch-after-write', storeRevision: 1 }, members: data.members,
+    });
+    data.members.forEach((member, index) => assert.deepEqual(member, {
+      id: `member-${index}`, name: `회원 ${index}`, nameKey: `회원 ${index}`,
+      createdAt: '2026-09-22T00:00:00.000Z', updatedAt: '2026-09-22T00:00:00.000Z',
+    }));
+  }
 });
 
 test('rolls back spilled uncommitted pages when restarting after a crash', async (t) => {

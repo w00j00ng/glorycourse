@@ -3,6 +3,7 @@ import {
   draftApplicationSummaries,
   draftDecisionChanged,
   draftFinalSelection,
+  draftItemPage,
   filterDraftItems,
   reasonLabel,
   sortDraftItems,
@@ -10,21 +11,21 @@ import {
 import { applicationSemesterFilterValue, choiceSummary, paginationView, viewFromHash } from './list-view.js';
 import { copySemesterCourses, parseSemesterCourses } from './catalog-view.js';
 import { reportFilename, templateFilename } from './download-name.js';
-import {
-  allocationDraftStatus,
-  currentSemester,
-  nextDashboardTask,
-  orderSemesters,
-} from './dashboard-view.js';
-import { PAGE_HELP, PROGRESS_WORKFLOW, WORKFLOW } from './help-content.js';
+import { currentSemester, orderSemesters } from './dashboard-view.js';
+import { createDashboardPage } from './dashboard-page.js';
+import { createBackupsPage } from './backups-page.js';
+import { createFinalizationPage } from './finalization-page.js';
+import { createApplicationsPage } from './applications-page.js';
+import { createCatalogPage } from './catalog-page.js';
+import { PAGE_HELP } from './help-content.js';
 import { issueText } from './issue-view.js';
 
 const PAGE_LIMIT = 50;
 
 const state = {
-  token: '', applications: [], enrollments: [], drafts: [], backups: [], draft: null, draftContext: null,
+  token: '', applications: [], enrollments: [], drafts: [], draft: null, draftContext: null,
   policies: [], semesters: [], members: [], courses: [], catalogContext: null, catalogCopyCourses: [],
-  importPreview: null, finalization: null, restore: null, enrollmentReport: null, draftApplicationSummaries: null, busy: 0, stopping: false,
+  importPreview: null, enrollmentReport: null, draftApplicationSummaries: null, busy: 0, stopping: false,
   applicationSemesterFilterTouched: false,
   selectedSemesterId: null,
   movingSemester: false,
@@ -32,6 +33,7 @@ const state = {
     application: { page: 1, limit: PAGE_LIMIT, total: 0 },
     enrollment: { page: 1, limit: PAGE_LIMIT, total: 0 },
     draft: { page: 1, limit: PAGE_LIMIT, total: 0 },
+    'draft-item': { page: 1, limit: PAGE_LIMIT, total: 0 },
   },
 };
 const byId = (id) => document.getElementById(id);
@@ -142,39 +144,16 @@ const shutdown = async () => {
   }
 };
 
-const loadApplications = async () => {
-  state.applications = await loadPaged('application', '/applications', recordQuery('application'));
-  renderApplications();
-};
-
-const renderApplications = () => {
-  const body = byId('application-rows');
-  body.replaceChildren(...state.applications.map((item) => {
-    const row = document.createElement('tr');
-    row.append(
-      cell(item.memberName),
-      cell(item.semesterName),
-      cell(String(item.applicationOrder)),
-      choicesCell(item.choices),
-      badgeCell(item.applicationOrderStatus === 'NORMAL' ? '정상' : item.applicationOrderStatus, item.applicationOrderStatus !== 'NORMAL'),
-      actionsCell(
-        ['수정', () => openApplication(item)],
-        ['삭제', () => deleteApplication(item), 'delete'],
-      ),
-    );
-    return row;
-  }));
-  byId('application-empty').hidden = state.applications.length !== 0;
-  byId('application-count').textContent = String(state.pagination.application.total);
-  byId('choice-count').textContent = String(state.applications.reduce((total, item) => total + item.choices.length, 0));
-};
-
 const loadEnrollments = async () => {
-  state.enrollments = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'));
+  const pagination = state.pagination.enrollment = { ...state.pagination.enrollment };
+  const items = await loadPaged('enrollment', '/enrollments', recordQuery('enrollment'), pagination);
+  if (state.pagination.enrollment !== pagination) return;
   const semester = currentSemester(state.semesters);
   const report = semester
     ? await api(`/semesters/${encodeURIComponent(semester.id)}/enrollment-report`)
     : null;
+  if (state.pagination.enrollment !== pagination) return;
+  state.enrollments = items;
   state.enrollmentReport = report?.finalized && !report.enrollmentReportIsCurrent
     ? report
     : null;
@@ -219,7 +198,10 @@ const completeEnrollmentReport = async () => {
 };
 
 const loadDrafts = async () => {
-  state.drafts = await loadPaged('draft', '/allocation-drafts');
+  const pagination = state.pagination.draft = { ...state.pagination.draft };
+  const items = await loadPaged('draft', '/allocation-drafts', '', pagination);
+  if (state.pagination.draft !== pagination) return;
+  state.drafts = items;
   renderDrafts();
 };
 
@@ -240,30 +222,6 @@ const renderDrafts = () => {
   }));
   byId('draft-empty').hidden = state.drafts.length !== 0;
   byId('draft-count').textContent = String(state.pagination.draft.total);
-};
-
-const loadBackups = async () => {
-  const result = await api('/backups');
-  state.backups = result.items;
-  renderBackups();
-};
-
-const renderBackups = () => {
-  byId('backup-rows').replaceChildren(...state.backups.map((item) => {
-    const row = document.createElement('tr');
-    row.append(
-      cell(new Date(item.createdAt).toLocaleString()),
-      cell(item.status === 'INVALID' ? '확인 불가' : item.status === 'NEWER' ? '새 버전 백업' : String(item.storeRevision)),
-      cell(`${Math.ceil(item.sizeBytes / 1024).toLocaleString()} KiB`),
-      cell(item.digest),
-    );
-    return row;
-  }));
-  byId('backup-empty').hidden = state.backups.length !== 0;
-  byId('backup-count').textContent = String(state.backups.length);
-  byId('latest-backup').textContent = state.backups[0]
-    ? new Date(state.backups[0].createdAt).toLocaleDateString()
-    : '없음';
 };
 
 const cell = (text) => {
@@ -304,41 +262,26 @@ const actionsCell = (...actions) => {
   return td;
 };
 
-const addChoice = (container, choice = {}) => {
-  const row = byId('choice-template').content.firstElementChild.cloneNode(true);
-  row.querySelector('[name="courseName"]').value = choice.courseName || '';
-  row.querySelector('[name="preference"]').value = choice.preference || container.children.length + 1;
-  row.querySelector('.remove-choice').addEventListener('click', () => {
-    if (container.children.length > 1) row.remove();
-  });
-  container.append(row);
-};
-
-const addManualEntry = (kind, item = {}, editing = false) => {
-  const container = byId(`${kind}-entry-rows`);
+const addEnrollmentEntry = (item = {}, editing = false) => {
+  const container = byId('enrollment-entry-rows');
   if (container.children.length >= 100) return showMessage('한 번에 최대 100건을 등록할 수 있습니다.', true);
-  const row = byId(`${kind}-entry-template`).content.firstElementChild.cloneNode(true);
+  const row = byId('enrollment-entry-template').content.firstElementChild.cloneNode(true);
   const previous = container.lastElementChild;
   row.querySelector('[name="semesterName"]').value = item.semesterName ?? previous?.querySelector('[name="semesterName"]').value ?? '';
   row.querySelector('[name="memberName"]').value = item.memberName ?? '';
-  if (kind === 'application') {
-    row.querySelector('[name="applicationOrder"]').value = item.applicationOrder ?? '';
-    const choices = row.querySelector('.choice-fields');
-    for (const choice of item.choices ?? [{}]) addChoice(choices, choice);
-    row.querySelector('.add-choice').addEventListener('click', () => addChoice(choices));
-  } else configureEnrollmentCourse(row, item.courseName ?? (previous ? enrollmentCourseName(previous) : ''));
+  configureEnrollmentCourse(row, item.courseName ?? (previous ? enrollmentCourseName(previous) : ''));
   const remove = row.querySelector('.remove-entry');
   remove.hidden = editing;
   remove.addEventListener('click', () => {
-    if (container.children.length > 1) { row.remove(); numberManualEntries(kind); }
+    if (container.children.length > 1) { row.remove(); numberEnrollmentEntries(); }
   });
   container.append(row);
-  numberManualEntries(kind);
+  numberEnrollmentEntries();
 };
 
-const numberManualEntries = (kind) => {
-  [...byId(`${kind}-entry-rows`).children].forEach((row, index) => {
-    row.querySelector('legend').textContent = `${kind === 'application' ? '신청' : '이력'} ${index + 1}`;
+const numberEnrollmentEntries = () => {
+  [...byId('enrollment-entry-rows').children].forEach((row, index) => {
+    row.querySelector('legend').textContent = `이력 ${index + 1}`;
   });
 };
 
@@ -369,93 +312,6 @@ const enrollmentCourseName = (entry) => (
   state.courses.find(({ id }) => id === entry.querySelector('[name="courseId"]').value)?.name
   ?? entry.querySelector('[name="newCourseName"]').value
 );
-
-const openApplication = (item) => {
-  const form = byId('application-form');
-  form.reset();
-  form.dataset.id = item?.id || '';
-  form.dataset.revision = item?.revision ?? '';
-  byId('application-dialog-title').textContent = item ? '신청 수정' : '신청 등록';
-  byId('application-entry-rows').replaceChildren();
-  byId('add-application-entry').hidden = Boolean(item);
-  form.querySelector('[type="submit"]').textContent = item ? '저장' : '전체 저장';
-  addManualEntry('application', item, Boolean(item));
-  byId('application-dialog').showModal();
-};
-
-const submitApplication = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const submit = form.querySelector('[type="submit"]');
-  if (submit.disabled) return;
-  const items = [...byId('application-entry-rows').children].map((entry) => ({
-    semesterName: entry.querySelector('[name="semesterName"]').value,
-    memberName: entry.querySelector('[name="memberName"]').value,
-    applicationOrder: Number(entry.querySelector('[name="applicationOrder"]').value),
-    choices: [...entry.querySelector('.choice-fields').children].map((row) => ({
-      courseName: row.querySelector('[name="courseName"]').value,
-      preference: Number(row.querySelector('[name="preference"]').value),
-    })),
-  }));
-  submit.disabled = true;
-  try {
-    await run(
-      () => api(form.dataset.id ? `/applications/${form.dataset.id}` : '/applications/batch', {
-        method: form.dataset.id ? 'PATCH' : 'POST',
-        body: JSON.stringify(form.dataset.id ? { ...items[0], expectedRevision: Number(form.dataset.revision) } : { items }),
-      }),
-      form.dataset.id ? '신청을 수정했습니다.' : `신청 ${items.length}건을 등록했습니다.`,
-    );
-    byId('application-dialog').close();
-    await loadCatalogs();
-    await loadApplications();
-  } finally { submit.disabled = false; }
-};
-
-const deleteApplication = async (item) => {
-  if (!window.confirm(`${item.memberName}님의 ${item.semesterName} 신청을 삭제할까요?`)) return;
-  await run(
-    () => api(`/applications/${item.id}?expectedRevision=${item.revision}`, { method: 'DELETE' }),
-    '신청을 삭제했습니다.',
-  );
-  await loadApplications();
-};
-
-const showApplicationTemplateSummary = async () => {
-  const form = byId('application-template-form');
-  const semesterId = form.elements.semesterId.value;
-  const summary = byId('application-template-summary');
-  if (!semesterId) {
-    summary.textContent = '학기를 선택하면 양식에 포함할 강좌를 확인합니다.';
-    return;
-  }
-  summary.textContent = '개설 강좌를 확인하는 중입니다.';
-  const context = await api(`/semesters/${semesterId}/context`);
-  if (form.elements.semesterId.value !== semesterId) return;
-  summary.textContent = context.semesterCourses.length
-    ? `${context.semester.name}의 개설 강좌 ${context.semesterCourses.length}개를 양식에 포함합니다.`
-    : `${context.semester.name}에 등록된 개설 강좌가 없습니다. 빈 개설강좌 시트로 다운로드합니다.`;
-};
-
-const openApplicationTemplate = () => {
-  const form = byId('application-template-form');
-  form.reset();
-  fillSelect(form.elements.semesterId, state.semesters, '학기를 선택하세요.');
-  const filteredSemesterId = byId('application-semester-filter').value;
-  if (state.semesters.some(({ id }) => id === filteredSemesterId)) form.elements.semesterId.value = filteredSemesterId;
-  byId('application-template-dialog').showModal();
-  void showApplicationTemplateSummary().catch((error) => showMessage(error.message, true));
-};
-
-const downloadApplicationTemplate = async (event) => {
-  event.preventDefault();
-  const semesterId = event.currentTarget.elements.semesterId.value;
-  await run(
-    () => download(`/applications/template?semesterId=${encodeURIComponent(semesterId)}`, templateFilename('수강신청')),
-    '선택한 학기의 신청 양식을 다운로드했습니다.',
-  );
-  byId('application-template-dialog').close();
-};
 
 const catalogCourseRow = (course = {}) => {
   const row = document.createElement('tr');
@@ -502,18 +358,6 @@ const catalogCourseRow = (course = {}) => {
   return row;
 };
 
-const renderCatalogContext = (context) => {
-  state.catalogContext = context;
-  const semesterForm = byId('semester-form');
-  semesterForm.hidden = state.selectedSemesterId !== context.semester.id;
-  semesterForm.elements.name.value = context.semester.name;
-  byId('catalog-form').hidden = false;
-  byId('catalog-course-rows').replaceChildren(...context.semesterCourses.map(catalogCourseRow));
-  byId('catalog-course-empty').hidden = context.semesterCourses.length !== 0;
-  byId('catalog-empty').hidden = true;
-  byId('copy-catalog-courses').disabled = !state.semesters.some(({ id }) => id !== context.semester.id);
-};
-
 const setCatalogTab = (tab) => {
   byId('catalog-semesters-panel').hidden = tab !== 'semesters';
   byId('catalog-courses-panel').hidden = tab !== 'courses';
@@ -522,74 +366,6 @@ const setCatalogTab = (tab) => {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
-};
-
-const renderSemesterRows = () => {
-  const ordered = state.semesters.filter(({ order }) => order !== null);
-  byId('catalog-semester-rows').replaceChildren(...state.semesters.map((semester) => {
-    const row = document.createElement('tr');
-    row.className = 'catalog-semester-row';
-    row.dataset.id = semester.id;
-    row.tabIndex = 0;
-    row.setAttribute('aria-label', semester.order === null
-      ? `${semester.name}, 순서 미정. 학기 정보를 저장한 뒤 이동 가능`
-      : `${semester.name}, 순서 ${semester.order}. 위아래 화살표로 이동`);
-    row.setAttribute('aria-describedby', 'semester-order-help');
-    if (semester.id === state.selectedSemesterId) row.classList.add('catalog-semester-selected');
-    const index = ordered.findIndex(({ id }) => id === semester.id);
-    const actions = actionsCell(
-      [semester.id === state.selectedSemesterId ? '선택됨' : '수정', () => selectSemesterRow(semester.id)],
-      ['위로', () => moveSemester(semester, 'UP')],
-      ['아래로', () => moveSemester(semester, 'DOWN')],
-    );
-    const [, up, down] = actions.querySelectorAll('button');
-    up.disabled = index <= 0;
-    down.disabled = index < 0 || index === ordered.length - 1;
-    row.addEventListener('keydown', (event) => {
-      if (event.target !== row || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
-      event.preventDefault();
-      void moveSemester(semester, event.key === 'ArrowUp' ? 'UP' : 'DOWN').catch(() => {});
-    });
-    row.append(cell(semester.name), cell(semester.order ?? '미정'), actions);
-    return row;
-  }));
-  byId('catalog-semester-empty').hidden = state.semesters.length !== 0;
-};
-
-const selectSemesterRow = async (id) => {
-  if (state.selectedSemesterId === id) {
-    state.selectedSemesterId = null;
-    byId('semester-form').hidden = true;
-    renderSemesterRows();
-    return;
-  }
-  state.selectedSemesterId = id;
-  await loadCatalogManagement(id);
-};
-
-const moveSemester = async (semester, direction) => {
-  if (state.movingSemester) return;
-  const ordered = state.semesters.filter(({ order }) => order !== null);
-  const index = ordered.findIndex(({ id }) => id === semester.id);
-  const adjacent = ordered[index + (direction === 'UP' ? -1 : 1)];
-  if (!adjacent || semester.order === null) return;
-  state.movingSemester = true;
-  try {
-    await run(() => api(`/semesters/${semester.id}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ direction, expectedOrder: semester.order, adjacentSemesterId: adjacent.id }),
-    }), '학기 순서를 변경했습니다.');
-    await loadCatalogs();
-    await loadCatalogManagement(semester.id);
-    [...byId('catalog-semester-rows').children].find(({ dataset }) => dataset.id === semester.id)?.focus();
-  } catch (error) {
-    if (error.code !== 'CONFLICT') throw error;
-    await loadCatalogs();
-    await loadCatalogManagement();
-    showMessage('학기 순서가 다른 화면에서 바뀌어 목록을 다시 불러왔습니다. 확인 후 다시 이동하세요.', true);
-  } finally {
-    state.movingSemester = false;
-  }
 };
 
 const openCatalogAdd = () => {
@@ -624,55 +400,6 @@ const addCatalogCourses = (event) => {
   showMessage(`강좌 ${added.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
 };
 
-const openCatalogCopy = () => {
-  const form = byId('catalog-copy-form');
-  form.reset();
-  state.catalogCopyCourses = [];
-  fillSelect(
-    form.elements.sourceSemesterId,
-    state.semesters.filter(({ id }) => id !== state.catalogContext?.semester.id),
-    '가져올 학기를 선택하세요.',
-  );
-  byId('catalog-copy-course-list').replaceChildren();
-  byId('catalog-copy-empty').textContent = '가져올 학기를 선택하세요.';
-  byId('catalog-copy-empty').hidden = false;
-  byId('catalog-copy-dialog').showModal();
-};
-
-const loadCatalogCopyCourses = async () => {
-  const sourceSemesterId = byId('catalog-copy-form').elements.sourceSemesterId.value;
-  const list = byId('catalog-copy-course-list');
-  if (!sourceSemesterId) {
-    state.catalogCopyCourses = [];
-    list.replaceChildren();
-    byId('catalog-copy-empty').textContent = '가져올 학기를 선택하세요.';
-    byId('catalog-copy-empty').hidden = false;
-    return;
-  }
-  state.catalogCopyCourses = [];
-  list.replaceChildren();
-  byId('catalog-copy-empty').textContent = '강좌를 불러오는 중입니다.';
-  byId('catalog-copy-empty').hidden = false;
-  const context = await api(`/semesters/${sourceSemesterId}/context`);
-  if (byId('catalog-copy-form').elements.sourceSemesterId.value !== sourceSemesterId) return;
-  state.catalogCopyCourses = context.semesterCourses;
-  list.replaceChildren(...context.semesterCourses.map((course) => {
-    const label = document.createElement('label');
-    label.className = 'catalog-copy-course';
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.name = 'courseId';
-    checkbox.value = course.id;
-    checkbox.checked = true;
-    const text = document.createElement('span');
-    text.textContent = `${course.courseName} · 정원 ${course.capacity ?? '미정'}`;
-    label.append(checkbox, text);
-    return label;
-  }));
-  byId('catalog-copy-empty').textContent = '이 학기에 개설된 강좌가 없습니다.';
-  byId('catalog-copy-empty').hidden = context.semesterCourses.length !== 0;
-};
-
 const copyCatalogCourses = (event) => {
   event.preventDefault();
   const selectedIds = new Set([...event.currentTarget.querySelectorAll('[name="courseId"]:checked')].map(({ value }) => value));
@@ -689,58 +416,6 @@ const copyCatalogCourses = (event) => {
   byId('catalog-copy-dialog').close();
   const skipped = selected.length - copied.length;
   showMessage(`강좌 ${copied.length}개를 추가했습니다.${skipped ? ` 같은 이름 ${skipped}개는 제외했습니다.` : ''}`);
-};
-
-const loadCatalogManagement = async (preferredId) => {
-  const select = byId('catalog-semester');
-  const preferred = preferredId || select.value || state.catalogContext?.semester.id;
-  const selected = state.semesters.find(({ id }) => id === preferred)?.id || state.semesters[0]?.id;
-  if (state.selectedSemesterId !== selected) state.selectedSemesterId = null;
-  fillSelect(select, state.semesters, '학기를 선택하세요.');
-  renderSemesterRows();
-  if (!selected) {
-    state.catalogContext = null;
-    byId('semester-form').hidden = true;
-    byId('catalog-form').hidden = true;
-    byId('catalog-empty').hidden = false;
-    return;
-  }
-  select.value = selected;
-  renderCatalogContext(await api(`/semesters/${selected}/context`));
-};
-
-const createSemester = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const context = await run(() => api('/semesters', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: form.elements.name.value,
-      order: null,
-    }),
-  }), '학기를 추가했습니다.');
-  byId('semester-create-dialog').close();
-  state.selectedSemesterId = context.semester.id;
-  await loadCatalogs();
-  await loadCatalogManagement(context.semester.id);
-};
-
-const submitSemester = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const context = state.catalogContext;
-  if (!context || context.semester.id !== byId('catalog-semester').value) return;
-  const updated = await run(() => api(`/semesters/${context.semester.id}/context`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      expectedRevision: context.allocationInputRevision,
-      name: form.elements.name.value,
-      order: context.order,
-      semesterCourses: context.semesterCourses.map(({ id, courseName, capacity }) => ({ id, courseName, capacity })),
-    }),
-  }), '학기 정보를 저장했습니다.');
-  await loadCatalogs();
-  await loadCatalogManagement(updated.semester.id);
 };
 
 const submitCatalog = async (event) => {
@@ -764,20 +439,6 @@ const submitCatalog = async (event) => {
   }), '강좌 정보를 저장했습니다.');
   await loadCatalogs();
   await loadCatalogManagement(updated.semester.id);
-};
-
-const deleteSemester = async () => {
-  const context = state.catalogContext;
-  if (!context) return;
-  if (!window.confirm(`${context.semester.name} 학기를 삭제할까요?\n이 학기의 개설 강좌 ${context.semesterCourses.length}개도 함께 제거됩니다.\n신청·수강이력·배정초안·확정 기록이 있는 학기는 삭제할 수 없습니다.`)) return;
-  await run(() => api(`/semesters/${context.semester.id}?expectedRevision=${context.allocationInputRevision}`, {
-    method: 'DELETE',
-  }), '학기를 삭제했습니다.');
-  state.catalogContext = null;
-  state.selectedSemesterId = null;
-  byId('catalog-semester').value = '';
-  await loadCatalogs();
-  await loadCatalogManagement();
 };
 
 const deleteSemesterCourse = async (course) => {
@@ -807,7 +468,7 @@ const openEnrollment = (item) => {
   byId('enrollment-dialog-title').textContent = item ? '이력 수정' : '이력 등록';
   byId('enrollment-entry-rows').replaceChildren();
   byId('add-enrollment-entry').hidden = Boolean(item);
-  addManualEntry('enrollment', item, Boolean(item));
+  addEnrollmentEntry(item, Boolean(item));
   byId('enrollment-dialog').showModal();
 };
 
@@ -1203,6 +864,7 @@ const showDraft = async (detail, context) => {
   state.draftContext = context;
   state.draftApplicationSummaries = draftApplicationSummaries(detail.applicationSnapshot);
   if (changedDraft) {
+    state.pagination['draft-item'].page = 1;
     byId('draft-search').value = '';
     byId('draft-result-filter').value = 'ALL';
     byId('draft-grouping').value = 'STUDENT';
@@ -1234,14 +896,23 @@ const renderDraftItems = () => {
     result: byId('draft-result-filter').value,
     courseName: draftCourseName,
   }), { applications: state.draftApplicationSummaries, courseView, courseName: draftCourseName, sort: byId('draft-sort').value });
-  byId('draft-item-rows').replaceChildren(...items.map((item) => {
+  const { items: visibleItems, ...pagination } = draftItemPage(items, state.pagination['draft-item'].page, PAGE_LIMIT);
+  state.pagination['draft-item'] = pagination;
+  renderPagination('draft-item');
+  byId('draft-item-rows').replaceChildren(...visibleItems.map((item) => {
     const row = document.createElement('tr');
     row.classList.toggle('draft-row-changed', draftDecisionChanged(item));
     const finalSelect = document.createElement('select');
     finalSelect.setAttribute('aria-label', `${item.memberNameAtGeneration} 최종 배정`);
-    fillSelect(finalSelect, state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '제외');
+    fillSelect(finalSelect, item.finalDecision === 'SELECTED'
+      ? [{ id: item.finalSemesterCourseId, name: draftCourseName(item.finalSemesterCourseId) }] : [], '제외');
     finalSelect.value = item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : '';
     finalSelect.disabled = readonly;
+    if (!readonly) finalSelect.addEventListener('focus', () => {
+      const selected = finalSelect.value;
+      fillSelect(finalSelect, state.draftContext.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '제외');
+      finalSelect.value = selected;
+    }, { once: true });
     const finalCell = document.createElement('td');
     finalCell.append(finalSelect);
     const application = state.draftApplicationSummaries.get(item.sourceApplicationId);
@@ -1278,11 +949,14 @@ const draftReasonCell = (item) => {
   summary.textContent = reasonLabel(item.autoReasonCode);
   const list = document.createElement('ul');
   list.className = 'draft-reason-list';
-  list.append(...describeAllocationEvidence(item, draftCourseName).map((text) => {
-    const line = document.createElement('li');
-    line.textContent = text;
-    return line;
-  }));
+  details.addEventListener('toggle', () => {
+    if (!details.open || list.childElementCount) return;
+    list.append(...describeAllocationEvidence(item, draftCourseName).map((text) => {
+      const line = document.createElement('li');
+      line.textContent = text;
+      return line;
+    }));
+  });
   details.append(summary, list);
   td.append(details);
   return td;
@@ -1332,131 +1006,14 @@ const addDraftItem = async () => {
   await Promise.all([openDraft(state.draft.draft.id), loadDrafts()]);
 };
 
-const previewFinalization = async () => {
-  const preview = await run(() => api(`/allocation-drafts/${state.draft.draft.id}/finalize-preview`, {
-    method: 'POST', body: JSON.stringify({ expectedDraftRevision: state.draft.draft.revision }),
-  }));
-  state.finalization = { preview, draftId: state.draft.draft.id, idempotencyKey: crypto.randomUUID(), request: null };
-  byId('finalize-add-count').textContent = String(preview.enrollments.length);
-  byId('finalize-issue-count').textContent = String(preview.issues.length);
-  byId('finalize-courses').replaceChildren(...preview.courseSummary.map((course) => {
-    const card = document.createElement('div');
-    card.className = 'import-candidate';
-    const name = document.createElement('strong');
-    name.textContent = draftCourseName(course.semesterCourseId);
-    const detail = document.createElement('small');
-    detail.textContent = `기존 ${course.existingCount}명 · 이번 추가 ${course.addedCount}명 · 합계 ${course.totalCount}명${course.capacity === null ? ' · 정원 미정' : ` / 정원 ${course.capacity}명`}`;
-    card.append(name, detail);
-    return card;
-  }));
-  byId('finalize-issues').replaceChildren(...(preview.issues.length ? preview.issues : [{ severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]).map((issue) => {
-    const item = document.createElement('li');
-    const memberName = state.draft.studentResults.find(({ memberId }) => memberId === issue.subject?.memberId)?.memberNameAtGeneration;
-    const courseName = state.draftContext.semesterCourses.find(({ courseId }) => courseId === issue.subject?.courseId)?.courseName;
-    item.textContent = issueText(issue, { memberName, courseName });
-    return item;
-  }));
-  byId('finalize-form').reset();
-  byId('finalize-draft').disabled = preview.issues.some(({ severity }) => severity === 'ERROR');
-  byId('finalize-dialog').showModal();
-};
-
-const finalizeDraft = async (event) => {
-  event.preventDefault();
-  const finalization = state.finalization;
-  if (!finalization) return;
-  finalization.request ??= {
-    preparedActionToken: finalization.preview.preparedActionToken,
-    expectedDraftRevision: finalization.preview.draftRevision,
-    acknowledgedWarningDigest: finalization.preview.warningDigest,
-    acknowledgementNote: event.currentTarget.elements.note.value,
-  };
-  const receipt = await run(() => api(`/allocation-drafts/${finalization.draftId}/finalize`, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': finalization.idempotencyKey },
-    body: JSON.stringify(finalization.request),
-  }), '배정초안을 확정하고 수강이력을 생성했습니다.');
-  byId('finalize-dialog').close();
-  byId('draft-dialog').close();
-  state.finalization = null;
-  state.draft = null;
-  showMessage(`배정을 확정했습니다. 추가된 수강이력 ${receipt.createdCount}건`);
-  await Promise.all([loadDrafts(), loadEnrollments()]);
-};
-
-const createManualBackup = async () => {
-  const backup = await run(() => api('/backups', { method: 'POST' }), '현재 자료의 백업을 확인했습니다.');
-  await loadBackups();
-  showMessage(`현재 자료는 백업되어 있습니다. 자료 버전 ${backup.storeRevision}`);
-};
-
-const openRestore = () => {
-  const form = byId('restore-form');
-  form.reset();
-  clearRestorePreview();
-  byId('restore-dialog').showModal();
-};
-
-const clearRestorePreview = () => {
-  state.restore = null;
-  byId('restore-preview').hidden = true;
-  byId('restore-form').elements.file.disabled = false;
-  byId('restore-form').elements.note.required = false;
-  byId('restore-submit').textContent = '파일 검토';
-};
-
-const submitRestore = async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if (!state.restore) {
-    const file = form.elements.file.files[0];
-    if (!file) return;
-    const preview = await run(() => api('/restores/preview', {
-      method: 'POST', headers: { 'Content-Type': 'application/vnd.sqlite3' }, body: file,
-    }), '백업 파일을 검토했습니다.');
-    state.restore = { preview, idempotencyKey: crypto.randomUUID(), request: null };
-    byId('restore-current-revision').textContent = String(preview.storeRevision);
-    byId('restore-backup-revision').textContent = String(preview.backupStoreRevision);
-    byId('restore-issues').replaceChildren(...preview.issues.map((issue) => {
-      const item = document.createElement('li');
-      item.textContent = issueText(issue);
-      return item;
-    }));
-    byId('restore-preview').hidden = false;
-    form.elements.file.disabled = true;
-    form.elements.note.required = true;
-    byId('restore-submit').textContent = '검토 내용으로 복원';
-    return;
-  }
-  const restore = state.restore;
-  restore.request ??= {
-    preparedActionToken: restore.preview.preparedActionToken,
-    acknowledgedWarningDigest: restore.preview.warningDigest,
-    acknowledgementNote: form.elements.note.value,
-  };
-  let receipt;
-  try {
-    receipt = await run(() => api('/restores', {
-      method: 'POST',
-      headers: { 'Idempotency-Key': restore.idempotencyKey },
-      body: JSON.stringify(restore.request),
-    }), '백업 파일로 자료를 복원했습니다.');
-  } catch (error) {
-    if (error.code === 'PREVIEW_STALE') clearRestorePreview();
-    throw error;
-  }
-  byId('restore-dialog').close();
-  state.restore = null;
-  await loadCatalogs();
-  await Promise.all([loadApplications(), loadEnrollments(), loadDrafts(), loadBackups()]);
-  showMessage(`자료를 복원했습니다. 자료 버전 ${receipt.storeRevision}`);
-};
-
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
 const policyName = (policyId, policyVersion) => state.policies.find((policy) => (
   policy.policyId === policyId && policy.policyVersion === policyVersion
 ))?.name ?? `${policyId} ${policyVersion}`;
 const draftCourseName = (id) => id ? state.draftContext?.semesterCourses.find((course) => course.id === id)?.courseName ?? id : '제외';
+const { previewFinalization, finalizeDraft } = createFinalizationPage({
+  state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
+});
 const fillSelect = (select, items, placeholder) => {
   const empty = document.createElement('option');
   empty.value = '';
@@ -1469,16 +1026,25 @@ const fillSelect = (select, items, placeholder) => {
   }));
 };
 
+const loadCatalogItems = async (path) => {
+  const items = [];
+  for (let page = 1; ; page++) {
+    const result = await api(`${path}?page=${page}&limit=200`);
+    items.push(...result.items);
+    if (result.page * result.limit >= result.total) return items;
+  }
+};
+
 const loadCatalogs = async () => {
   const [semesters, members, courses] = await Promise.all([
-    api('/semesters?limit=200'), api('/members?limit=200'), api('/courses?limit=200'),
+    loadCatalogItems('/semesters'), loadCatalogItems('/members'), loadCatalogItems('/courses'),
   ]);
-  state.semesters = orderSemesters(semesters.items);
-  state.members = members.items;
-  state.courses = courses.items;
+  state.semesters = orderSemesters(semesters);
+  state.members = members;
+  state.courses = courses;
   fillDatalist('semester-options', state.semesters);
-  fillDatalist('member-options', members.items);
-  fillDatalist('course-options', courses.items);
+  fillDatalist('member-options', members);
+  fillDatalist('course-options', courses);
   const applicationSemester = byId('application-semester-filter');
   const previousSemesterId = applicationSemester.value;
   fillFilterSelect('application-semester-filter', state.semesters);
@@ -1486,9 +1052,9 @@ const loadCatalogs = async () => {
     state.semesters, applicationSemester.value, state.applicationSemesterFilterTouched,
   );
   if (applicationSemester.value !== previousSemesterId) state.pagination.application.page = 1;
-  fillFilterSelect('application-course-filter', courses.items);
+  fillFilterSelect('application-course-filter', courses);
   fillFilterSelect('enrollment-semester-filter', state.semesters);
-  fillFilterSelect('enrollment-course-filter', courses.items);
+  fillFilterSelect('enrollment-course-filter', courses);
 };
 
 const fillFilterSelect = (id, items) => {
@@ -1505,96 +1071,52 @@ const recordQuery = (prefix) => new URLSearchParams([
   ...(prefix === 'application' ? [['sort', byId('application-sort').value]] : []),
 ].filter(([, value]) => value)).toString();
 
-const loadPaged = async (name, path, filters = '') => {
-  const pagination = state.pagination[name];
+const loadPaged = async (name, path, filters = '', pagination = state.pagination[name]) => {
   const query = new URLSearchParams(filters);
   query.set('page', String(pagination.page));
   query.set('limit', String(pagination.limit));
   const result = await api(`${path}?${query}`);
+  if (state.pagination[name] !== pagination) return;
   const lastPage = Math.max(1, Math.ceil(result.total / result.limit));
   if (result.page > lastPage) {
     pagination.page = lastPage;
-    return loadPaged(name, path, filters);
+    return loadPaged(name, path, filters, pagination);
   }
   Object.assign(pagination, { page: result.page, limit: result.limit, total: result.total });
   renderPagination(name);
   return result.items;
 };
 
-const renderDashboard = (summary) => {
-  const next = nextDashboardTask(summary);
-  byId('dashboard-semester').textContent = summary.semester?.name ?? '없음';
-  byId('dashboard-course-count').textContent = String(summary.courseCount);
-  byId('dashboard-application-count').textContent = String(summary.applicationCount);
-  byId('dashboard-draft-status').textContent = allocationDraftStatus(summary.latestDraft);
-  byId('dashboard-enrollment-count').textContent = String(summary.enrollmentCount);
-  byId('dashboard-next-title').textContent = next.label;
-  byId('dashboard-next-description').textContent = next.description;
-  const action = byId('dashboard-next-action');
-  action.textContent = next.action;
-  action.dataset.viewTarget = next.view;
-  byId('dashboard-progress').replaceChildren(...PROGRESS_WORKFLOW.map((step, index) => {
-    const item = document.createElement('li');
-    item.textContent = step.title;
-    item.classList.toggle('complete', index < next.stage);
-    item.classList.toggle('current', index === next.stage);
-    return item;
-  }));
-};
+const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,
+  openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
+  state, byId, api, run, showMessage, loadCatalogs, fillSelect, catalogCourseRow, cell, actionsCell,
+});
 
-const loadDashboard = async () => {
-  const semester = currentSemester(state.semesters);
-  if (!semester) {
-    renderDashboard({
-      semester: null,
-      courseCount: 0,
-      unresolvedCapacityCount: 0,
-      applicationCount: 0,
-      latestDraft: null,
-      enrollmentCount: 0,
-    });
-    return;
-  }
-  const semesterId = encodeURIComponent(semester.id);
-  const [context, applications, drafts, enrollments, report] = await Promise.all([
-    api(`/semesters/${semesterId}/context`),
-    api(`/applications?semesterId=${semesterId}&page=1&limit=1`),
-    api(`/allocation-drafts?semesterId=${semesterId}&page=1&limit=1`),
-    api(`/enrollments?semesterId=${semesterId}&page=1&limit=1`),
-    api(`/semesters/${semesterId}/enrollment-report`),
-  ]);
-  let latestDraft = drafts.items[0] ? { ...drafts.items[0], isStale: false }
-    : report.finalized ? { status: 'FINALIZED', enrollmentReportIsCurrent: report.enrollmentReportIsCurrent } : null;
-  if (latestDraft?.status === 'DRAFT') {
-    const detail = await api(`/allocation-drafts/${encodeURIComponent(latestDraft.id)}`);
-    latestDraft = { ...latestDraft, isStale: detail.isStale };
-  }
-  renderDashboard({
-    semester,
-    courseCount: context.semesterCourses.length,
-    unresolvedCapacityCount: context.semesterCourses.filter(({ capacity }) => capacity === null).length,
-    applicationCount: applications.total,
-    latestDraft,
-    enrollmentCount: enrollments.total,
-  });
-};
+const {
+  load: loadApplications,
+  addApplicationEntry,
+  openApplication,
+  submitApplication,
+  showTemplateSummary: showApplicationTemplateSummary,
+  openTemplate: openApplicationTemplate,
+  downloadTemplate: downloadApplicationTemplate,
+} = createApplicationsPage({
+  state, byId, api, fillSelect, showMessage, run, download,
+  cell, choicesCell, badgeCell, actionsCell,
+  loadPaged, recordQuery, loadCatalogs,
+});
 
-const renderDashboardWorkflow = () => {
-  byId('dashboard-workflow').replaceChildren(...WORKFLOW.map((step) => {
-    const card = document.createElement('article');
-    const title = document.createElement('h4');
-    title.textContent = step.title;
-    const description = document.createElement('p');
-    description.textContent = step.description;
-    const button = document.createElement('button');
-    button.className = 'secondary';
-    button.type = 'button';
-    button.dataset.viewTarget = step.view;
-    button.textContent = `${step.title} 열기`;
-    card.append(title, description, button);
-    return card;
-  }));
-};
+const {
+  load: loadBackups, createManualBackup, openRestore, clearRestorePreview, submitRestore,
+} = createBackupsPage({
+  api, byId, run, showMessage, cell,
+  reloadOtherViews: async () => {
+    await loadCatalogs();
+    await Promise.all([loadApplications(), loadEnrollments(), loadDrafts()]);
+  },
+});
+
+const { load: loadDashboard, renderWorkflow: renderDashboardWorkflow } = createDashboardPage({ state, api, byId });
 
 const renderPagination = (name) => {
   const view = paginationView(state.pagination[name]);
@@ -1676,8 +1198,8 @@ byId('catalog-copy-form').elements.sourceSemesterId.addEventListener('change', (
   void loadCatalogCopyCourses().catch((error) => showMessage(error.message, true));
 });
 byId('catalog-copy-form').addEventListener('submit', copyCatalogCourses);
-byId('add-application-entry').addEventListener('click', () => addManualEntry('application'));
-byId('add-enrollment-entry').addEventListener('click', () => addManualEntry('enrollment'));
+byId('add-application-entry').addEventListener('click', () => addApplicationEntry());
+byId('add-enrollment-entry').addEventListener('click', () => addEnrollmentEntry());
 byId('application-form').addEventListener('submit', (event) => { void submitApplication(event).catch(() => {}); });
 byId('enrollment-form').addEventListener('submit', (event) => { void submitEnrollment(event).catch(() => {}); });
 byId('semester-create-form').addEventListener('submit', (event) => { void createSemester(event).catch(() => {}); });
@@ -1692,10 +1214,12 @@ byId('refresh-catalog').addEventListener('click', () => {
 byId('draft-create-form').addEventListener('submit', (event) => { void submitDraft(event).catch(() => {}); });
 byId('draft-create-form').elements.policy.addEventListener('change', showPolicyDescription);
 byId('draft-create-form').elements.semesterId.addEventListener('change', () => { void showDraftReadiness().catch(() => {}); });
-byId('draft-grouping').addEventListener('change', renderDraftItems);
-byId('draft-sort').addEventListener('change', renderDraftItems);
-byId('draft-result-filter').addEventListener('change', renderDraftItems);
-byId('draft-search').addEventListener('input', renderDraftItems);
+byId('draft-grouping').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
+byId('draft-sort').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
+byId('draft-result-filter').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
+byId('draft-search').addEventListener('input', () => resetPage('draft-item', renderDraftItems));
+byId('draft-item-previous-page').addEventListener('click', () => changePage('draft-item', -1, renderDraftItems));
+byId('draft-item-next-page').addEventListener('click', () => changePage('draft-item', 1, renderDraftItems));
 byId('add-draft-item').addEventListener('click', () => { void addDraftItem().catch(() => {}); });
 byId('preview-finalization').addEventListener('click', () => { void previewFinalization().catch(() => {}); });
 byId('finalize-form').addEventListener('submit', (event) => { void finalizeDraft(event).catch(() => {}); });

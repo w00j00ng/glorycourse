@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { changedRecords, prepareChanges, prepareRow, replaceChildren } from './row-changes.ts';
 
 import type { AllocationSnapshot, PolicySettings } from '../../allocation/engine.ts';
 import type {
@@ -254,8 +255,26 @@ const compact = <T extends object>(item: T): T => Object.fromEntries(
   Object.entries(item).filter(([, value]) => value !== null),
 ) as T;
 
-export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState): void => {
-  db.exec(`
+export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, previous?: DatabaseState): void => {
+  if (previous) {
+    prepareChanges(db, 'enrollments', data.enrollments, previous.enrollments);
+    prepareChanges(db, 'allocation_draft_items', data.allocationDraftItems, previous.allocationDraftItems);
+    prepareChanges(db, 'allocation_drafts', data.allocationDrafts, previous.allocationDrafts);
+    prepareChanges(db, 'finalization_receipts', data.finalizationReceipts, previous.finalizationReceipts,
+      [['receipt_id', (item) => item.receipt.receiptId]]);
+    prepareChanges(db, 'application_choices', data.applicationChoices, previous.applicationChoices,
+      [['application_id', (item) => JSON.stringify([item.applicationId, item.semesterCourseId])]]);
+    prepareChanges(db, 'applications', data.applications, previous.applications,
+      [['semester_id', (item) => JSON.stringify([item.semesterId, item.memberId])]]);
+    prepareChanges(db, 'import_batches', data.importBatches, previous.importBatches);
+    prepareChanges(db, 'semester_courses', data.semesterCourses, previous.semesterCourses,
+      [['semester_id', (item) => JSON.stringify([item.semesterId, item.courseId])]]);
+    prepareChanges(db, 'semesters', data.semesters, previous.semesters, [['name_key', (item) => item.nameKey]]);
+    prepareChanges(db, 'members', data.members, previous.members, [['name_key', (item) => item.nameKey]]);
+    prepareChanges(db, 'courses', data.courses, previous.courses, [['name_key', (item) => item.nameKey]]);
+    prepareChanges(db, 'restore_receipts', data.restoreReceipts, previous.restoreReceipts,
+      [['receipt_id', (item) => item.receiptId]]);
+  } else db.exec(`
     DELETE FROM enrollments;
     DELETE FROM allocation_drafts;
     DELETE FROM finalization_receipts;
@@ -268,88 +287,95 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState): voi
     DELETE FROM restore_receipts;
     DELETE FROM store_meta;
   `);
-  db.prepare('INSERT INTO store_meta (id, store_epoch, store_revision) VALUES (1, ?, ?)')
-    .run(data.meta.storeEpoch, data.meta.storeRevision);
+  prepareRow(db, 'store_meta', 'id, store_epoch, store_revision')
+    .run(1, data.meta.storeEpoch, data.meta.storeRevision);
 
-  const receiptInsert = db.prepare(`INSERT INTO restore_receipts
-    (idempotency_key, position, request_hash, receipt_id, previous_backup_id, store_revision, store_epoch, restored_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-  data.restoreReceipts.forEach((item, position) => receiptInsert.run(
+  const receiptInsert = prepareRow(db, 'restore_receipts',
+    'idempotency_key, position, request_hash, receipt_id, previous_backup_id, store_revision, store_epoch, restored_at');
+  changedRecords(data.restoreReceipts, previous?.restoreReceipts).forEach(({ item, position }) => receiptInsert.run(
     item.idempotencyKey, position, item.requestHash, item.receiptId, item.previousBackupId,
     item.storeRevision, item.storeEpoch, item.restoredAt,
   ));
 
-  const semesterInsert = db.prepare(`INSERT INTO semesters
-    (id, position, name, name_key, semester_order, allocation_input_revision, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-  data.semesters.forEach((item, position) => semesterInsert.run(
+  const semesterInsert = prepareRow(db, 'semesters',
+    'id, position, name, name_key, semester_order, allocation_input_revision, created_at, updated_at');
+  changedRecords(data.semesters, previous?.semesters).forEach(({ item, position }) => semesterInsert.run(
     item.id, position, item.name, item.nameKey, item.order, item.allocationInputRevision, item.createdAt, item.updatedAt,
   ));
-  const finalizationInsert = db.prepare(`INSERT INTO finalization_receipts (
+  const finalizationInsert = prepareRow(db, 'finalization_receipts', `
     idempotency_key, position, request_hash, semester_id, draft_id, receipt_id, created_count,
     finalized_at, enrollment_report_downloaded_at, enrollment_report_store_revision
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  `);
   const finalizationEnrollmentInsert = db.prepare(`INSERT INTO finalization_receipt_enrollment_ids
     (idempotency_key, position, enrollment_id) VALUES (?, ?, ?)`);
-  data.finalizationReceipts.forEach((record, position) => {
+  changedRecords(data.finalizationReceipts, previous?.finalizationReceipts).forEach(({ item: record, position, before }) => {
     const { receipt } = record;
     finalizationInsert.run(record.idempotencyKey, position, record.requestHash, record.semesterId, receipt.draftId,
       receipt.receiptId, receipt.createdCount, receipt.finalizedAt,
       record.enrollmentReportDownloadedAt, record.enrollmentReportStoreRevision);
-    receipt.createdEnrollmentIds.forEach((id, position) => finalizationEnrollmentInsert.run(record.idempotencyKey, position, id));
+    if (replaceChildren(db, 'finalization_receipt_enrollment_ids', 'idempotency_key', record.idempotencyKey,
+      before?.receipt.createdEnrollmentIds, receipt.createdEnrollmentIds)) {
+      receipt.createdEnrollmentIds.forEach((id, position) => finalizationEnrollmentInsert.run(record.idempotencyKey, position, id));
+    }
   });
-  const namedInsert = (table: 'members' | 'courses', items: Named[]): void => {
-    const statement = db.prepare(`INSERT INTO ${table} (id, position, name, name_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`);
-    items.forEach((item, position) => statement.run(item.id, position, item.name, item.nameKey, item.createdAt, item.updatedAt));
+  const namedInsert = (table: 'members' | 'courses', items: Named[], before?: Named[]): void => {
+    const statement = prepareRow(db, table, 'id, position, name, name_key, created_at, updated_at');
+    changedRecords(items, before).forEach(({ item, position }) => statement.run(item.id, position, item.name, item.nameKey, item.createdAt, item.updatedAt));
   };
-  namedInsert('members', data.members);
-  namedInsert('courses', data.courses);
-  const semesterCourseInsert = db.prepare(`INSERT INTO semester_courses
-    (id, position, semester_id, course_id, capacity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
-  data.semesterCourses.forEach((item, position) => semesterCourseInsert.run(
+  namedInsert('members', data.members, previous?.members);
+  namedInsert('courses', data.courses, previous?.courses);
+  const semesterCourseInsert = prepareRow(db, 'semester_courses',
+    'id, position, semester_id, course_id, capacity, created_at, updated_at');
+  changedRecords(data.semesterCourses, previous?.semesterCourses).forEach(({ item, position }) => semesterCourseInsert.run(
     item.id, position, item.semesterId, item.courseId, item.capacity, item.createdAt, item.updatedAt,
   ));
 
-  writeImportBatches(db, data.importBatches);
+  writeImportBatches(db, data.importBatches, previous?.importBatches);
 
-  const applicationInsert = db.prepare(`INSERT INTO applications
-    (id, position, semester_id, member_id, application_order, application_order_status, order_resolution,
-      order_resolution_note, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  data.applications.forEach((item, position) => applicationInsert.run(
+  const applicationInsert = prepareRow(db, 'applications',
+    `id, position, semester_id, member_id, application_order, application_order_status, order_resolution,
+      order_resolution_note, revision, created_at, updated_at`);
+  changedRecords(data.applications, previous?.applications).forEach(({ item, position }) => applicationInsert.run(
     item.id, position, item.semesterId, item.memberId, item.applicationOrder, item.applicationOrderStatus,
     item.orderResolution, item.orderResolutionNote, item.revision, item.createdAt, item.updatedAt,
   ));
-  const choiceInsert = db.prepare(`INSERT INTO application_choices
-    (id, position, application_id, semester_course_id, preference, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  const choiceInsert = prepareRow(db, 'application_choices',
+    'id, position, application_id, semester_course_id, preference, created_at, updated_at');
   const sourceInsert = db.prepare(`INSERT INTO application_choice_source_refs
     (application_choice_id, position, import_batch_id, sheet, row_number) VALUES (?, ?, ?, ?, ?)`);
-  data.applicationChoices.forEach((item, position) => {
+  const applicationIds = data.applicationChoices === previous?.applicationChoices
+    ? null : new Set(data.applications.map((item) => item.id));
+  const changedChoices = changedRecords(data.applicationChoices, previous?.applicationChoices,
+    (item) => applicationIds !== null && !applicationIds.has(item.applicationId));
+  changedChoices.forEach(({ item, position, before }) => {
     choiceInsert.run(item.id, position, item.applicationId, item.semesterCourseId, item.preference, item.createdAt, item.updatedAt);
-    item.sourceRefs.forEach((source, sourcePosition) => sourceInsert.run(
-      item.id, sourcePosition, source.importBatchId, source.sheet, source.row,
-    ));
+    if (replaceChildren(db, 'application_choice_source_refs', 'application_choice_id', item.id, before?.sourceRefs, item.sourceRefs)) {
+      item.sourceRefs.forEach((source, sourcePosition) => sourceInsert.run(
+        item.id, sourcePosition, source.importBatchId, source.sheet, source.row,
+      ));
+    }
   });
 
-  writeDrafts(db, data.allocationDrafts, data.allocationDraftItems);
+  writeDrafts(db, data.allocationDrafts, data.allocationDraftItems, previous);
 
-  const enrollmentInsert = db.prepare(`INSERT INTO enrollments
-    (id, position, semester_course_id, member_id, revision, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  const enrollmentInsert = prepareRow(db, 'enrollments',
+    'id, position, semester_course_id, member_id, revision, created_at, updated_at');
   const acknowledgementInsert = db.prepare(`INSERT INTO enrollment_acknowledgements
     (enrollment_id, warning_digest, note, acknowledged_at) VALUES (?, ?, ?, ?)`);
-  data.enrollments.forEach((item, position) => {
+  changedRecords(data.enrollments, previous?.enrollments).forEach(({ item, position, before }) => {
     enrollmentInsert.run(item.id, position, item.semesterCourseId, item.memberId,
       item.revision, item.createdAt, item.updatedAt);
-    if (item.exceptionAcknowledgement) acknowledgementInsert.run(
+    if (replaceChildren(db, 'enrollment_acknowledgements', 'enrollment_id', item.id,
+      before?.exceptionAcknowledgement, item.exceptionAcknowledgement) && item.exceptionAcknowledgement) acknowledgementInsert.run(
       item.id, item.exceptionAcknowledgement.warningDigest, item.exceptionAcknowledgement.note,
       item.exceptionAcknowledgement.acknowledgedAt,
     );
   });
 };
 
-const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[]): void => {
-  const batchInsert = db.prepare(`INSERT INTO import_batches
-    (id, position, kind, template_version, file_hash, imported_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[], previous?: ImportBatch[]): void => {
+  const batchInsert = prepareRow(db, 'import_batches',
+    'id, position, kind, template_version, file_hash, imported_at, status');
   const rowInsert = db.prepare(`INSERT INTO import_raw_rows
     (import_batch_id, position, sheet, row_number) VALUES (?, ?, ?, ?)`);
   const cellInsert = db.prepare(`INSERT INTO import_raw_cells
@@ -360,22 +386,26 @@ const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[]): void => {
   const receiptInsert = db.prepare(`INSERT INTO import_receipts
     (import_batch_id, receipt_id, preview_id, store_epoch, idempotency_key, request_hash,
       inserted_count, updated_count, skipped_count, committed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  batches.forEach((batch, position) => {
+  changedRecords(batches, previous).forEach(({ item: batch, position, before }) => {
     batchInsert.run(batch.id, position, batch.kind, batch.templateVersion, batch.fileHash, batch.importedAt, batch.status);
-    batch.rawRows.forEach((row, rowPosition) => {
-      rowInsert.run(batch.id, rowPosition, row.sheet, row.row);
-      Object.entries(row.cells).forEach(([column, value], cellPosition) => {
-        cellInsert.run(batch.id, rowPosition, cellPosition, column, value);
+    if (replaceChildren(db, 'import_raw_rows', 'import_batch_id', batch.id, before?.rawRows, batch.rawRows)) {
+      batch.rawRows.forEach((row, rowPosition) => {
+        rowInsert.run(batch.id, rowPosition, row.sheet, row.row);
+        Object.entries(row.cells).forEach(([column, value], cellPosition) => {
+          cellInsert.run(batch.id, rowPosition, cellPosition, column, value);
+        });
       });
-    });
-    batch.resolutions.forEach((resolution, resolutionPosition) => resolutionInsert.run(
-      batch.id, resolutionPosition, resolution.entity, resolution.action,
-      resolution.field ?? null, resolution.semesterName ?? null,
-      resolution.memberName ?? null, resolution.courseName ?? null,
-      resolution.applicationOrder ?? null, resolution.warningDigest ?? null,
-      resolution.acknowledgementNote ?? null,
-    ));
-    if (batch.receipt) receiptInsert.run(
+    }
+    if (replaceChildren(db, 'import_resolutions', 'import_batch_id', batch.id, before?.resolutions, batch.resolutions)) {
+      batch.resolutions.forEach((resolution, resolutionPosition) => resolutionInsert.run(
+        batch.id, resolutionPosition, resolution.entity, resolution.action,
+        resolution.field ?? null, resolution.semesterName ?? null,
+        resolution.memberName ?? null, resolution.courseName ?? null,
+        resolution.applicationOrder ?? null, resolution.warningDigest ?? null,
+        resolution.acknowledgementNote ?? null,
+      ));
+    }
+    if (replaceChildren(db, 'import_receipts', 'import_batch_id', batch.id, before?.receipt, batch.receipt) && batch.receipt) receiptInsert.run(
       batch.id, batch.receipt.receiptId, batch.receipt.previewId, batch.receipt.storeEpoch,
       batch.receipt.idempotencyKey, batch.receipt.requestHash, batch.receipt.inserted,
       batch.receipt.updated, batch.receipt.skipped, batch.receipt.committedAt,
@@ -383,12 +413,11 @@ const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[]): void => {
   });
 };
 
-const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[]): void => {
-  const draftInsert = db.prepare(`INSERT INTO allocation_drafts
-    (id, position, semester_id, status, revision, mode, policy_id, policy_version, engine_version,
+const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], previous?: DatabaseState): void => {
+  const draftInsert = prepareRow(db, 'allocation_drafts',
+    `id, position, semester_id, status, revision, mode, policy_id, policy_version, engine_version,
       random_seed, source_revision, input_fingerprint, created_at, updated_at, finalized_at,
-      enrollment_report_downloaded_at, enrollment_report_store_revision)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      enrollment_report_downloaded_at, enrollment_report_store_revision`);
   const policyInsert = db.prepare(`INSERT INTO allocation_draft_policy_settings
     (allocation_draft_id, preference_mode, fallback_mode) VALUES (?, ?, ?)`);
   const snapshotSemesterInsert = db.prepare(`INSERT INTO allocation_snapshot_semesters
@@ -419,33 +448,43 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[]): voi
       subject_member_id, subject_course_id, change_code, note, acknowledged_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
-  drafts.forEach((draft, position) => {
+  changedRecords(drafts, previous?.allocationDrafts).forEach(({ item: draft, position, before }) => {
     draftInsert.run(draft.id, position, draft.semesterId, draft.status,
       draft.revision, draft.mode, draft.policyId, draft.policyVersion,
       draft.engineVersion, draft.randomSeed, draft.sourceRevision,
       draft.inputFingerprint, draft.createdAt, draft.updatedAt, draft.finalizedAt,
       draft.enrollmentReportDownloadedAt, draft.enrollmentReportStoreRevision);
-    policyInsert.run(draft.id, draft.policySettings.preferenceMode, draft.policySettings.fallbackMode);
-    snapshotSemesterInsert.run(draft.id, draft.inputSnapshot.semester.id, draft.inputSnapshot.semester.name,
-      draft.inputSnapshot.semester.order);
-    draft.inputSnapshot.semesterCourses.forEach((item, itemPosition) => snapshotCourseInsert.run(
+    if (replaceChildren(db, 'allocation_draft_policy_settings', 'allocation_draft_id', draft.id, before?.policySettings, draft.policySettings)) {
+      policyInsert.run(draft.id, draft.policySettings.preferenceMode, draft.policySettings.fallbackMode);
+    }
+    if (replaceChildren(db, 'allocation_snapshot_semesters', 'allocation_draft_id', draft.id, before?.inputSnapshot.semester, draft.inputSnapshot.semester)) {
+      snapshotSemesterInsert.run(draft.id, draft.inputSnapshot.semester.id, draft.inputSnapshot.semester.name,
+        draft.inputSnapshot.semester.order);
+    }
+    if (replaceChildren(db, 'allocation_snapshot_semester_courses', 'allocation_draft_id', draft.id,
+      before?.inputSnapshot.semesterCourses, draft.inputSnapshot.semesterCourses)) draft.inputSnapshot.semesterCourses.forEach((item, itemPosition) => snapshotCourseInsert.run(
       draft.id, itemPosition, item.id, item.courseId, item.courseName, item.capacity,
     ));
-    draft.inputSnapshot.applications.forEach((item, itemPosition) => snapshotApplicationInsert.run(
+    if (replaceChildren(db, 'allocation_snapshot_applications', 'allocation_draft_id', draft.id,
+      before?.inputSnapshot.applications, draft.inputSnapshot.applications)) draft.inputSnapshot.applications.forEach((item, itemPosition) => snapshotApplicationInsert.run(
       draft.id, itemPosition, item.id, item.memberId, item.memberName,
       item.applicationOrder, item.applicationOrderStatus,
     ));
-    draft.inputSnapshot.choices.forEach((item, itemPosition) => snapshotChoiceInsert.run(
+    if (replaceChildren(db, 'allocation_snapshot_choices', 'allocation_draft_id', draft.id,
+      before?.inputSnapshot.choices, draft.inputSnapshot.choices)) draft.inputSnapshot.choices.forEach((item, itemPosition) => snapshotChoiceInsert.run(
       draft.id, itemPosition, item.id, item.applicationId, item.semesterCourseId, item.preference,
     ));
-    draft.inputSnapshot.relevantPastEnrollments.forEach((item, itemPosition) => snapshotPastInsert.run(
+    if (replaceChildren(db, 'allocation_snapshot_past_enrollments', 'allocation_draft_id', draft.id,
+      before?.inputSnapshot.relevantPastEnrollments, draft.inputSnapshot.relevantPastEnrollments)) draft.inputSnapshot.relevantPastEnrollments.forEach((item, itemPosition) => snapshotPastInsert.run(
       draft.id, itemPosition, item.id, item.memberId, item.courseId, item.semesterId, item.semesterOrder,
     ));
-    draft.inputSnapshot.existingEnrollments.forEach((item, itemPosition) => snapshotExistingInsert.run(
+    if (replaceChildren(db, 'allocation_snapshot_existing_enrollments', 'allocation_draft_id', draft.id,
+      before?.inputSnapshot.existingEnrollments, draft.inputSnapshot.existingEnrollments)) draft.inputSnapshot.existingEnrollments.forEach((item, itemPosition) => snapshotExistingInsert.run(
       draft.id, itemPosition, item.id, item.memberId, item.memberName, item.semesterCourseId,
     ));
 
-    if (!draft.finalization) return;
+    if (!replaceChildren(db, 'allocation_finalizations', 'allocation_draft_id', draft.id,
+      before?.finalization, draft.finalization) || !draft.finalization) return;
     const receipt = draft.finalization.receipt;
     finalizationInsert.run(draft.id, draft.finalization.idempotencyKey, draft.finalization.requestHash);
     finalizationReceiptInsert.run(draft.id, receipt.receiptId, receipt.createdCount, receipt.finalizedAt);
@@ -462,10 +501,10 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[]): voi
     });
   });
 
-  const itemInsert = db.prepare(`INSERT INTO allocation_draft_items
-    (id, position, allocation_draft_id, member_id, source_application_id, member_name_at_generation,
+  const itemInsert = prepareRow(db, 'allocation_draft_items',
+    `id, position, allocation_draft_id, member_id, source_application_id, member_name_at_generation,
       auto_semester_course_id, auto_decision, auto_reason_code, final_semester_course_id,
-      final_decision, final_reason_code, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      final_decision, final_reason_code, updated_at`);
   const attemptInsert = db.prepare(`INSERT INTO allocation_item_preference_attempts
     (allocation_draft_item_id, position, choice_id_at_generation, semester_course_id,
       course_name_at_generation, preference, decision, reason_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -476,22 +515,28 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[]): voi
     (allocation_draft_item_id, position, semester_course_id) VALUES (?, ?, ?)`);
   const finalReasonInsert = db.prepare(`INSERT INTO allocation_item_final_reasons
     (allocation_draft_item_id, note) VALUES (?, ?)`);
-  items.forEach((item, position) => {
+  const draftIds = items === previous?.allocationDraftItems ? null : new Set(drafts.map((draft) => draft.id));
+  const changedItems = changedRecords(items, previous?.allocationDraftItems,
+    (item) => draftIds !== null && !draftIds.has(item.draftId));
+  changedItems.forEach(({ item, position, before }) => {
     itemInsert.run(item.id, position, item.draftId, item.memberId, item.sourceApplicationId,
       item.memberNameAtGeneration, item.autoSemesterCourseId, item.autoDecision,
       item.autoReasonCode, item.finalSemesterCourseId, item.finalDecision,
       item.finalReasonCode, item.updatedAt);
-    item.autoReasonDetail.preferenceAttempts.forEach((attempt, itemPosition) => attemptInsert.run(
+    if (replaceChildren(db, 'allocation_item_preference_attempts', 'allocation_draft_item_id', item.id,
+      before?.autoReasonDetail.preferenceAttempts, item.autoReasonDetail.preferenceAttempts)) item.autoReasonDetail.preferenceAttempts.forEach((attempt, itemPosition) => attemptInsert.run(
       item.id, itemPosition, attempt.choiceIdAtGeneration, attempt.semesterCourseId,
       attempt.courseNameAtGeneration, attempt.preference, attempt.decision, attempt.reasonCode,
     ));
     const fallback = item.autoReasonDetail.fallback;
-    if (fallback) {
+    if (replaceChildren(db, 'allocation_item_fallbacks', 'allocation_draft_item_id', item.id,
+      before?.autoReasonDetail.fallback, fallback) && fallback) {
       fallbackInsert.run(item.id, fallback.selectedSemesterCourseId, fallback.reasonCode, fallback.totalAssignedInStage);
       fallback.stageCandidateSemesterCourseIds.forEach((id, itemPosition) => {
         fallbackCandidateInsert.run(item.id, itemPosition, id);
       });
     }
-    if (item.finalReasonDetail) finalReasonInsert.run(item.id, item.finalReasonDetail.note);
+    if (replaceChildren(db, 'allocation_item_final_reasons', 'allocation_draft_item_id', item.id,
+      before?.finalReasonDetail, item.finalReasonDetail) && item.finalReasonDetail) finalReasonInsert.run(item.id, item.finalReasonDetail.note);
   });
 };

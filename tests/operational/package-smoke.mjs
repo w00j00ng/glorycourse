@@ -53,9 +53,15 @@ try {
   const pkg = JSON.parse(await readFile(join(app, 'package.json'), 'utf8'));
   assert.equal(release.version, pkg.version);
   assert.equal(manifest.version, pkg.version);
-  for (const name of ['usage', 'development', 'releasing', 'contract-decisions', 'dependencies']) {
+  for (const name of ['usage', 'troubleshooting', 'development', 'releasing', 'contract-decisions', 'dependencies']) {
     assert.ok((await readFile(join(top, 'docs', `${name}.md`), 'utf8')).trim(), `README link: docs/${name}.md`);
   }
+  const userGuide = await readFile(join(top, '사용설명서.html'), 'utf8');
+  const troubleshooting = await readFile(join(top, '문제해결.html'), 'utf8');
+  assert.match(userGuide, /한 학기 따라 하기/);
+  assert.match(userGuide, /href="문제해결\.html"/);
+  assert.match(troubleshooting, /브라우저가 열리지 않음/);
+  assert.match(troubleshooting, /href="사용설명서\.html"/);
   const migrationManifest = await readFile(join(app, 'schema/migrations/manifest.json'));
   assert.equal(release.migrationManifestSha256, createHash('sha256').update(migrationManifest).digest('hex'));
   assert.equal(release.databaseVersion, String(JSON.parse(migrationManifest).targetVersion));

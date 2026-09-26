@@ -17,25 +17,20 @@ import {
 } from './import-preview.ts';
 import {
   StoreRevisionConflictError,
+  type ApplicationChoiceRecord as Choice,
+  type ApplicationRecord as Application,
   type DatabaseState,
+  type ImportBatchRecord as ImportBatch,
   type ImportResolutionRecord as Resolution,
+  type NamedRecord as Named,
+  type SemesterCourseRecord as SemesterCourse,
+  type SemesterRecord as Semester,
   type Store,
 } from '../storage/store.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 type Dependencies = { id: () => string; now: () => Date };
 
-export type ImportReceipt = {
-  receiptId: string;
-  importBatchId: string;
-  previewId: string;
-  storeEpoch: string;
-  idempotencyKey: string;
-  requestHash: string;
-  inserted: number;
-  updated: number;
-  skipped: number;
-  committedAt: string;
-};
+export type ImportReceipt = NonNullable<ImportBatch['receipt']>;
 
 type CommitInput = {
   previewId: string;
@@ -44,50 +39,6 @@ type CommitInput = {
   storeEpoch: string;
   warningDigest: string;
   resolutions: Resolution[];
-};
-
-type ImportBatch = {
-  id: string;
-  kind: 'APPLICATIONS' | 'ENROLLMENTS';
-  templateVersion: string;
-  fileHash: string;
-  importedAt: string;
-  status: 'STAGED' | 'APPLIED';
-  rawRows: ImportPreview['rawRows'];
-  resolutions: Resolution[];
-  receipt: ImportReceipt | null;
-};
-
-type Named = { id: string; name: string; nameKey: string; createdAt: string; updatedAt: string };
-type Semester = Named & { order: number | null; allocationInputRevision: number };
-type SemesterCourse = {
-  id: string;
-  semesterId: string;
-  courseId: string;
-  capacity: number | null;
-  createdAt: string;
-  updatedAt: string;
-};
-type Application = {
-  id: string;
-  semesterId: string;
-  memberId: string;
-  applicationOrder: number | null;
-  applicationOrderStatus: ApplicationCandidate['applicationOrderStatus'];
-  orderResolution: 'SOURCE_AGREED' | 'ADMIN_CONFIRMED' | 'UNRESOLVED';
-  orderResolutionNote: null;
-  revision: number;
-  createdAt: string;
-  updatedAt: string;
-};
-type Choice = {
-  id: string;
-  applicationId: string;
-  semesterCourseId: string;
-  preference: number | null;
-  sourceRefs: Array<{ importBatchId: string; sheet: string; row: number }>;
-  createdAt: string;
-  updatedAt: string;
 };
 
 export class ImportPreviewStaleError extends Error {
@@ -605,10 +556,10 @@ const bumpSemester = (semester: Semester, now: string): void => {
 };
 
 const nameKey = (value: string): string => value.trim().normalize('NFC');
-const batches = (data: DatabaseState): ImportBatch[] => data.importBatches as unknown as ImportBatch[];
-const semesters = (data: DatabaseState): Semester[] => data.semesters as unknown as Semester[];
-const members = (data: DatabaseState): Named[] => data.members as unknown as Named[];
-const courses = (data: DatabaseState): Named[] => data.courses as unknown as Named[];
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses as unknown as SemesterCourse[];
-const applications = (data: DatabaseState): Application[] => data.applications as unknown as Application[];
-const choices = (data: DatabaseState): Choice[] => data.applicationChoices as unknown as Choice[];
+const batches = (data: DatabaseState): ImportBatch[] => data.importBatches;
+const semesters = (data: DatabaseState): Semester[] => data.semesters;
+const members = (data: DatabaseState): Named[] => data.members;
+const courses = (data: DatabaseState): Named[] => data.courses;
+const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
+const applications = (data: DatabaseState): Application[] => data.applications;
+const choices = (data: DatabaseState): Choice[] => data.applicationChoices;

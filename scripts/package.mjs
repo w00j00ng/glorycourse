@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, writeFile, chmod } from 'node:fs
 import { createHash } from 'node:crypto';
 import { join, resolve, relative } from 'node:path';
 import JSZip from '@excel.js/jszip';
+import { buildGuides } from './build-guide.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const config = JSON.parse(await readFile(join(root, 'scripts/release-config.json'), 'utf8'));
@@ -21,7 +22,7 @@ const staging = await mkdtemp(join(dist, 'build-'));
 const top = join(staging, 'Glorycourse');
 const app = process.platform === 'darwin' ? join(top, 'Glorycourse.app/Contents/Resources/app') : top;
 await mkdir(app, { recursive: true });
-const documents = ['README.md', 'docs/usage.md', 'docs/development.md', 'docs/releasing.md', 'docs/contract-decisions.md', 'docs/dependencies.md'];
+const documents = ['README.md', 'docs/usage.md', 'docs/troubleshooting.md', 'docs/development.md', 'docs/releasing.md', 'docs/contract-decisions.md', 'docs/dependencies.md'];
 // Explicit contents keep local data, credentials, work documents, and tests out of the product.
 for (const name of ['backend/src', 'frontend', 'schema', 'package.json', 'package-lock.json', ...documents]) {
   await cp(join(root, name), join(app, name), { recursive: true });
@@ -77,6 +78,8 @@ if (process.platform === 'win32' || process.platform === 'linux') {
 </dict></plist>\n`);
   for (const name of documents) await cp(join(root, name), join(top, name), { recursive: true });
 }
+
+await buildGuides(top);
 
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim());

@@ -419,7 +419,13 @@ const methodNotAllowed = (): ApiResponse => ({
   json: { code: 'METHOD_NOT_ALLOWED', message: '허용되지 않은 메서드입니다.', issues: [] },
 });
 
-const json = <T>(request: ApiRequest): T => JSON.parse(request.body.toString('utf8')) as T;
+const json = <T>(request: ApiRequest): T => {
+  const input: unknown = JSON.parse(request.body.toString('utf8'));
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new HttpError(400, 'BAD_REQUEST', '요청은 항목별 값이 있는 자료 형식이어야 합니다.');
+  }
+  return input as T;
+};
 
 const header = (request: ApiRequest, name: string): string | undefined => {
   const value = request.headers[name];

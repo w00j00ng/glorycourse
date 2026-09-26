@@ -1,6 +1,6 @@
 {
   "name": "glorycourse",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,11 +12,14 @@
     "test:coverage": "c8 npm run verify && node scripts/coverage-report.mjs",
     "test:crash": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/crash-write.test.mjs",
     "test:scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/allocation-scale.test.mjs",
+    "test:storage-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/storage-scale.test.mjs",
+    "test:browser": "playwright test tests/browser --workers=1",
     "test:workbook-scale": "node --experimental-strip-types --disable-warning=ExperimentalWarning tests/operational/workbook-scale.test.mjs",
     "test:openapi": "redocly lint openapi/openapi.yaml --extends=spec",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.frontend.json",
     "test:launcher": "node tests/operational/launcher.test.mjs",
     "test:desktop": "node tests/operational/desktop-open.test.mjs",
+    "docs:html": "node scripts/build-guide.mjs",
     "package": "node scripts/package.mjs",
     "test:package": "node tests/operational/package-smoke.mjs",
     "migrations:manifest": "node scripts/migrations-manifest.mjs",
@@ -44,9 +47,11 @@
     ]
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@redocly/cli": "2.54.2",
     "@types/node": "22.20.4",
     "c8": "12.0.0",
+    "marked": "16.0.0",
     "typescript": "5.9.2",
     "yaml": "2.9.1"
   },
@@ -54,6 +59,7 @@
     "@excel.js/exceljs": "0.15.0",
     "@excel.js/jszip": "0.2.0",
     "ajv": "8.20.0",
-    "ajv-formats": "3.0.1"
+    "ajv-formats": "3.0.1",
+    "immer": "11.1.18"
   }
 }

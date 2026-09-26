@@ -21,7 +21,7 @@ export class SQLiteAdapter implements StoreAdapter {
     } finally { db.close(); }
   }
 
-  async write(data: DatabaseState): Promise<void> {
+  async write(data: DatabaseState, previous?: DatabaseState): Promise<void> {
     const db = new DatabaseSync(this.file);
     try {
       db.exec('PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; BEGIN IMMEDIATE');
@@ -29,7 +29,14 @@ export class SQLiteAdapter implements StoreAdapter {
         if (db.prepare('PRAGMA application_id').get()?.application_id !== applicationId) {
           throw new Error('Unsupported Glorycourse SQLite database');
         }
-        writeStoreToDatabase(db, data);
+        if (previous) {
+          const meta = db.prepare('SELECT store_epoch, store_revision FROM store_meta WHERE id = 1').get();
+          if (meta?.store_epoch !== previous.meta.storeEpoch || meta?.store_revision !== previous.meta.storeRevision) {
+            throw new Error('SQLite state changed since the last read');
+          }
+          db.exec('PRAGMA defer_foreign_keys = ON');
+        }
+        writeRelationalStore(db, data, previous);
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');

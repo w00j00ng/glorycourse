@@ -362,7 +362,7 @@ const evaluate = (
   candidates: Candidate[],
 ): Evaluation => {
   const issues = inputChangeIssues(data, draft);
-  const provisional = structuredClone(data);
+  const provisional = { ...data, enrollments: [...data.enrollments] };
   const enrollments: PreviewEnrollment[] = [];
   const records: EnrollmentRecord[] = [];
   const semesterCourses = data.semesterCourses as Array<{
