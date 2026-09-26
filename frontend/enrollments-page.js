@@ -10,7 +10,7 @@ import { reportFilename } from './download-name.js';
  *     pagination: { enrollment: { total: number } } },
  *   byId: (id: string) => any,
  *   showMessage: (message: string, error?: boolean) => void,
- *   api: (path: string) => Promise<unknown>,
+ *   api: (path: string, options?: RequestInit) => Promise<unknown>,
  *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
  *   download: (path: string, filename: string, options?: RequestInit) => Promise<unknown>,
  *   loadPaged: (name: string, path: string, query: string, pagination: object) => Promise<EnrollmentRow[] | undefined>,
@@ -139,5 +139,32 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     await load();
   };
 
-  return { load, completeReport, addEnrollmentEntry, enrollmentCourseName, openEnrollment };
+  const deleteSemesterEnrollments = async () => {
+    const semesterId = byId('enrollment-semester-filter').value;
+    if (!semesterId) return;
+    const path = `/semesters/${encodeURIComponent(semesterId)}/enrollments`;
+    const preview = /** @type {{ count: number, semesterName: string, storeRevision: number, storeEpoch: string }} */ (await run(() => api(path)));
+    if (preview.count === 0) {
+      showMessage(`${preview.semesterName} 학기에 삭제할 수강이력이 없습니다.`);
+      return;
+    }
+    const confirmationName = window.prompt(
+      `${preview.semesterName} 학기의 수강이력 ${preview.count}건을 모두 삭제합니다.\n`+
+      '검색 조건이나 페이지에 관계없이 삭제되며 되돌릴 수 없습니다.\n계속하려면 학기명을 정확히 입력하세요.',
+    );
+    if (confirmationName === null) return;
+    if (confirmationName !== preview.semesterName) {
+      showMessage('학기명이 일치하지 않아 삭제하지 않았습니다.', true);
+      return;
+    }
+    await run(() => api(path, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        confirmationName, expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch,
+      }),
+    }), `${preview.semesterName} 학기 수강이력 ${preview.count}건을 삭제했습니다.`);
+    await load();
+  };
+
+  return { load, completeReport, addEnrollmentEntry, enrollmentCourseName, openEnrollment, deleteSemesterEnrollments };
 };

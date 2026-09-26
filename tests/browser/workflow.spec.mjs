@@ -373,6 +373,17 @@ test('an administrator registers multiple historical enrollments without applica
   await page.locator('#catalog-semester').selectOption({ label: '과거 학기' });
   await expect(page.locator('#catalog-course-rows [name="courseName"]')).toHaveCount(2);
   expect((await page.locator('#catalog-course-rows [name="courseName"]').evaluateAll((inputs) => inputs.map((input) => input.value))).sort()).toEqual(['마태복음', '창세기']);
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#enrollment-semester-filter').selectOption({ label: '과거 학기' });
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+  page.once('dialog', (dialog) => { void dialog.accept('다른 학기'); });
+  await page.locator('#delete-semester-enrollments').click();
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+  await expect(page.locator('#message')).toContainText('학기명이 일치하지 않아 삭제하지 않았습니다');
+  page.once('dialog', (dialog) => { void dialog.accept('과거 학기'); });
+  await page.locator('#delete-semester-enrollments').click();
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(0);
+  await expect(page.locator('#enrollment-count')).toHaveText('0');
 });
 
 test('an administrator registers applications, reviews allocation, and sees saved enrollment history', async ({ page, app }) => {
