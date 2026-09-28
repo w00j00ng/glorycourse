@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 export const ALLOCATION_ENGINE_VERSION = '1.0.0';
 export const MAX_ALLOCATION_APPLICANTS = 10_000;
 export const MAX_SEMESTER_COURSES = 1_000;
-export const MAX_CHOICES_PER_APPLICATION = 100;
+export const MAX_CHOICES_PER_APPLICATION = 5;
 
 export type PolicySettings = {
   preferenceMode: 'NEW_FIRST' | 'RANK_FIRST';
@@ -508,7 +508,7 @@ const validate = (
         issues.push(errorIssue('DUPLICATE_CHOICE_COURSE', 'Application course choice is duplicated', application.memberId, choice.semesterCourseId));
       }
       choiceCourses.add(choice.semesterCourseId);
-      if (!positiveInteger(choice.preference) || preferences.has(choice.preference!)) {
+      if (!positiveInteger(choice.preference) || choice.preference! > MAX_CHOICES_PER_APPLICATION || preferences.has(choice.preference!)) {
         issues.push(errorIssue('PREFERENCE_UNRESOLVED', 'Choice preference is missing, invalid, or duplicated', application.memberId, choice.semesterCourseId));
       } else preferences.add(choice.preference!);
     }

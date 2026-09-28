@@ -242,7 +242,8 @@ export class EnrollmentService {
           || (warnings.length > 0 && (!note || note.length > 2000))
         ) throw new EnrollmentAcknowledgementError();
 
-        return applyEnrollmentChange(
+        const existingCourseIds = new Set(data.semesterCourses.map(({ id }) => id));
+        const result = applyEnrollmentChange(
           data,
           payload.input,
           warnings.length === 0 ? null : {
@@ -253,6 +254,8 @@ export class EnrollmentService {
           this.dependencies.now().toISOString(),
           this.dependencies.id,
         );
+        initializeEnrollmentCourseCapacities(data, existingCourseIds);
+        return result;
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError) throw new EnrollmentStaleError();
@@ -349,35 +352,6 @@ export const evaluateEnrollmentSelection = (
     memberName: member.name,
     courseName: course.name,
   }));
-};
-
-export const applyEnrollmentImport = (
-  data: EnrollmentData,
-  input: { semesterName: string; memberName: string; courseName: string },
-  acknowledgedWarningDigest: string,
-  acknowledgementNote: string | undefined,
-  now: string,
-  id: () => string,
-  informationalCodes: readonly string[] = [],
-): EnrollmentView => {
-  const clean = validateInput({ action: 'CREATE', ...input });
-  const issues = enrollmentIssues(data, clean).filter(({ code }) => !informationalCodes.includes(code));
-  const errors = issues.filter(({ severity }) => severity === 'ERROR');
-  if (errors.length > 0) throw new EnrollmentConflictError(errors);
-  const warnings = issues.filter(({ severity }) => severity === 'WARNING');
-  const warningDigest = digestEnrollmentWarnings(issues);
-  const note = acknowledgementNote?.trim();
-  if (
-    acknowledgedWarningDigest !== warningDigest
-    || (warnings.length > 0 && (!note || note.length > 2000))
-  ) throw new EnrollmentAcknowledgementError();
-  return applyEnrollmentChange(
-    data,
-    clean,
-    warnings.length === 0 ? null : { warningDigest, note: note!, acknowledgedAt: now },
-    now,
-    id,
-  ) as EnrollmentView;
 };
 
 const validateInput = (input: PreviewInput): CleanInput => {
@@ -607,7 +581,8 @@ const validateBatchInput = (inputs: BatchInput[]): BatchInput[] => {
   });
 };
 
-const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: string, id: () => string) => {
+export const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: string, id: () => string) => {
+  const existingCourseIds = new Set(data.semesterCourses.map(({ id }) => id));
   const issues: EnrollmentIssue[] = [];
   const items: EnrollmentView[] = [];
   for (const [index, input] of inputs.entries()) {
@@ -631,11 +606,22 @@ const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: st
       }
     });
   }
+  initializeEnrollmentCourseCapacities(data, existingCourseIds);
   return { items, issues: issues.map((issue) => ({
     ...issue,
     message: `${issue.detail.rowNumber}행 (${inputs[Number(issue.detail.rowNumber) - 1]!.memberName}): ${issue.message}`,
     subject: { entityType: 'Enrollment' },
   })) };
+};
+
+export const initializeEnrollmentCourseCapacities = (data: EnrollmentData, existingCourseIds: ReadonlySet<string>): void => {
+  const created = data.semesterCourses.filter(({ id }) => !existingCourseIds.has(id));
+  if (!created.length) return;
+  const counts = new Map<string, number>();
+  for (const { semesterCourseId } of data.enrollments) {
+    counts.set(semesterCourseId, (counts.get(semesterCourseId) ?? 0) + 1);
+  }
+  for (const course of created) course.capacity = counts.get(course.id) ?? 0;
 };
 
 export const digestEnrollmentWarnings = (issues: EnrollmentIssue[]): string => createHash('sha256')

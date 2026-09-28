@@ -10,14 +10,32 @@ const server = await startLocalServer({
 process.send({ type: 'ready', origin: server.origin });
 process.on('message', async (message) => {
   try {
+    if (message.type === 'clear-application-preferences') {
+      await server.store.write({}, (data) => {
+        for (const choice of data.applicationChoices) choice.preference = null;
+      });
+      process.send({ type: 'preferences-cleared' });
+      return;
+    }
+    if (message.type === 'complete-enrollment-template') {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(Buffer.from(message.bytes, 'base64'));
+      for (const row of message.rows) workbook.getWorksheet('수강이력').addRow(row);
+      process.send({ type: 'template-completed', bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
+      return;
+    }
     if (message.type === 'complete-template') {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(Buffer.from(message.bytes, 'base64'));
       const semesterName = workbook.getWorksheet('학기').getCell('A2').value;
       const courseName = workbook.getWorksheet('개설강좌').getCell('B2').value;
       const capacity = workbook.getWorksheet('개설강좌').getCell('C2').value;
-      workbook.getWorksheet('수강신청').addRow(['양식 학기', '양식 회원', 1, '창세기', 1]);
-      process.send({ type: 'template-completed', semesterName, courseName, capacity,
+      const sheet = workbook.getWorksheet('수강신청');
+      const headers = sheet.getRow(1).values.slice(1);
+      sheet.getCell('G1').value = '4순위 강좌';
+      sheet.getCell('H1').value = '5순위 강좌';
+      sheet.addRow(['양식 학기', '양식 회원', 1, '창세기', null, null, '마태복음', '마가복음']);
+      process.send({ type: 'template-completed', semesterName, courseName, capacity, headers,
         bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
       return;
     }

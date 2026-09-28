@@ -27,11 +27,22 @@ const test = base.extend({
       await page.goto(message.origin);
       await use({
         backupFile: async () => join(dataDirectory, 'backups', (await readdir(join(dataDirectory, 'backups')))[0]),
+        clearApplicationPreferences: async () => {
+          child.send({ type: 'clear-application-preferences' });
+          const [result] = await once(child, 'message', { signal: AbortSignal.timeout(20_000) });
+          if (result.type !== 'preferences-cleared') throw new Error(result.message);
+        },
         completeApplicationTemplate: async (bytes) => {
           child.send({ type: 'complete-template', bytes: bytes.toString('base64') });
           const [result] = await once(child, 'message', { signal: AbortSignal.timeout(20_000) });
           if (result.type !== 'template-completed') throw new Error(result.message);
           return { ...result, buffer: Buffer.from(result.bytes, 'base64') };
+        },
+        completeEnrollmentTemplate: async (bytes, rows) => {
+          child.send({ type: 'complete-enrollment-template', bytes: bytes.toString('base64'), rows });
+          const [result] = await once(child, 'message', { signal: AbortSignal.timeout(20_000) });
+          if (result.type !== 'template-completed') throw new Error(result.message);
+          return Buffer.from(result.bytes, 'base64');
         },
         seedLarge: async () => {
           child.send({ type: 'seed-large' });
@@ -302,6 +313,39 @@ test('a late draft detail does not replace the draft selected afterward', async 
   }
 });
 
+test('an administrator sees which application prevents export and corrects its preference', async ({ page, app }) => {
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await page.locator('#new-application').click();
+  const entry = page.locator('#application-entry-rows > fieldset');
+  await entry.locator('[name="semesterName"]').fill('과거 학기');
+  await entry.locator('[name="memberName"]').fill('순위 미정 회원');
+  await entry.locator('[name="applicationOrder"]').fill('1');
+  await entry.locator('[name="courseName"]').fill('기초');
+  await page.locator('#application-form [type="submit"]').click();
+  await expect(page.locator('#application-rows tr')).toHaveCount(1);
+
+  await app.clearApplicationPreferences();
+  const [refreshed] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes('/api/v1/applications?')),
+    page.locator('#refresh-applications').click(),
+  ]);
+  expect((await refreshed.json()).items[0].choices[0].preference).toBeNull();
+  await page.locator('#application-export').click();
+  await expect(page.locator('#message')).toContainText('과거 학기 / 순위 미정 회원: 희망순위 1~5를 확인한 뒤 다시 내보내세요.');
+  await expect(page.locator('#message')).toContainText('강좌마다 다른 순위를 입력하세요.');
+  await expect(page.locator('#message')).not.toContainText('xlsx 파일을 읽을 수 없습니다.');
+  await expect(page.locator('#application-rows tr')).toHaveCount(1);
+
+  await page.locator('#application-rows tr').getByRole('button', { name: '수정' }).click();
+  await entry.locator('[name="preference"]').fill('1');
+  await page.locator('#application-form [type="submit"]').click();
+  await expect(page.locator('#application-dialog')).toBeHidden();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'), page.locator('#application-export').click(),
+  ]);
+  expect(await download.failure()).toBeNull();
+});
+
 test('an administrator reviews a completed application template before importing it', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();
@@ -310,7 +354,7 @@ test('an administrator reviews a completed application template before importing
   await page.locator('[data-catalog-tab="courses"]').click();
   await page.locator('#catalog-semester').selectOption({ label: '양식 학기' });
   await page.locator('#add-catalog-course').click();
-  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 2');
+  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 2\n마태복음, 2\n마가복음, 2');
   await page.locator('#catalog-add-form [type="submit"]').click();
   await page.locator('#catalog-form [type="submit"]').click();
 
@@ -323,6 +367,7 @@ test('an administrator reviews a completed application template before importing
   ]);
   const completed = await app.completeApplicationTemplate(await readFile(await download.path()));
   expect([completed.semesterName, completed.courseName, completed.capacity]).toEqual(['양식 학기', '창세기', 2]);
+  expect(completed.headers).toEqual(['학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌']);
 
   await page.locator('#applications-view .import-open').click();
   await page.locator('#import-form [name="file"]').setInputFiles({
@@ -335,18 +380,162 @@ test('an administrator reviews a completed application template before importing
   await expect(page.locator('#import-insert-count')).toHaveText('1');
   await expect(page.locator('#import-candidates')).toContainText('양식 회원');
   await expect(page.locator('#import-candidates')).toContainText('창세기');
+  await expect(page.locator('#import-candidates')).toContainText('4순위 마태복음');
+  await expect(page.locator('#import-candidates')).toContainText('5순위 마가복음');
   await expect(page.locator('#application-rows tr')).toHaveCount(0);
   await page.locator('#commit-import').click();
   await expect(page.locator('#import-preview-status')).toContainText('반영됨');
   await page.locator('#import-dialog .close-dialog').first().click();
   await expect(page.locator('#application-rows tr')).toHaveCount(1);
   await expect(page.locator('#application-rows')).toContainText('양식 회원');
+  await expect(page.locator('#application-rows')).toContainText('4순위 마태복음');
+  await expect(page.locator('#application-rows')).toContainText('5순위 마가복음');
   await page.locator('#applications-view .import-open').click();
   await expect(page.locator('#import-dialog-title')).toHaveText('수강신청 Excel 검토');
   await expect(page.locator('#import-preview')).toBeHidden();
   await expect(page.locator('#import-preview-action')).toBeVisible();
   await page.locator('#import-dialog .close-dialog').first().click();
 });
+
+test('an administrator turns direct registration warnings off and back on while errors still block saving', async ({ page, app }) => {
+  await expect(page.locator('#input-warnings-enabled')).toBeChecked();
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#new-enrollment').click();
+  const toggle = page.locator('#enrollment-form [data-input-warnings-toggle]');
+  await toggle.uncheck();
+  const row = page.locator('#enrollment-entry-rows > fieldset').first();
+  await row.locator('[name="semesterName"]').fill('과거 학기');
+  await row.locator('[name="memberName"]').fill('김가나');
+  await row.locator('[name="newCourseName"]').fill('창세기');
+  await page.locator('#enrollment-form [type="submit"]').click();
+  await expect(page.locator('#enrollment-dialog')).toBeHidden();
+  await expect(page.locator('#warning-dialog')).toBeHidden();
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(1);
+  await expect(page.locator('#input-warnings-enabled')).not.toBeChecked();
+
+  for (const [memberName, enabled, expectedCount] of [['김가나', false, 1], ['박다라', false, 2], ['이다마', true, 3]]) {
+    await page.locator('#new-enrollment').click();
+    await toggle.setChecked(enabled);
+    await row.locator('[name="semesterName"]').fill('과거 학기');
+    await row.locator('[name="memberName"]').fill(memberName);
+    await row.locator('[name="courseId"]').selectOption({ label: '창세기' });
+    await page.locator('#enrollment-form [type="submit"]').click();
+    if (memberName === '김가나') {
+      await expect(page.locator('#dialog-message')).toContainText('같은 학기에 수강이력이 이미 있습니다');
+      await expect(page.locator('#warning-dialog')).toBeHidden();
+      await page.locator('#enrollment-dialog .close-dialog').first().click();
+    } else if (enabled) {
+      await expect(page.locator('#warning-dialog')).toBeVisible();
+      await expect(page.locator('#warning-list')).toContainText('강좌 정원을 초과합니다');
+      await page.locator('#warning-form [name="note"]').fill('추가 이력 확인');
+      await page.locator('#warning-form [type="submit"]').click();
+    }
+    await expect(page.locator('#enrollment-dialog')).toBeHidden();
+    await expect(page.locator('#enrollment-rows tr')).toHaveCount(expectedCount);
+  }
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#catalog-semester').selectOption({ label: '과거 학기' });
+  await expect(page.locator('#catalog-course-rows [name="capacity"]')).toHaveValue('1');
+});
+
+test('an administrator toggles all Excel registration notices and warnings while retaining errors', async ({ page, app }) => {
+  await page.locator('#input-warnings-enabled').uncheck();
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#enrollment-template').click()]);
+  const template = await readFile(await download.path());
+  const upload = async (rows) => {
+    const buffer = await app.completeEnrollmentTemplate(template, rows);
+    await page.locator('#enrollments-view .import-open').click();
+    await page.locator('#import-form [name="file"]').setInputFiles({ name: '이력.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer });
+    await page.locator('#import-preview-action [type="submit"]').click();
+    await expect(page.locator('#import-preview')).toBeVisible();
+  };
+  await upload([['과거 학기', '김가나', '창세기'], ['과거 학기', '박다라', '창세기']]);
+  const toggle = page.locator('#import-form [data-input-warnings-toggle]');
+  const notices = page.locator('#import-issues li.information');
+  await expect(toggle).not.toBeChecked();
+  expect(await notices.count()).toBeGreaterThan(0);
+  for (const item of await notices.all()) await expect(item).toBeHidden();
+  await toggle.check();
+  for (const item of await notices.all()) await expect(item).toBeVisible();
+  await toggle.uncheck();
+  await page.locator('#commit-import').click();
+  await expect(page.locator('#import-preview-status')).toContainText('반영됨');
+  await expect(page.locator('#warning-dialog')).toBeHidden();
+  await page.locator('#import-dialog .close-dialog').first().click();
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+
+  await upload([['과거 학기', '이다마', '창세기'], ['과거 학기', '', '창세기']]);
+  const warnings = page.locator('#import-issues li[data-severity="WARNING"]');
+  const errors = page.locator('#import-issues li[data-severity="ERROR"]');
+  await expect(warnings).toHaveCount(1);
+  await expect(warnings).toBeHidden();
+  await expect(errors).toBeVisible();
+  await expect(page.locator('#commit-import')).toBeDisabled();
+  await toggle.check();
+  await expect(warnings).toBeVisible();
+  await toggle.uncheck();
+  await expect(errors).toBeVisible();
+  await page.locator('#import-dialog .close-dialog').first().click();
+
+  await upload([['과거 학기', '이다마', '창세기']]);
+  await page.locator('#commit-import').click();
+  await expect(page.locator('#import-preview-status')).toContainText('반영됨');
+  await expect(page.locator('#warning-dialog')).toBeHidden();
+  await page.locator('#import-dialog .close-dialog').first().click();
+  await expect(page.locator('#enrollment-rows tr')).toHaveCount(3);
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#catalog-semester').selectOption({ label: '과거 학기' });
+  await expect(page.locator('#catalog-course-rows [name="capacity"]')).toHaveValue('2');
+});
+
+for (const warningsEnabled of [true, false]) {
+  test(`an administrator imports a cohort exceeding existing capacity with warnings ${warningsEnabled ? 'on' : 'off'}`, async ({ page, app }) => {
+    await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+    await page.locator('#new-semester').click();
+    await page.locator('#semester-create-form [name="name"]').fill('기존 학기');
+    await page.locator('#semester-create-form [type="submit"]').click();
+    await page.locator('[data-catalog-tab="courses"]').click();
+    await page.locator('#add-catalog-course').click();
+    await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 1');
+    await page.locator('#catalog-add-form [type="submit"]').click();
+    await page.locator('#catalog-form [type="submit"]').click();
+
+    await page.locator('#input-warnings-enabled').setChecked(warningsEnabled);
+    await page.getByRole('button', { name: '수강이력', exact: true }).click();
+    const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#enrollment-template').click()]);
+    const buffer = await app.completeEnrollmentTemplate(await readFile(await download.path()),
+      [['기존 학기', '가나', '창세기'], ['기존 학기', '다라', '창세기']]);
+    await page.locator('#enrollments-view .import-open').click();
+    await page.locator('#import-form [name="file"]').setInputFiles({ name: '명단.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer });
+    await page.locator('#import-preview-action [type="submit"]').click();
+    await expect(page.locator('#import-preview')).toBeVisible();
+    const warning = page.locator('#import-issues li[data-severity="WARNING"]');
+    await expect(warning).toHaveCount(1);
+    await expect(warning).toContainText('3행');
+    await expect(warning).toContainText('강좌 정원을 초과합니다');
+    await expect(warning).toBeVisible({ visible: warningsEnabled });
+    await page.locator('#commit-import').click();
+    if (warningsEnabled) {
+      await expect(page.locator('#warning-dialog')).toBeVisible();
+      await page.locator('#warning-form [name="note"]').fill('정원 1명보다 많은 명단 확인');
+      await page.locator('#warning-form [type="submit"]').click();
+    }
+    await expect(page.locator('#import-preview-status')).toContainText('반영됨');
+    await expect(page.locator('#warning-dialog')).toBeHidden();
+    await page.locator('#import-dialog .close-dialog').first().click();
+    await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+    await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+    await page.locator('[data-catalog-tab="courses"]').click();
+    await page.locator('#catalog-semester').selectOption({ label: '기존 학기' });
+    await expect(page.locator('#catalog-course-rows [name="capacity"]')).toHaveValue('1');
+  });
+}
 
 test('an administrator registers multiple historical enrollments without applications or catalog setup', async ({ page, app }) => {
   await page.getByRole('button', { name: '수강이력', exact: true }).click();

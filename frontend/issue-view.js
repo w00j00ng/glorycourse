@@ -46,7 +46,7 @@ const messages = {
   EXISTING_CAPACITY_EXCEEDED: '기존 수강인원이 강좌 정원을 초과합니다. 정원과 수강이력을 확인하세요.',
   DUPLICATE_APPLICATION: '같은 회원의 수강신청이 두 건 이상 있습니다. 신청 내역을 확인하세요.',
   CHOICE_REQUIRED: '신청한 강좌가 없습니다. 희망 강좌를 입력하세요.',
-  APPLICATION_CHOICE_LIMIT: '한 회원의 희망 강좌가 허용 개수를 넘었습니다. 신청을 확인하세요.',
+  APPLICATION_CHOICE_LIMIT: '한 회원의 희망 강좌는 학기당 최대 5개입니다. 신청을 확인하세요.',
   CHOICE_COURSE_INVALID: '선택한 강좌가 해당 학기에 개설되어 있지 않습니다.',
   DUPLICATE_CHOICE_COURSE: '같은 강좌가 희망 강좌에 중복되어 있습니다.',
   DUPLICATE_EXISTING_ENROLLMENT: '같은 회원의 현재 학기 수강이력이 두 건 이상 있습니다.',
@@ -65,7 +65,7 @@ const messages = {
 /** @type {Record<string, string>} */
 const informationMessages = {
   SEMESTER_ORDER_UNRESOLVED: '새 학기는 다음 순서로 등록됩니다.',
-  CAPACITY_UNRESOLVED: '새 개설강좌는 정원 미정으로 등록됩니다.',
+  CAPACITY_UNRESOLVED: '새 개설강좌의 정원은 이번에 등록하는 학생 수로 설정됩니다.',
 };
 
 /** @param {string} code */

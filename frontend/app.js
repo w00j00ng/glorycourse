@@ -71,7 +71,7 @@ const download = async (path, filename, options = {}) => {
   });
   if (!response.ok) {
     const data = await response.json();
-    throw new Error(data.message || '파일을 내려받지 못했습니다.');
+    throw Object.assign(new Error(data.message || '파일을 내려받지 못했습니다.'), data);
   }
   const link = document.createElement('a');
   link.href = URL.createObjectURL(await response.blob());
@@ -176,7 +176,18 @@ const actionsCell = (...actions) => {
   return td;
 };
 
-const reviewWarnings = createWarningDialog({ byId, showMessage });
+const reviewWarnings = createWarningDialog({ byId, showMessage,
+  warningsEnabled: () => byId('input-warnings-enabled').checked });
+
+document.querySelectorAll('[data-input-warnings-toggle]').forEach((toggle) => {
+  toggle.addEventListener('change', (event) => {
+    const enabled = event.currentTarget.checked;
+    document.querySelectorAll('[data-input-warnings-toggle]').forEach((input) => {
+      input.checked = input.defaultChecked = enabled;
+    });
+    document.documentElement.dataset.inputWarnings = enabled ? 'on' : 'off';
+  });
+});
 
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
 const policyName = (policyId, policyVersion) => state.policies.find((policy) => (

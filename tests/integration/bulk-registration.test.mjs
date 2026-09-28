@@ -54,6 +54,33 @@ test('previews all enrollment warnings together and commits all acknowledged row
   assert.equal((await openStore(file, empty)).read().enrollments.length, 2);
 });
 
+test('sets each new offering capacity to its first registered cohort and preserves existing capacities', async (t) => {
+  const { file, store, applications, enrollments } = await workspace(t);
+  const existing = await applications.create({ ...application('신청 회원'), choices: [{ courseName: '기존 강좌', preference: 1 }] });
+  await applications.updateSemesterContext({ semesterId: existing.semesterId, expectedRevision: 1, order: 1,
+    semesterCourses: [{ courseName: '기존 강좌', capacity: 5 }] });
+  const request = [enrollment('가'), enrollment('나'),
+    { ...enrollment('다'), courseName: '기존 강좌' }, { ...enrollment('라'), semesterName: '2032 가을' }];
+  const before = store.read();
+  const preview = enrollments.previewMany(request);
+  assert.deepEqual(store.read(), before);
+  await enrollments.executeMany({ preparedActionToken: preview.preparedActionToken,
+    acknowledgedWarningDigest: preview.warningDigest, acknowledgementNote: '과거 명단 등록' });
+  const capacities = (data) => data.semesterCourses.map((offering) => [
+    data.semesters.find(({ id }) => id === offering.semesterId).name,
+    data.courses.find(({ id }) => id === offering.courseId).name, offering.capacity,
+  ]).sort();
+  const expected = [['2032 가을', '연기', 1], ['2032 봄', '기존 강좌', 5], ['2032 봄', '연기', 2]].sort();
+  assert.deepEqual(capacities(store.read()), expected);
+  assert.deepEqual(capacities((await openStore(file, empty)).read()), expected);
+
+  const later = enrollments.previewMany([enrollment('마')]);
+  assert.ok(later.issues.some(({ code }) => code === 'CAPACITY_EXCEEDED'));
+  await enrollments.executeMany({ preparedActionToken: later.preparedActionToken,
+    acknowledgedWarningDigest: later.warningDigest, acknowledgementNote: '추가 등록' });
+  assert.deepEqual(capacities(store.read()), expected);
+});
+
 test('rejects duplicate enrollment rows and stale or cross-operation tokens without partial registration', async (t) => {
   const { store, applications, enrollments } = await workspace(t);
   for (const request of [[], Array(101).fill(enrollment('가')), [null], [enrollment('가'), { ...enrollment('나'), memberName: '' }]]) {

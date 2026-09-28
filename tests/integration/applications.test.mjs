@@ -100,6 +100,26 @@ test('rejects invalid direct input without leaving resolved master records', asy
   assert.deepEqual(store.read(), emptyStore());
 });
 
+test('accepts up to five preferences and atomically rejects a sixth in all input paths', async () => {
+  const { service, store } = await openService();
+  const request = (count) => ({
+    semesterName: '2026 봄', memberName: `${count}개 신청`, applicationOrder: count,
+    choices: Array.from({ length: count }, (_, index) => ({ courseName: `강좌 ${index + 1}`, preference: index + 1 })),
+  });
+  for (const count of [3, 5]) {
+    const created = await service.create(request(count));
+    assert.deepEqual(created.choices.map(({ courseName, preference }) => ({ courseName, preference })), request(count).choices);
+  }
+  const existing = service.list({})[0];
+  const before = store.read();
+  for (const invalid of [request(6), { ...request(1), choices: [{ courseName: '강좌 6', preference: 6 }] }]) {
+    await assert.rejects(service.create(invalid), ApplicationValidationError);
+    await assert.rejects(service.update(existing.id, { ...invalid, expectedRevision: existing.revision }), ApplicationValidationError);
+    await assert.rejects(service.createMany([request(1), invalid]), ApplicationValidationError);
+    assert.deepEqual(store.read(), before);
+  }
+});
+
 test('updates an application atomically and rejects a stale application revision', async () => {
   const { service, store } = await openService();
   const created = await service.create({

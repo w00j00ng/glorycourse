@@ -53,9 +53,11 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
 
   /** @param {HTMLElement} container @param {Partial<ApplicationChoice>} [choice] */
   const addChoice = (container, choice = {}) => {
+    if (!choice.courseName && container.children.length >= 5) return showMessage('희망 강좌는 최대 5개까지 입력할 수 있습니다.', true);
     const row = byId('choice-template').content.firstElementChild.cloneNode(true);
     row.querySelector('[name="courseName"]').value = choice.courseName || '';
-    row.querySelector('[name="preference"]').value = choice.preference || container.children.length + 1;
+    const used = new Set([...container.children].map((item) => Number(/** @type {HTMLInputElement} */ (item.querySelector('[name="preference"]')).value)));
+    row.querySelector('[name="preference"]').value = choice.preference ?? [1, 2, 3, 4, 5].find((value) => !used.has(value)) ?? '';
     row.querySelector('.remove-choice').addEventListener('click', () => {
       if (container.children.length > 1) row.remove();
     });

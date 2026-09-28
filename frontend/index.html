@@ -30,6 +30,8 @@
       <button class="nav-item" data-view-target="drafts" type="button">배정초안</button>
       <button class="nav-item" data-view-target="enrollments" type="button">수강이력</button>
       <button class="nav-item" data-view-target="backups" type="button">자료 관리</button>
+      <label class="input-warnings-toggle"><input id="input-warnings-enabled" data-input-warnings-toggle type="checkbox" checked>입력 경고 표시·확인</label>
+      <p class="form-help">끄면 신청·이력 등록의 안내와 경고 확인을 생략합니다. 오류는 계속 표시됩니다.</p>
       <p class="notice">이름이 같으면 같은 사람으로 처리됩니다. 동명이인은 식별 가능한 이름을 사용하세요.</p>
     </nav>
 
@@ -267,6 +269,7 @@
       <div class="dialog-heading"><div><p class="eyebrow">ENROLLMENT</p><h2 id="enrollment-dialog-title">이력 등록</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
       <div id="enrollment-entry-rows"></div>
       <button id="add-enrollment-entry" class="secondary" type="button">이력 행 추가</button>
+      <label class="input-warnings-toggle"><input data-input-warnings-toggle type="checkbox" checked>입력 경고 표시·확인</label>
       <p class="form-help">최대 100건의 중복·재수강·정원 경고를 함께 확인한 뒤 모두 저장합니다.</p>
       <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">검토 후 저장</button></div>
     </form>
@@ -290,6 +293,7 @@
         <label id="import-mode-field">신청 반영 방식<select name="mode"><option value="MERGE_KEEP_EXISTING">기존 희망 유지</option><option value="REPLACE_APPLICATION">파일 내용으로 교체</option></select></label>
       </div>
       <p class="form-help">검토만으로 업무 자료는 바뀌지 않습니다. 원본 보관과 실제 반영을 다음 단계에서 선택합니다.</p>
+      <label class="input-warnings-toggle"><input data-input-warnings-toggle type="checkbox" checked>입력 경고 표시·확인</label>
       <div class="dialog-actions" id="import-preview-action"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit">파일 검토</button></div>
       <section id="import-preview" hidden>
         <div class="import-state"><span class="badge">PREVIEW</span><strong id="import-preview-status">아직 저장되지 않음</strong></div>
@@ -416,7 +420,7 @@
     </div>
     <button class="secondary remove-entry" type="button">이력 행 제거</button>
   </fieldset></template>
-  <template id="choice-template"><div class="choice-row"><label>강좌명<input name="courseName" list="course-options" required maxlength="200" autocomplete="off"></label><label>희망순위<input name="preference" type="number" min="1" step="1" required></label><button class="icon-button remove-choice" type="button" aria-label="희망 강좌 삭제">×</button></div></template>
+  <template id="choice-template"><div class="choice-row"><label>강좌명<input name="courseName" list="course-options" required maxlength="200" autocomplete="off"></label><label>희망순위<input name="preference" type="number" min="1" max="5" step="1" required></label><button class="icon-button remove-choice" type="button" aria-label="희망 강좌 삭제">×</button></div></template>
   <dialog id="shutdown-dialog" aria-labelledby="shutdown-title">
     <form method="dialog">
       <h2 id="shutdown-title">프로그램을 종료할까요?</h2>

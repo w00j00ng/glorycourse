@@ -28,11 +28,13 @@ test('round-trips every application row at the published workbook row limit', as
 
   assert.equal(raw.length, rowCount);
   assert.deepEqual(raw[0].cells, {
-    '학기명': '최대 학기', '회원명': '회원 0', '신청순서': '1', '강좌명': '강좌 0', '희망순위': '1',
+    '학기명': '최대 학기', '회원명': '회원 0', '신청순서': '1', '1순위 강좌': '강좌 0',
+    '2순위 강좌': null, '3순위 강좌': null,
   });
   assert.deepEqual(raw.at(-1).cells, {
     '학기명': '최대 학기', '회원명': `회원 ${rowCount - 1}`, '신청순서': String(rowCount),
-    '강좌명': `강좌 ${(rowCount - 1) % 1_000}`, '희망순위': '1',
+    '1순위 강좌': `강좌 ${(rowCount - 1) % 1_000}`,
+    '2순위 강좌': null, '3순위 강좌': null,
   });
   context.diagnostic(JSON.stringify({
     scenario: 'application-workbook-row-limit',

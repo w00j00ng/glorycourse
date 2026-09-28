@@ -244,6 +244,19 @@ test('is invariant to input array order and does not mutate its snapshot', () =>
 });
 
 test('rejects unresolved inputs and applicant counts over the published limit', () => {
+  const courses = Array.from({ length: 6 }, (_, index) => course(`C${index + 1}`, 1));
+  const fiveChoices = Array.from({ length: 5 }, (_, index) => [`C${index + 1}`, index + 1]);
+  const allowed = snapshot({ courses, applications: [application('A', 1, fiveChoices)] });
+  assert.equal(itemFor(allocate(allowed, policy(), 'five-seed'), 'A').autoSemesterCourseId, 'C1');
+  for (const [choices, expected] of [
+    [[...fiveChoices, ['C6', 6]], 'APPLICATION_CHOICE_LIMIT'],
+    [[['C6', 6]], 'PREFERENCE_UNRESOLVED'],
+  ]) {
+    const request = snapshot({ courses, applications: [application('A', 1, choices)] });
+    assert.throws(() => allocate(request, policy(), 'sixth-seed'), (error) => (
+      error instanceof AllocationValidationError && error.issues.some(({ code }) => code === expected)
+    ));
+  }
   const invalid = snapshot({
     courses: [course('X', null)],
     applications: [{

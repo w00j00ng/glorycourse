@@ -1,15 +1,17 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
+import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
 import {
   extractRawRows,
   exportRawRows,
   readSafeWorkbook,
+  TEMPLATE_VERSIONS,
   WorkbookValidationError,
   type ImportKind,
   type RawRow,
   type WorkbookLimits,
 } from '../excel/workbooks.ts';
-import { evaluateEnrollmentImport } from './enrollments.ts';
+import { applyBatchCandidate, evaluateEnrollmentImport } from './enrollments.ts';
 import type { Store, DatabaseState } from '../storage/store.ts';
 
 export type ImportMode = 'MERGE_KEEP_EXISTING' | 'REPLACE_APPLICATION';
@@ -139,7 +141,7 @@ export class ImportPreviewService {
       const batch: ImportBatch = {
         id: this.#dependencies.id(),
         kind: preview.kind,
-        templateVersion: '1',
+        templateVersion: TEMPLATE_VERSIONS[preview.kind],
         fileHash: preview.fileHash,
         importedAt: this.#dependencies.now().toISOString(),
         status: 'STAGED',
@@ -225,16 +227,17 @@ const buildPreview = (
 
 const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: ImportMode) => {
   const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강신청');
-  const grouped = new Map<string, RawRow[]>();
+  const issues: ImportIssue[] = [];
+  const seen = new Set<string>();
   for (const row of sourceRows) {
     const key = `${nameKey(row.cells['학기명'])}\0${nameKey(row.cells['회원명'])}`;
-    const rows = grouped.get(key) ?? [];
-    rows.push(row);
-    grouped.set(key, rows);
+    if (seen.has(key)) issues.push(requiredRowIssue(
+      'DUPLICATE_APPLICATION', 'A member has more than one application row in the same semester', row, '회원명',
+    ));
+    seen.add(key);
   }
-  const issues: ImportIssue[] = [];
   const contextChanges = analyzeContext(data, rawRows, issues);
-  const candidates = [...grouped.values()].map((rows) => applicationCandidate(rows, issues));
+  const candidates = sourceRows.map((row) => applicationCandidate(row, issues));
   for (const candidate of candidates) {
     for (const choice of candidate.choices) {
       if (!candidate.semesterName || !choice.courseName || contextChanges.some((change) => (
@@ -246,7 +249,7 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
       if (capacity !== undefined && capacity !== null) continue;
       const source = sourceRows.find(({ row }) => row === choice.sourceRefs[0]?.row);
       if (source) issues.push(requiredRowIssue(
-        'APPLICATION_COURSE_CAPACITY_MISSING', 'Course capacity is required', source, '강좌명',
+        'APPLICATION_COURSE_CAPACITY_MISSING', 'Course capacity is required', source, `${choice.preference}순위 강좌`,
       ));
     }
   }
@@ -278,23 +281,14 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
   };
 };
 
-const applicationCandidate = (rows: RawRow[], issues: ImportIssue[]): ApplicationCandidate => {
-  const first = rows[0]!;
+const applicationCandidate = (first: RawRow, issues: ImportIssue[]): ApplicationCandidate => {
   const semesterName = clean(first.cells['학기명']);
   const memberName = clean(first.cells['회원명']);
   if (!semesterName) issues.push(requiredRowIssue('SEMESTER_NAME_REQUIRED', 'Semester name is required', first, '학기명'));
   if (!memberName) issues.push(requiredRowIssue('MEMBER_NAME_REQUIRED', 'Member name is required', first, '회원명'));
-  const parsedOrders = rows.map((row) => parsePositiveInteger(row.cells['신청순서']));
-  const validOrders = new Set(parsedOrders.filter((item) => item.kind === 'VALID').map((item) => item.value));
-  let applicationOrderStatus: ApplicationStatus;
-  let applicationOrder: number | null = null;
-  if (parsedOrders.some(({ kind }) => kind === 'INVALID')) applicationOrderStatus = 'INVALID';
-  else if (validOrders.size === 0) applicationOrderStatus = 'MISSING';
-  else if (validOrders.size > 1 || parsedOrders.some(({ kind }) => kind === 'MISSING')) applicationOrderStatus = 'CONFLICT';
-  else {
-    applicationOrderStatus = 'NORMAL';
-    applicationOrder = [...validOrders][0]!;
-  }
+  const parsedOrder = parsePositiveInteger(first.cells['신청순서']);
+  const applicationOrderStatus = parsedOrder.kind === 'VALID' ? 'NORMAL' : parsedOrder.kind;
+  const applicationOrder = parsedOrder.kind === 'VALID' ? parsedOrder.value : null;
   if (applicationOrderStatus !== 'NORMAL') {
     issues.push(rowIssue(
       `APPLICATION_ORDER_${applicationOrderStatus}`,
@@ -304,53 +298,33 @@ const applicationCandidate = (rows: RawRow[], issues: ImportIssue[]): Applicatio
     ));
   }
 
-  const choiceRows = new Map<string, RawRow[]>();
-  for (const row of rows) {
-    const key = nameKey(row.cells['강좌명']);
-    const grouped = choiceRows.get(key) ?? [];
-    grouped.push(row);
-    choiceRows.set(key, grouped);
-  }
-  const choices = [...choiceRows.values()].map((group) => {
-    const courseName = clean(group[0]!.cells['강좌명']);
-    if (!courseName) issues.push(requiredRowIssue('COURSE_NAME_REQUIRED', 'Course name is required', group[0]!, '강좌명'));
-    const parsed = group.map((row) => parsePositiveInteger(row.cells['희망순위']));
-    const values = new Set(parsed.filter((item) => item.kind === 'VALID').map((item) => item.value));
-    const preference = values.size === 1 && parsed.every(({ kind }) => kind === 'VALID')
-      ? [...values][0]!
-      : null;
-    if (preference === null) {
-      issues.push(rowIssue('PREFERENCE_UNRESOLVED', 'Choice preference is missing, invalid, or conflicting', group[0]!, '희망순위'));
-    }
-    return {
-      courseName,
-      preference,
-      sourceRefs: group.map(({ sheet, row }) => ({ sheet, row })),
-    };
-  });
-  const preferenceCounts = new Map<number, number>();
-  for (const { preference } of choices) {
-    if (preference !== null) preferenceCounts.set(preference, (preferenceCounts.get(preference) ?? 0) + 1);
-  }
-  for (const [preference, count] of preferenceCounts) {
-    if (count < 2) continue;
-    for (const choice of choices) {
-      if (choice.preference === preference) choice.preference = null;
-    }
-    issues.push(rowIssue(
-      'PREFERENCE_CONFLICT',
-      `Preference ${preference} is assigned to more than one course`,
-      first,
-      '희망순위',
+  const choices: ApplicationCandidate['choices'] = [];
+  const seenCourses = new Set<string>();
+  for (const [column, value] of Object.entries(first.cells)) {
+    const match = /^(\d+)순위 강좌$/.exec(column);
+    if (!match) continue;
+    const courseName = clean(value);
+    if (!courseName) continue;
+    const key = nameKey(courseName);
+    if (seenCourses.has(key)) issues.push(requiredRowIssue(
+      'DUPLICATE_CHOICE_COURSE', 'Application course choice is duplicated', first, column,
     ));
+    seenCourses.add(key);
+    choices.push({ courseName, preference: Number(match[1]), sourceRefs: [{ sheet: first.sheet, row: first.row }] });
   }
+  if (choices.length > MAX_CHOICES_PER_APPLICATION || choices.some(({ preference }) => (
+    preference === null || !Number.isSafeInteger(preference) || preference < 1 || preference > MAX_CHOICES_PER_APPLICATION
+  ))) issues.push(requiredRowIssue(
+    'APPLICATION_CHOICE_LIMIT', `Applications allow at most ${MAX_CHOICES_PER_APPLICATION} preferences`, first, '희망 강좌',
+  ));
+  if (choices.length === 0) issues.push(requiredRowIssue('CHOICE_REQUIRED', 'At least one course is required', first, '1순위 강좌'));
   return {
     semesterName,
     memberName,
     applicationOrder,
     applicationOrderStatus,
     choices,
-    sourceRowCount: rows.length,
+    sourceRowCount: 1,
     removedCourseNames: [],
   };
 };
@@ -392,13 +366,17 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   let insertCandidates = 0;
   let identicalRows = 0;
   let conflicts = 0;
+  const pending: EnrollmentCandidate[] = [];
   for (const group of groups.values()) {
     if (group.length > 1 || !group[0]!.semesterName || !group[0]!.memberName || !group[0]!.courseName) {
       conflicts += group.length;
       continue;
     }
     const existingCourse = findEnrollmentCourse(data, group[0]!.semesterName, group[0]!.memberName);
-    if (existingCourse === null) insertCandidates += 1;
+    if (existingCourse === null) {
+      insertCandidates += 1;
+      pending.push(group[0]!);
+    }
     else if (nameKey(existingCourse) === nameKey(group[0]!.courseName)) {
       identicalRows += 1;
       continue;
@@ -419,6 +397,17 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
         source: group[0]!.sourceRef,
       });
     }
+  }
+  const cohort = applyBatchCandidate(structuredClone(data), pending, new Date().toISOString(), randomUUID);
+  for (const issue of cohort.issues) {
+    const source = pending[Number(issue.detail.rowNumber) - 1]!.sourceRef;
+    if (issues.some((existing) => existing.code === issue.code && existing.source.row === source.row)) continue;
+    issues.push({
+      ...issue,
+      blockingStages: issue.severity === 'ERROR' ? ['IMPORT_COMMIT'] : [],
+      acknowledgementStages: issue.severity === 'WARNING' ? ['IMPORT_COMMIT'] : [],
+      source,
+    });
   }
   return {
     sourceRowCount: sourceRows.length,
@@ -526,7 +515,7 @@ const validateMetadata = (workbook: import('@excel.js/exceljs').Workbook, kind: 
   if (
     !metadata
     || metadata.getCell('A1').text !== 'templateVersion'
-    || metadata.getCell('B1').text !== '1'
+    || metadata.getCell('B1').text !== TEMPLATE_VERSIONS[kind]
     || metadata.getCell('A2').text !== 'kind'
     || metadata.getCell('B2').text !== kind
   ) throw new WorkbookValidationError([{

@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 
+import { TEMPLATE_VERSIONS } from '../excel/workbooks.ts';
+
 import {
-  EnrollmentAcknowledgementError,
   EnrollmentConflictError,
-  applyEnrollmentImport,
+  applyBatchCandidate,
   digestEnrollmentWarnings,
-  evaluateEnrollmentImport,
 } from './enrollments.ts';
 import {
   type ApplicationCandidate,
@@ -134,7 +134,7 @@ export class ImportCommitService {
           batches(data).push({
             id: batchId,
             kind: preview.kind,
-            templateVersion: '1',
+            templateVersion: TEMPLATE_VERSIONS[preview.kind],
             fileHash: preview.fileHash,
             importedAt: committedAt,
             status: 'APPLIED',
@@ -152,7 +152,6 @@ export class ImportCommitService {
         throw new ImportPreviewStaleError();
       }
       if (error instanceof EnrollmentConflictError) throw new ImportCommitConflictError();
-      if (error instanceof EnrollmentAcknowledgementError) throw new ImportAcknowledgementError();
       throw error;
     }
   }
@@ -266,6 +265,7 @@ const applyEnrollments = (
   id: () => string,
 ) => {
   const counts = { inserted: 0, updated: 0, skipped: 0 };
+  const pending: ImportPreview['enrollments'] = [];
   for (const candidate of preview.enrollments) {
     if (!candidate.semesterName || !candidate.memberName || !candidate.courseName) {
       throw new ImportCommitConflictError('Enrollment names must be resolved before commit');
@@ -278,30 +278,33 @@ const applyEnrollments = (
       }
       throw new ImportCommitConflictError('A member can have only one enrollment per semester');
     }
+    pending.push(candidate);
+  }
+  const { items, issues } = applyBatchCandidate(data, pending, now, id);
+  if (issues.some(({ severity }) => severity === 'ERROR')) throw new EnrollmentConflictError(issues);
+  for (const [index, item] of items.entries()) {
+    const candidate = pending[index]!;
     const informationalCodes = preview.issues.filter((issue) => (
       issue.severity === 'INFO' && issue.source.sheet === candidate.sourceRef.sheet
       && issue.source.row === candidate.sourceRef.row
     )).map(({ code }) => code);
-    const issues = evaluateEnrollmentImport(data, candidate)
-      .filter(({ code }) => !informationalCodes.includes(code));
-    const warnings = issues.filter(({ severity }) => severity === 'WARNING');
+    const rowIssues = issues.filter(({ code, detail }) => (
+      detail.rowNumber === index + 1 && !informationalCodes.includes(code)
+    ));
+    const warnings = rowIssues.filter(({ severity }) => severity === 'WARNING');
     const resolution = enrollmentResolution(resolutions, candidate);
+    const note = typeof resolution?.acknowledgementNote === 'string' ? resolution.acknowledgementNote.trim() : '';
     if (warnings.length > 0 && (
       resolution?.warningDigest !== preview.warningDigest
-      || typeof resolution.acknowledgementNote !== 'string'
-      || !resolution.acknowledgementNote.trim()
+      || !note || note.length > 2000
     )) throw new ImportAcknowledgementError();
-    applyEnrollmentImport(
-      data,
-      candidate,
-      digestEnrollmentWarnings(issues),
-      typeof resolution?.acknowledgementNote === 'string' ? resolution.acknowledgementNote : undefined,
-      now,
-      id,
-      informationalCodes,
-    );
-    counts.inserted += 1;
+    if (warnings.length > 0) {
+      data.enrollments.find(({ id }) => id === item.id)!.exceptionAcknowledgement = {
+        warningDigest: digestEnrollmentWarnings(rowIssues), note, acknowledgedAt: now,
+      };
+    }
   }
+  counts.inserted = items.length;
   return counts;
 };
 

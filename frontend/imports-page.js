@@ -141,6 +141,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       preview.issues.length ? preview.issues : [{ code: 'NO_ISSUES', severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]
     ).map((issue) => {
       const item = document.createElement('li');
+      item.dataset.severity = issue.severity;
       item.textContent = issueText(issue);
       if (issue.severity === 'INFO') {
         item.classList.add('information');

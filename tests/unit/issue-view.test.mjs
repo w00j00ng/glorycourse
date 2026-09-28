@@ -39,7 +39,7 @@ test('shows Excel review problems with their sheet and row instead of internal s
     },
     {
       issue: { code: 'CAPACITY_UNRESOLVED', severity: 'INFO', message: 'Course capacity is unresolved', source: { sheet: '수강이력', row: 2 } },
-      expected: '안내 · 수강이력 시트 2행: 새 개설강좌는 정원 미정으로 등록됩니다.',
+      expected: '안내 · 수강이력 시트 2행: 새 개설강좌의 정원은 이번에 등록하는 학생 수로 설정됩니다.',
     },
     {
       issue: { code: 'SEMESTER_COURSE_CAPACITY_MISSING', severity: 'ERROR', message: 'Course capacity is required', source: { sheet: '개설강좌', row: 3, column: '정원' } },

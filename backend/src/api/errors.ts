@@ -32,6 +32,9 @@ const mapError = (error: unknown): { status: number; code: string; message: stri
   if (error instanceof HttpError) return error;
   if (error instanceof SyntaxError) return { status: 400, code: 'BAD_REQUEST', message: '요청을 읽을 수 없습니다.' };
   const name = error instanceof Error ? error.name : '';
+  if (error instanceof Error && name === 'WorkbookExportValidationError') {
+    return { status: 422, code: 'UNPROCESSABLE', message: error.message };
+  }
   if (name === 'WorkbookValidationError') {
     const limit = errorIssues(error).some((issue) => (
       issue !== null
