@@ -19,7 +19,7 @@ import { issueText } from './issue-view.js';
  *   state: { importPreview: ImportPreview | null },
  *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<unknown>,
- *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
+ *   run: (action: () => Promise<unknown>, success?: string, isCurrent?: () => boolean) => Promise<unknown>,
  *   reviewWarnings: (preview: ImportPreview) => Promise<string | null>,
  *   showMessage: (message: string, isError?: boolean) => void,
  *   loadCatalogs: () => Promise<void>,
@@ -29,16 +29,23 @@ import { issueText } from './issue-view.js';
  */
 export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showMessage,
   loadCatalogs, loadApplications, loadEnrollments }) => {
+  let previewRequest = 0;
+  const invalidatePreview = () => {
+    previewRequest++;
+    state.importPreview = null;
+    byId('import-preview').hidden = true;
+    byId('import-preview-action').hidden = false;
+    byId('commit-import').disabled = true;
+  };
+
   /** @param {ImportPreview['kind']} kind */
   const open = (kind) => {
     const form = byId('import-form');
     form.reset();
     form.elements.kind.value = kind;
-    state.importPreview = null;
+    invalidatePreview();
     byId('import-dialog-title').textContent = kind === 'APPLICATIONS' ? '수강신청 Excel 검토' : '수강이력 Excel 검토';
     byId('import-mode-field').hidden = kind === 'ENROLLMENTS';
-    byId('import-preview').hidden = true;
-    byId('import-preview-action').hidden = false;
     byId('import-dialog').showModal();
   };
 
@@ -130,7 +137,12 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     const form = /** @type {HTMLFormElement & { elements: HTMLFormControlsCollection & { kind: HTMLInputElement } }} */ (event.currentTarget);
     const payload = new FormData(form);
     if (form.elements.kind.value === 'ENROLLMENTS') payload.set('mode', 'MERGE_KEEP_EXISTING');
-    const preview = /** @type {ImportPreview} */ (await run(() => api('/imports/preview', { method: 'POST', body: payload })));
+    const request = ++previewRequest;
+    const preview = /** @type {ImportPreview} */ (await run(
+      () => api('/imports/preview', { method: 'POST', body: payload }), undefined,
+      () => request === previewRequest,
+    ));
+    if (request !== previewRequest) return;
     state.importPreview = preview;
     byId('import-source-count').textContent = String(preview.sourceRowCount);
     byId('import-insert-count').textContent = String(preview.insertCandidates);
@@ -142,16 +154,19 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     ).map((issue) => {
       const item = document.createElement('li');
       item.dataset.severity = issue.severity;
-      item.textContent = issueText(issue);
+      const text = document.createElement('span');
+      text.className = 'import-issue-text';
+      text.textContent = text.title = issueText(issue);
+      item.append(text);
       if (issue.severity === 'INFO') {
         item.classList.add('information');
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'secondary import-issue-dismiss';
         button.textContent = '닫기';
-        button.setAttribute('aria-label', `${issueText(issue)} 닫기`);
+        button.setAttribute('aria-label', `${text.textContent} 닫기`);
         button.addEventListener('click', () => item.remove());
-        item.append(' ', button);
+        item.append(button);
       }
       return item;
     }));
@@ -219,12 +234,14 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
         warningDigest: preview.warningDigest,
         resolutions,
       }),
-    }), 'Excel 자료를 반영했습니다.'));
-    byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
-    byId('commit-import').disabled = true;
+    }), 'Excel 자료를 반영했습니다.', () => state.importPreview === preview));
+    if (state.importPreview === preview) {
+      byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
+      byId('commit-import').disabled = true;
+    }
     await loadCatalogs();
     await Promise.all([loadApplications(), loadEnrollments()]);
   };
 
-  return { open, submit, commit };
+  return { open, submit, commit, invalidatePreview };
 };

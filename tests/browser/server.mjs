@@ -34,7 +34,7 @@ process.on('message', async (message) => {
       const headers = sheet.getRow(1).values.slice(1);
       sheet.getCell('G1').value = '4순위 강좌';
       sheet.getCell('H1').value = '5순위 강좌';
-      sheet.addRow(['양식 학기', '양식 회원', 1, '창세기', null, null, '마태복음', '마가복음']);
+      for (const row of message.rows ?? [['양식 학기', '양식 회원', 1, '창세기', null, null, '마태복음', '마가복음']]) sheet.addRow(row);
       process.send({ type: 'template-completed', semesterName, courseName, capacity, headers,
         bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
       return;

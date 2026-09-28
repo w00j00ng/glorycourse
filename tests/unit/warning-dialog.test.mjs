@@ -51,7 +51,7 @@ test('an administrator sees errors, approves a warning with a reason, or cancels
     warningsEnabled = false;
     const skipped = reviewWarnings(preview);
     assert.equal(dialog.open, false);
-    assert.equal(await skipped, '입력 경고 끄기 설정으로 확인 생략');
+    assert.equal(await skipped, '입력 경고 무시 설정으로 확인 생략');
     assert.equal(await reviewWarnings({ issues: [] }), '');
     assert.equal(await reviewWarnings({ issues: [
       ...preview.issues, { code: 'MEMBER_NAME_REQUIRED', severity: 'ERROR' },

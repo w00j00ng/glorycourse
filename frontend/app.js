@@ -94,25 +94,30 @@ const showMessage = (text, error = false) => {
   if (text && dialog) dialog.querySelector('form').prepend(dialogMessage);
 };
 
-const run = async (action, success) => {
+const run = async (action, success, isCurrent = () => true) => {
   state.busy++;
   byId('shutdown').disabled = true;
   try {
     setStatus('저장 중');
     showMessage('');
     const result = await action();
-    setStatus('저장됨');
-    if (success) showMessage(success);
+    if (isCurrent()) {
+      setStatus('저장됨');
+      if (success) showMessage(success);
+    }
     return result;
   } catch (error) {
-    setStatus('저장 실패');
-    const message = error.code === 'CONFLICT'
-      ? `${error.message} 새로고침 후 다시 검토하세요.`
-      : error.message;
-    showMessage([message, ...(error.issues ?? []).map((issue) => issueText(issue))].join(' · '), true);
+    if (isCurrent()) {
+      setStatus('저장 실패');
+      const message = error.code === 'CONFLICT'
+        ? `${error.message} 새로고침 후 다시 검토하세요.`
+        : error.message;
+      showMessage([message, ...(error.issues ?? []).map((issue) => issueText(issue))].join(' · '), true);
+    }
     throw error;
   } finally {
     state.busy--;
+    if (!state.busy && byId('save-status').textContent === '저장 중') setStatus('저장됨');
     byId('shutdown').disabled = state.busy > 0 || state.stopping;
   }
 };
@@ -177,15 +182,15 @@ const actionsCell = (...actions) => {
 };
 
 const reviewWarnings = createWarningDialog({ byId, showMessage,
-  warningsEnabled: () => byId('input-warnings-enabled').checked });
+  warningsEnabled: () => !byId('input-warnings-ignored').checked });
 
 document.querySelectorAll('[data-input-warnings-toggle]').forEach((toggle) => {
   toggle.addEventListener('change', (event) => {
-    const enabled = event.currentTarget.checked;
+    const ignored = event.currentTarget.checked;
     document.querySelectorAll('[data-input-warnings-toggle]').forEach((input) => {
-      input.checked = input.defaultChecked = enabled;
+      input.checked = input.defaultChecked = ignored;
     });
-    document.documentElement.dataset.inputWarnings = enabled ? 'on' : 'off';
+    document.documentElement.dataset.inputWarnings = ignored ? 'off' : 'on';
   });
 });
 
@@ -310,7 +315,7 @@ const {
   cell, choicesCell, badgeCell, actionsCell,
   loadPaged, recordQuery, loadCatalogs,
 });
-const { open: openImport, submit: submitImport, commit: commitImport } = createImportsPage({
+const { open: openImport, submit: submitImport, commit: commitImport, invalidatePreview: invalidateImportPreview } = createImportsPage({
   state, byId, api, run, reviewWarnings, showMessage, loadCatalogs, loadApplications, loadEnrollments,
 });
 
@@ -432,6 +437,8 @@ byId('add-draft-item').addEventListener('click', () => { void addDraftItem().cat
 byId('preview-finalization').addEventListener('click', () => { void previewFinalization().catch(() => {}); });
 byId('finalize-form').addEventListener('submit', (event) => { void finalizeDraft(event).catch(() => {}); });
 byId('import-form').addEventListener('submit', (event) => { void submitImport(event).catch(() => {}); });
+byId('import-form').elements.file.addEventListener('change', invalidateImportPreview);
+byId('import-form').elements.mode.addEventListener('change', invalidateImportPreview);
 byId('commit-import').addEventListener('click', () => { void commitImport().catch(() => {}); });
 byId('refresh-applications').addEventListener('click', () => { void loadApplications(); });
 byId('refresh-enrollments').addEventListener('click', () => { void loadEnrollments(); });

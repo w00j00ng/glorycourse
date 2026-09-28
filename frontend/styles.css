@@ -152,8 +152,10 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
 .draft-reason-list li + li { margin-top: 5px; }
 .warning-list { padding-left: 20px; color: #784214; }
 .warning-list li + li { margin-top: 8px; }
+#import-issues li { display: flex; align-items: center; gap: 8px; }
+#import-issues .import-issue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #import-issues li.information { color: var(--muted); }
-.import-issue-dismiss { margin-left: 8px; padding: 4px 8px; font-size: 12px; }
+.import-issue-dismiss { flex-shrink: 0; padding: 4px 8px; font-size: 12px; }
 #backup-rows td:last-child { max-width: 320px; overflow-wrap: anywhere; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 #latest-backup { white-space: nowrap; font-size: 24px; }
 .import-state { display: flex; align-items: center; gap: 10px; margin: 24px 0 14px; padding-top: 22px; border-top: 1px solid var(--line); }

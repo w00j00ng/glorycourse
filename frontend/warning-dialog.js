@@ -14,7 +14,7 @@ export const createWarningDialog = ({ byId, showMessage, warningsEnabled = () =>
     }
     const warnings = preview.issues.filter((issue) => issue.severity === 'WARNING');
     if (!warnings.length) return Promise.resolve('');
-    if (!warningsEnabled()) return Promise.resolve('입력 경고 끄기 설정으로 확인 생략');
+    if (!warningsEnabled()) return Promise.resolve('입력 경고 무시 설정으로 확인 생략');
     const dialog = byId('warning-dialog');
     const form = byId('warning-form');
     form.reset();

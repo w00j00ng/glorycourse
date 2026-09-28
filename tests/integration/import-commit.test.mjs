@@ -190,7 +190,7 @@ test('previews cumulative Excel enrollment capacity before requesting acknowledg
   assert.deepEqual(store.read(), before);
   const resolutions = preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
     entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
-    warningDigest: preview.warningDigest, acknowledgementNote: '입력 경고 끄기 설정으로 확인 생략',
+    warningDigest: preview.warningDigest, acknowledgementNote: '입력 경고 무시 설정으로 확인 생략',
   }));
   const receipt = await commits.commit(requestFor(preview, 'acknowledged', resolutions));
   assert.equal(receipt.inserted, 2);
