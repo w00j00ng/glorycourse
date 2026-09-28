@@ -19,7 +19,7 @@ import { issueText } from './issue-view.js';
  *   state: { importPreview: ImportPreview | null },
  *   byId: (id: string) => any,
  *   api: (path: string, options?: RequestInit) => Promise<unknown>,
- *   run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>,
+ *   run: (action: () => Promise<unknown>, success?: string, isCurrent?: () => boolean) => Promise<unknown>,
  *   reviewWarnings: (preview: ImportPreview) => Promise<string | null>,
  *   showMessage: (message: string, isError?: boolean) => void,
  *   loadCatalogs: () => Promise<void>,
@@ -29,16 +29,23 @@ import { issueText } from './issue-view.js';
  */
 export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showMessage,
   loadCatalogs, loadApplications, loadEnrollments }) => {
+  let previewRequest = 0;
+  const invalidatePreview = () => {
+    previewRequest++;
+    state.importPreview = null;
+    byId('import-preview').hidden = true;
+    byId('import-preview-action').hidden = false;
+    byId('commit-import').disabled = true;
+  };
+
   /** @param {ImportPreview['kind']} kind */
   const open = (kind) => {
     const form = byId('import-form');
     form.reset();
     form.elements.kind.value = kind;
-    state.importPreview = null;
+    invalidatePreview();
     byId('import-dialog-title').textContent = kind === 'APPLICATIONS' ? '수강신청 Excel 검토' : '수강이력 Excel 검토';
     byId('import-mode-field').hidden = kind === 'ENROLLMENTS';
-    byId('import-preview').hidden = true;
-    byId('import-preview-action').hidden = false;
     byId('import-dialog').showModal();
   };
 
@@ -130,7 +137,12 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     const form = /** @type {HTMLFormElement & { elements: HTMLFormControlsCollection & { kind: HTMLInputElement } }} */ (event.currentTarget);
     const payload = new FormData(form);
     if (form.elements.kind.value === 'ENROLLMENTS') payload.set('mode', 'MERGE_KEEP_EXISTING');
-    const preview = /** @type {ImportPreview} */ (await run(() => api('/imports/preview', { method: 'POST', body: payload })));
+    const request = ++previewRequest;
+    const preview = /** @type {ImportPreview} */ (await run(
+      () => api('/imports/preview', { method: 'POST', body: payload }), undefined,
+      () => request === previewRequest,
+    ));
+    if (request !== previewRequest) return;
     state.importPreview = preview;
     byId('import-source-count').textContent = String(preview.sourceRowCount);
     byId('import-insert-count').textContent = String(preview.insertCandidates);
@@ -141,16 +153,20 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       preview.issues.length ? preview.issues : [{ code: 'NO_ISSUES', severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]
     ).map((issue) => {
       const item = document.createElement('li');
-      item.textContent = issueText(issue);
+      item.dataset.severity = issue.severity;
+      const text = document.createElement('span');
+      text.className = 'import-issue-text';
+      text.textContent = text.title = issueText(issue);
+      item.append(text);
       if (issue.severity === 'INFO') {
         item.classList.add('information');
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'secondary import-issue-dismiss';
         button.textContent = '닫기';
-        button.setAttribute('aria-label', `${issueText(issue)} 닫기`);
+        button.setAttribute('aria-label', `${text.textContent} 닫기`);
         button.addEventListener('click', () => item.remove());
-        item.append(' ', button);
+        item.append(button);
       }
       return item;
     }));
@@ -166,64 +182,73 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
 
   const commit = async () => {
     const preview = state.importPreview;
-    if (!preview) return;
-    let invalidOrder = '';
-    const note = await reviewWarnings(preview);
-    if (note === null) return;
-    /** @type {Record<string, unknown>[]} */
-    const resolutions = preview.kind === 'ENROLLMENTS' && note
-      ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
-        entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
-        warningDigest: preview.warningDigest, acknowledgementNote: note,
-      }))
-      : [];
-    preview.applications.forEach((candidate, index) => {
-      const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
-      if (action) resolutions.push({
-        entity: 'APPLICATION', action,
-        semesterName: candidate.semesterName, memberName: candidate.memberName,
-      });
-      if (candidate.applicationOrderStatus !== 'NORMAL') {
-        const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
-        if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
-          invalidOrder = candidate.memberName;
-          return;
-        }
-        resolutions.push({
-          entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
-          semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+    const button = byId('commit-import');
+    if (!preview || button.disabled) return;
+    button.disabled = true;
+    let applied = false;
+    try {
+      let invalidOrder = '';
+      const note = await reviewWarnings(preview);
+      if (note === null || state.importPreview !== preview) return;
+      /** @type {Record<string, unknown>[]} */
+      const resolutions = preview.kind === 'ENROLLMENTS'
+        ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+          entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+          warningDigest: preview.warningDigest, acknowledgementNote: note,
+        }))
+        : [];
+      preview.applications.forEach((candidate, index) => {
+        const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
+        if (action) resolutions.push({
+          entity: 'APPLICATION', action,
+          semesterName: candidate.semesterName, memberName: candidate.memberName,
         });
-      }
-    });
-    if (invalidOrder) {
-      showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
-      return;
-    }
-    preview.contextChanges.forEach((change, index) => {
-      if (change.status !== 'EXISTING_CONFLICT') return;
-      resolutions.push({
-        entity: change.entity,
-        action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
-        field: change.field,
-        semesterName: change.semesterName,
-        ...(change.courseName ? { courseName: change.courseName } : {}),
+        if (candidate.applicationOrderStatus !== 'NORMAL') {
+          const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
+          if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
+            invalidOrder = candidate.memberName;
+            return;
+          }
+          resolutions.push({
+            entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
+            semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+          });
+        }
       });
-    });
-    const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${preview.previewId}/commit`, {
-      method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({
-        storeRevision: preview.storeRevision,
-        storeEpoch: preview.storeEpoch,
-        warningDigest: preview.warningDigest,
-        resolutions,
-      }),
-    }), 'Excel 자료를 반영했습니다.'));
-    byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
-    byId('commit-import').disabled = true;
-    await loadCatalogs();
-    await Promise.all([loadApplications(), loadEnrollments()]);
+      if (invalidOrder) {
+        showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
+        return;
+      }
+      preview.contextChanges.forEach((change, index) => {
+        if (change.status !== 'EXISTING_CONFLICT') return;
+        resolutions.push({
+          entity: change.entity,
+          action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
+          field: change.field,
+          semesterName: change.semesterName,
+          ...(change.courseName ? { courseName: change.courseName } : {}),
+        });
+      });
+      const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${preview.previewId}/commit`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({
+          storeRevision: preview.storeRevision,
+          storeEpoch: preview.storeEpoch,
+          warningDigest: preview.warningDigest,
+          resolutions,
+        }),
+      }), 'Excel 자료를 반영했습니다.', () => state.importPreview === preview));
+      applied = true;
+      if (state.importPreview === preview) {
+        byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
+      }
+      await loadCatalogs();
+      await Promise.all([loadApplications(), loadEnrollments()]);
+    } finally {
+      if (state.importPreview === preview) button.disabled = applied;
+    }
   };
 
-  return { open, submit, commit };
+  return { open, submit, commit, invalidatePreview };
 };

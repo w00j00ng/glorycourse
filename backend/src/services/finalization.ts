@@ -119,7 +119,7 @@ type FinalizeInput = {
   preparedActionToken: string;
   expectedDraftRevision: number;
   acknowledgedWarningDigest: string;
-  acknowledgementNote: string;
+  acknowledgementNote?: string;
 };
 type Dependencies = {
   id: () => string;
@@ -154,7 +154,7 @@ export class FinalizationConflictError extends Error {
 
 export class FinalizationAcknowledgementError extends Error {
   constructor() {
-    super('Finalization warnings require their exact digest and an acknowledgement note');
+    super('Finalization warnings require their exact digest and an optional note of at most 2000 characters');
     this.name = 'FinalizationAcknowledgementError';
   }
 }
@@ -256,9 +256,10 @@ export class FinalizationService {
         const warnings = evaluation.issues.filter((issue): issue is FinalizationIssue & { severity: 'WARNING' } => (
           issue.severity === 'WARNING'
         ));
-        const acknowledgement = warnings.length === 0 ? null : {
+        const note = input.acknowledgementNote?.trim() ?? '';
+        const acknowledgement = warnings.length === 0 && !note ? null : {
           warningDigest: payload.warningDigest,
-          note: input.acknowledgementNote.trim(),
+          note,
           acknowledgedAt: finalizedAt,
         };
         const inserted = evaluation.records.map((record) => ({
@@ -516,11 +517,9 @@ const validateApproval = (
 ): void => {
   const errors = issues.filter(({ severity }) => severity === 'ERROR');
   if (errors.length > 0) throw new FinalizationConflictError(errors);
-  const note = input.acknowledgementNote.trim();
   if (
     input.acknowledgedWarningDigest !== warningDigest
-    || note.length < 1
-    || note.length > 2000
+    || (input.acknowledgementNote?.length ?? 0) > 2000
   ) throw new FinalizationAcknowledgementError();
 };
 
@@ -531,11 +530,13 @@ const validateFinalizeInput = (draftId: string, input: FinalizeInput): void => {
   for (const [name, value] of [
     ['preparedActionToken', input.preparedActionToken],
     ['acknowledgedWarningDigest', input.acknowledgedWarningDigest],
-    ['acknowledgementNote', input.acknowledgementNote],
   ] as const) {
     if (typeof value !== 'string' || value.length < 1) {
       throw new FinalizationValidationError(`${name} is required`);
     }
+  }
+  if (input.acknowledgementNote !== undefined && typeof input.acknowledgementNote !== 'string') {
+    throw new FinalizationValidationError('acknowledgementNote must be a string');
   }
 };
 

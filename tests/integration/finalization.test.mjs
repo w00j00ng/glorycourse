@@ -11,6 +11,7 @@ import {
   FinalizationIdempotencyConflictError,
   FinalizationService,
   FinalizationStaleError,
+  FinalizationValidationError,
 } from '../../backend/src/services/finalization.ts';
 import {
   Store,
@@ -126,6 +127,32 @@ test('requires the exact warning digest and rejects a changed preview without pa
   assert.equal(committed.enrollments.at(-1).exceptionAcknowledgement.note, '표시된 경고와 최종 선택을 확인함');
   assert.equal(committed.allocationDrafts.length, 0);
   assert.deepEqual(committed.finalizationReceipts[0].receipt, receipt);
+});
+
+test('finalizes with optional notes and preserves provided notes even without warnings', async () => {
+  for (const warned of [false, true]) {
+    for (const [note, expected] of [[undefined, ''], ['', ''], ['  ', ''], ['  배정 검토\n추가 승인  ', '배정 검토\n추가 승인']]) {
+      const data = fixture();
+      const store = await Store.open(new MemoryAdapter(data), data);
+      const drafts = draftService(store);
+      const created = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+      if (warned) await store.write({}, (candidate) => { candidate.semesterCourses[0].capacity = 0; });
+      const service = finalizationService(store);
+      const preview = service.preview(created.draft.id, { expectedDraftRevision: 0 });
+      assert.equal(preview.issues.some(({ severity }) => severity === 'WARNING'), warned);
+      const { acknowledgementNote, ...request } = finalizeRequest(preview, 'optional-note');
+      const before = store.read();
+      for (const invalid of [123, null, 'x'.repeat(2001)]) {
+        await assert.rejects(service.finalize(created.draft.id, { ...request, acknowledgementNote: invalid }),
+          typeof invalid === 'string' ? FinalizationAcknowledgementError : FinalizationValidationError);
+        assert.deepEqual(store.read(), before);
+      }
+      const receipt = await service.finalize(created.draft.id, { ...request,
+        ...(note === undefined ? {} : { acknowledgementNote: note }) });
+      assert.equal(receipt.createdCount, 1);
+      assert.equal(store.read().enrollments[0].exceptionAcknowledgement?.note ?? '', expected);
+    }
+  }
 });
 
 test('marks a downloaded enrollment report current until the stored data changes', async () => {

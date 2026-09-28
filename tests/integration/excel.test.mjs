@@ -11,6 +11,7 @@ import {
   WorkbookValidationError,
   createImportTemplate,
   exportApplicationRows,
+  exportRawRows,
 } from '../../backend/src/excel/workbooks.ts';
 import { ApplicationService } from '../../backend/src/services/applications.ts';
 import { ImportPreviewService } from '../../backend/src/services/import-preview.ts';
@@ -45,6 +46,10 @@ const workbookWithRows = async (kind, rows) => {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await createImportTemplate(kind));
   const sheet = workbook.getWorksheet(kind === 'APPLICATIONS' ? '수강신청' : '수강이력');
+  if (kind === 'APPLICATIONS') {
+    if (rows.some((row) => row.length > 6)) sheet.getCell('G1').value = '4순위 강좌';
+    if (rows.some((row) => row.length > 7)) sheet.getCell('H1').value = '5순위 강좌';
+  }
   for (const row of rows) sheet.addRow(row);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
@@ -62,9 +67,9 @@ test('creates name-based templates and exports formula-looking names as text', a
 
   assert.deepEqual(template.worksheets.map(({ name }) => name), ['메타', '학기', '개설강좌', '수강신청']);
   assert.deepEqual(template.getWorksheet('수강신청').getRow(1).values.slice(1), [
-    '학기명', '회원명', '신청순서', '강좌명', '희망순위',
+    '학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌',
   ]);
-  assert.equal(template.getWorksheet('메타').getCell('B1').text, '1');
+  assert.equal(template.getWorksheet('메타').getCell('B1').text, '2');
   assert.equal(template.getWorksheet('메타').getCell('B2').text, 'APPLICATIONS');
   assert.deepEqual(template.getWorksheet('학기').getRow(2).values.slice(1), ['2027 봄', 3]);
   assert.deepEqual(template.getWorksheet('개설강좌').getRow(2).values.slice(1), ['2027 봄', '발성', 12]);
@@ -85,51 +90,177 @@ test('creates name-based templates and exports formula-looking names as text', a
   assert.equal(exported.getWorksheet('수강신청').getCell('D2').formula, undefined);
 });
 
+test('exports one row per semester and member with course columns in preference order', async () => {
+  const request = [
+    { semesterName: '2026 봄', memberName: '홍길동', applicationOrder: 1, courseName: '심화', preference: 5 },
+    { semesterName: '2026 봄', memberName: '홍길동', applicationOrder: 1, courseName: '기초', preference: 1 },
+    { semesterName: '2026 봄', memberName: '김은혜', applicationOrder: 2, courseName: '합창', preference: 1 },
+    { semesterName: '2026 가을', memberName: '홍길동', applicationOrder: 1, courseName: '합창', preference: 3 },
+  ];
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await exportApplicationRows(request));
+  const sheet = workbook.getWorksheet('수강신청');
+  const expected = [
+    ['2026 봄', '홍길동', 1, '기초', null, null, null, '심화'],
+    ['2026 봄', '김은혜', 2, '합창', null, null, null, null],
+    ['2026 가을', '홍길동', 1, null, null, '합창', null, null],
+  ];
+  assert.equal(sheet.rowCount, 4);
+  assert.deepEqual(expected.map((_, index) => Array.from({ length: 8 }, (_, column) => (
+    sheet.getRow(index + 2).getCell(column + 1).value
+  ))), expected);
+});
+
+test('refuses to export unresolved or out-of-range preferences instead of dropping choices', async () => {
+  const request = { semesterName: '2026 봄', memberName: '홍길동', applicationOrder: 1, courseName: '기초' };
+  for (const preference of [null, 0, 6]) {
+    await assert.rejects(exportApplicationRows([{ ...request, preference }]), WorkbookValidationError);
+  }
+  await assert.rejects(exportApplicationRows([
+    { ...request, preference: 1 }, { ...request, courseName: '심화', preference: 1 },
+  ]), WorkbookValidationError);
+  await assert.rejects(exportRawRows('APPLICATIONS', [{ sheet: '수강신청', row: 2, cells: {
+    학기명: '2026 봄', 회원명: '홍길동', 신청순서: '1', 강좌명: '기초', 희망순위: '1',
+  } }]), WorkbookValidationError);
+});
+
+test('previews student rows after adding fourth and fifth columns, preserving optional preference gaps', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const service = serviceFor(store);
+  const request = [
+    ['2026 봄', '한 강좌', 1, '기초'],
+    ['2026 봄', '세 강좌', 2, '기초', '합창', '심화'],
+    ['2026 봄', '다섯 강좌', 3, '기초', '합창', '심화', '발성', '연기'],
+    ['2026 봄', '빈 순위', 4, '기초', null, null, '발성', '연기'],
+  ];
+  const expected = [
+    [['기초', 1]],
+    [['기초', 1], ['합창', 2], ['심화', 3]],
+    [['기초', 1], ['합창', 2], ['심화', 3], ['발성', 4], ['연기', 5]],
+    [['기초', 1], ['발성', 4], ['연기', 5]],
+  ];
+  const before = store.read();
+  const preview = await service.preview({ filename: 'wide.xlsx', kind: 'APPLICATIONS',
+    bytes: await workbookWithRows('APPLICATIONS', request) });
+  assert.equal(preview.sourceRowCount, 4);
+  assert.deepEqual(preview.applications.map(({ sourceRowCount }) => sourceRowCount), [1, 1, 1, 1]);
+  assert.deepEqual(preview.applications.map(({ choices }) => choices.map(({ courseName, preference }) => (
+    [courseName, preference]
+  ))), expected);
+  assert.ok(!preview.issues.some(({ code }) => code.startsWith('PREFERENCE_')));
+  assert.deepEqual(store.read(), before);
+});
+
+test('reads and preserves a user-added fourth column without requiring a fifth column', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const service = serviceFor(store);
+  const request = [['2026 봄', '홍길동', 1, '기초', null, null, '심화']];
+  const expected = [['기초', 1], ['심화', 4]];
+  const preview = await service.preview({ filename: 'fourth.xlsx', kind: 'APPLICATIONS',
+    bytes: await workbookWithRows('APPLICATIONS', request) });
+  assert.deepEqual(preview.applications[0].choices.map(({ courseName, preference }) => [courseName, preference]), expected);
+  assert.equal(Object.keys(preview.rawRows[0].cells).length, 7);
+  const staged = await service.stage(preview.previewId);
+  const bytes = await service.exportStagedOriginal(staged.id);
+  const exported = new ExcelJS.Workbook();
+  await exported.xlsx.load(bytes);
+  assert.deepEqual(exported.getWorksheet('수강신청').getRow(1).values.slice(1), [
+    '학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌',
+  ]);
+  const roundTrip = await service.preview({ filename: 'original.xlsx', bytes, kind: 'APPLICATIONS' });
+  assert.deepEqual(roundTrip.rawRows, preview.rawRows);
+});
+
+test('the staged-row parser reads all rank columns and blocks ranks beyond the configured limit', async () => {
+  const initial = emptyStore();
+  const request = {
+    학기명: '2026 봄', 회원명: '홍길동', 신청순서: '1',
+    '1순위 강좌': '기초', '2순위 강좌': '심화', '3순위 강좌': '합창',
+    '4순위 강좌': '발성', '5순위 강좌': '연기', '6순위 강좌': '추가',
+  };
+  initial.importBatches.push({ id: 'staged', kind: 'APPLICATIONS', templateVersion: '2', fileHash: 'hash',
+    importedAt: '2026-09-22T00:00:00.000Z', status: 'STAGED',
+    rawRows: [{ sheet: '수강신청', row: 2, cells: request }], resolutions: [], receipt: null });
+  const store = await Store.open(new MemoryAdapter(initial), emptyStore());
+  const service = serviceFor(store);
+  const before = store.read();
+  const preview = service.repreviewStaged('staged');
+  assert.deepEqual(preview.applications[0].choices.map(({ courseName, preference }) => [courseName, preference]), [
+    ['기초', 1], ['심화', 2], ['합창', 3], ['발성', 4], ['연기', 5], ['추가', 6],
+  ]);
+  assert.ok(preview.issues.some(({ code, severity, blockingStages }) => (
+    code === 'APPLICATION_CHOICE_LIMIT' && severity === 'ERROR' && blockingStages.includes('IMPORT_COMMIT')
+  )));
+  await assert.rejects(service.exportStagedOriginal('staged'), WorkbookValidationError);
+  assert.deepEqual(store.read(), before);
+});
+
+test('rejects the old application layout and any sixth preference column', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const service = serviceFor(store);
+  for (const [headers, row] of [
+    [['학기명', '회원명', '신청순서', '강좌명', '희망순위'], ['2026 봄', '홍길동', 1, '기초', 1]],
+    [['학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌', '5순위 강좌', '6순위 강좌'],
+      ['2026 봄', '홍길동', 1, '기초', '합창', '심화', '발성', '연기', '추가']],
+  ]) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await createImportTemplate('APPLICATIONS'));
+    workbook.getWorksheet('수강신청').getRow(1).values = headers;
+    workbook.getWorksheet('수강신청').addRow(row);
+    await assert.rejects(service.preview({ filename: 'invalid.xlsx', kind: 'APPLICATIONS',
+      bytes: Buffer.from(await workbook.xlsx.writeBuffer()) }), WorkbookValidationError);
+  }
+  assert.deepEqual(store.read(), emptyStore());
+});
+
 test('preserves raw order cells and reports application quality without mutating the store', async () => {
   const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('APPLICATIONS', [
-    ['2026 봄', '홍길동', '15', '기초', '1'],
-    ['2026 봄', '홍길동', '16', '심화', '2'],
-    ['2026 봄', '홍길동', '15', '기초', '1'],
-    ['2026 봄', '김빈칸', '', '기초', '1'],
-    ['2026 봄', '김문자', 'abc', '기초', '1'],
-    ['2026 봄', '김영', '0015', '기초', '1'],
+    ['2026 봄', '홍길동', '15', '기초', '심화'],
+    ['2026 봄', '김빈칸', '', '기초'],
+    ['2026 봄', '김문자', 'abc', '기초'],
+    ['2026 봄', '김영', '0015', '기초'],
   ]);
   const before = store.read();
 
   const preview = await service.preview({ filename: 'applications.xlsx', bytes, kind: 'APPLICATIONS' });
 
   assert.deepEqual(store.read(), before);
-  assert.equal(preview.sourceRowCount, 6);
+  assert.equal(preview.sourceRowCount, 4);
   assert.equal(preview.rawRows.at(-1).cells['신청순서'], '0015');
   assert.deepEqual(
     preview.applications.map(({ memberName, applicationOrder, applicationOrderStatus }) => ({
       memberName, applicationOrder, applicationOrderStatus,
     })),
     [
-      { memberName: '홍길동', applicationOrder: null, applicationOrderStatus: 'CONFLICT' },
+      { memberName: '홍길동', applicationOrder: 15, applicationOrderStatus: 'NORMAL' },
       { memberName: '김빈칸', applicationOrder: null, applicationOrderStatus: 'MISSING' },
       { memberName: '김문자', applicationOrder: null, applicationOrderStatus: 'INVALID' },
       { memberName: '김영', applicationOrder: 15, applicationOrderStatus: 'NORMAL' },
     ],
   );
-  assert.deepEqual(preview.applications[0].choices[0].sourceRefs.map(({ row }) => row), [2, 4]);
+  assert.deepEqual(preview.applications[0].choices.map(({ sourceRefs }) => sourceRefs), [
+    [{ sheet: '수강신청', row: 2 }], [{ sheet: '수강신청', row: 2 }],
+  ]);
 });
 
-test('keeps duplicate preference source values but marks the choices unresolved', async () => {
+test('reports repeated course columns and repeated student rows as blocking errors', async () => {
   const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('APPLICATIONS', [
-    ['2026 봄', '홍길동', '15', '기초', '1'],
-    ['2026 봄', '홍길동', '15', '심화', '1'],
+    ['2026 봄', '홍길동', '15', '기초', ' 기초 '],
+    ['2026 봄', ' 홍길동 ', '15', '심화'],
   ]);
 
   const preview = await service.preview({ filename: 'duplicate-preference.xlsx', bytes, kind: 'APPLICATIONS' });
 
-  assert.deepEqual(preview.applications[0].choices.map(({ preference }) => preference), [null, null]);
-  assert.ok(preview.issues.some(({ code }) => code === 'PREFERENCE_CONFLICT'));
-  assert.equal(preview.conflicts, 1);
+  assert.deepEqual(preview.applications[0].choices.map(({ preference }) => preference), [1, 2]);
+  for (const expected of ['DUPLICATE_CHOICE_COURSE', 'DUPLICATE_APPLICATION']) {
+    assert.ok(preview.issues.some(({ code, severity, blockingStages }) => (
+      code === expected && severity === 'ERROR' && blockingStages.includes('IMPORT_COMMIT')
+    )));
+  }
 });
 
 test('distinguishes an identical application row from a conflicting current record', async () => {
@@ -149,12 +280,12 @@ test('distinguishes an identical application row from a conflicting current reco
 
   const identical = await service.preview({
     filename: 'same.xlsx',
-    bytes: await workbookWithRows('APPLICATIONS', [['2026 봄', '홍길동', '0015', '기초', '1']]),
+    bytes: await workbookWithRows('APPLICATIONS', [['2026 봄', '홍길동', '0015', '기초']]),
     kind: 'APPLICATIONS',
   });
   const conflicting = await service.preview({
     filename: 'changed.xlsx',
-    bytes: await workbookWithRows('APPLICATIONS', [['2026 봄', '홍길동', '16', '기초', '1']]),
+    bytes: await workbookWithRows('APPLICATIONS', [['2026 봄', '홍길동', '16', '기초']]),
     kind: 'APPLICATIONS',
   });
 
@@ -215,12 +346,13 @@ test('stages only raw rows, survives restart, and re-previews an original export
   const store = await openStore(dataFile, emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('APPLICATIONS', [
-    ['2026 봄', '홍길동', '0015', '기초', '1'],
+    ['2026 봄', '홍길동', '0015', '기초', null, null, null, '심화'],
   ]);
 
   const preview = await service.preview({ filename: 'applications.xlsx', bytes, kind: 'APPLICATIONS' });
   assert.equal(store.read().importBatches.length, 0);
   const staged = await service.stage(preview.previewId);
+  assert.equal(staged.templateVersion, '2');
   assert.equal(store.read().applications.length, 0);
   assert.equal(store.read().members.length, 0);
 

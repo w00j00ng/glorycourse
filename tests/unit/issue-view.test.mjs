@@ -8,7 +8,7 @@ test('shows allocation and enrollment problems in Korean with the affected perso
     {
       issue: { code: 'CAPACITY_EXCEEDED', severity: 'WARNING', message: 'Course capacity would be exceeded' },
       context: { memberName: '김은혜', courseName: '창세기' },
-      expected: '주의 · 김은혜 · 창세기: 강좌 정원을 초과합니다. 인원을 조정하거나, 그대로 진행하려면 사유를 입력하세요.',
+      expected: '주의 · 김은혜 · 창세기: 강좌 정원을 초과합니다. 수강인원과 정원을 확인하세요.',
     },
     {
       issue: { code: 'SAME_SEMESTER_ENROLLMENT', severity: 'ERROR', message: 'A member can have only one enrollment per semester' },
@@ -17,7 +17,7 @@ test('shows allocation and enrollment problems in Korean with the affected perso
     },
     {
       issue: { code: 'RETAKE', severity: 'WARNING', message: 'Member has completed this course in an earlier semester', detail: { rowNumber: 2 } },
-      expected: '주의 · 2행: 이전 학기에 수강한 강좌입니다. 다시 등록하려면 사유를 입력하세요.',
+      expected: '주의 · 2행: 이전 학기에 수강한 강좌입니다. 수강이력을 확인하세요.',
     },
   ];
   for (const { issue, context, expected } of cases) assert.equal(issueText(issue, context), expected);
@@ -39,7 +39,7 @@ test('shows Excel review problems with their sheet and row instead of internal s
     },
     {
       issue: { code: 'CAPACITY_UNRESOLVED', severity: 'INFO', message: 'Course capacity is unresolved', source: { sheet: '수강이력', row: 2 } },
-      expected: '안내 · 수강이력 시트 2행: 새 개설강좌는 정원 미정으로 등록됩니다.',
+      expected: '안내 · 수강이력 시트 2행: 새 개설강좌의 정원은 이번에 등록하는 학생 수로 설정됩니다.',
     },
     {
       issue: { code: 'SEMESTER_COURSE_CAPACITY_MISSING', severity: 'ERROR', message: 'Course capacity is required', source: { sheet: '개설강좌', row: 3, column: '정원' } },

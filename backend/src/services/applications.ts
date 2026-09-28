@@ -1,3 +1,4 @@
+import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
 import type {
   ApplicationChoiceRecord as Choice,
   ApplicationRecord as Application,
@@ -468,14 +469,15 @@ const validateApplicationInput = (input: ApplicationInput): ApplicationInput => 
   const semesterName = cleanName(input.semesterName, 'semesterName');
   const memberName = cleanName(input.memberName, 'memberName');
   requireSafeInteger(input.applicationOrder, 'applicationOrder');
-  if (!Array.isArray(input.choices) || input.choices.length < 1 || input.choices.length > 100) {
-    throw new ApplicationValidationError('choices must contain between 1 and 100 items');
+  if (!Array.isArray(input.choices) || input.choices.length < 1 || input.choices.length > MAX_CHOICES_PER_APPLICATION) {
+    throw new ApplicationValidationError(`희망 강좌는 1개 이상, 최대 ${MAX_CHOICES_PER_APPLICATION}개까지 입력할 수 있습니다.`);
   }
   const cleanChoices = input.choices.map((choice) => {
     if (!choice || typeof choice !== 'object') throw new ApplicationValidationError('희망 강좌가 올바르지 않습니다.');
     const { courseName, preference } = choice;
     const name = cleanName(courseName, 'courseName');
     requireSafeInteger(preference, 'preference');
+    if (preference > MAX_CHOICES_PER_APPLICATION) throw new ApplicationValidationError(`희망순위는 1~${MAX_CHOICES_PER_APPLICATION} 사이로 입력하세요.`);
     return { courseName: name, preference };
   });
   ensureUnique(cleanChoices.map(({ courseName }) => nameKey(courseName)), 'courseName');

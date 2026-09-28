@@ -32,6 +32,9 @@ const mapError = (error: unknown): { status: number; code: string; message: stri
   if (error instanceof HttpError) return error;
   if (error instanceof SyntaxError) return { status: 400, code: 'BAD_REQUEST', message: '요청을 읽을 수 없습니다.' };
   const name = error instanceof Error ? error.name : '';
+  if (error instanceof Error && name === 'WorkbookExportValidationError') {
+    return { status: 422, code: 'UNPROCESSABLE', message: error.message };
+  }
   if (name === 'WorkbookValidationError') {
     const limit = errorIssues(error).some((issue) => (
       issue !== null
@@ -69,8 +72,11 @@ const mapError = (error: unknown): { status: number; code: string; message: stri
     || name.includes('IdempotencyConflict')
     || name.includes('ReadOnly')
   ) return { status: 409, code: 'CONFLICT', message: '현재 상태와 요청이 충돌합니다.' };
-  if (name.endsWith('AcknowledgementError')) {
+  if (name === 'RecoveryAcknowledgementError') {
     return { status: 422, code: 'UNPROCESSABLE', message: '확인 메모를 입력하고 검토한 경고 내용을 다시 확인하세요.' };
+  }
+  if (name.endsWith('AcknowledgementError')) {
+    return { status: 422, code: 'UNPROCESSABLE', message: '검토한 경고 내용을 다시 확인하세요. 관리자 메모는 선택 입력이며 2000자까지 입력할 수 있습니다.' };
   }
   if (
     name.includes('Validation')

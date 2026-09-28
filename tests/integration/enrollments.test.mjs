@@ -80,6 +80,20 @@ const commitCreate = async (enrollments, input, acknowledgementNote) => {
   });
 };
 
+test('sets capacity on direct creation or a move to a new offering without resizing an existing offering', async () => {
+  const { enrollments, store } = await openServices();
+  const request = { semesterName: '2024 봄', memberName: '홍길동', courseName: '창세기' };
+  const first = await commitCreate(enrollments, request, '과거 이력 등록');
+  assert.equal(store.read().semesterCourses[0].capacity, 1);
+  await commitCreate(enrollments, { ...request, memberName: '김은혜' }, '추가 이력 등록');
+  assert.equal(store.read().semesterCourses[0].capacity, 1);
+  const preview = enrollments.preview({ ...request, action: 'UPDATE', enrollmentId: first.id,
+    expectedRevision: first.revision, courseName: '마태복음' });
+  await enrollments.execute({ preparedActionToken: preview.preparedActionToken,
+    acknowledgedWarningDigest: preview.warningDigest, acknowledgementNote: '강좌 수정' });
+  assert.deepEqual(store.read().semesterCourses.map(({ capacity }) => capacity), [1, 1]);
+});
+
 test('previews a retake without mutation and records an explicitly acknowledged warning', async () => {
   const { applications, enrollments, store } = await openServices();
   await createSemester(applications, {
@@ -105,7 +119,7 @@ test('previews a retake without mutation and records an explicitly acknowledged 
   assert.deepEqual(store.read(), beforePreview);
   await assert.rejects(enrollments.execute({
     preparedActionToken: preview.preparedActionToken,
-    acknowledgedWarningDigest: preview.warningDigest,
+    acknowledgedWarningDigest: 'different-warning-digest',
   }), EnrollmentAcknowledgementError);
   const created = await enrollments.execute({
     preparedActionToken: preview.preparedActionToken,
@@ -117,6 +131,26 @@ test('previews a retake without mutation and records an explicitly acknowledged 
     note: '재수강을 확인함',
     acknowledgedAt: '2026-09-22T00:00:00.000Z',
   });
+});
+
+test('accepts optional enrollment notes and keeps the exact warning confirmation', async () => {
+  for (const [note, expected] of [[undefined, ''], ['', ''], ['  \n  ', ''], ['  정원 초과 확인\n추가 수강 허용  ', '정원 초과 확인\n추가 수강 허용']]) {
+    const { enrollments, store } = await openServices();
+    const names = { semesterName: '메모 학기', courseName: '기초' };
+    await commitCreate(enrollments, { ...names, memberName: '첫 회원' });
+    const preview = enrollments.preview({ action: 'CREATE', ...names, memberName: '추가 회원' });
+    assert.ok(preview.issues.some(({ code }) => code === 'CAPACITY_EXCEEDED'));
+    const request = { preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest };
+    const before = store.read();
+    for (const invalid of [123, null, 'x'.repeat(2001)]) {
+      await assert.rejects(enrollments.execute({ ...request, acknowledgementNote: invalid }), EnrollmentAcknowledgementError);
+      assert.deepEqual(store.read(), before);
+    }
+    const saved = await enrollments.execute({ ...request, ...(note === undefined ? {} : { acknowledgementNote: note }) });
+    assert.equal(saved.exceptionAcknowledgement.note, expected);
+    assert.equal(enrollments.get(saved.id).exceptionAcknowledgement.note, expected);
+    assert.equal(enrollments.list({ memberName: '추가 회원' })[0].exceptionAcknowledgement.note, expected);
+  }
 });
 
 test('never allows a second enrollment for the same member and semester', async () => {

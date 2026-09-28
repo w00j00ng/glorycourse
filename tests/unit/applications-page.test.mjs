@@ -242,3 +242,16 @@ test('adding application rows carries the semester forward and numbers each requ
   entries.children[1].removeButton.click();
   assert.equal(entries.children.length, 1);
 });
+
+test('a student can add five choices while keeping existing gaps and cannot add a sixth', () => {
+  const { nodes, entries } = manualApplicationNodes();
+  const messages = [];
+  const page = createApplicationsPage({ byId: (id) => nodes[id], showMessage: (...message) => messages.push(message) });
+  const request = { choices: [{ courseName: '기초', preference: 1 }, { courseName: '심화', preference: 5 }] };
+  page.addApplicationEntry(request);
+  const entry = entries.children[0];
+  for (let index = 0; index < 4; index += 1) entry.querySelector('.add-choice').click();
+  assert.deepEqual(entry.choices.children.map(({ fields }) => fields.preference.value), [1, 5, 2, 3, 4]);
+  assert.equal(entry.choices.children.length, 5);
+  assert.deepEqual(messages, [['희망 강좌는 최대 5개까지 입력할 수 있습니다.', true]]);
+});

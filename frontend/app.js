@@ -32,6 +32,20 @@ const state = {
 };
 const byId = (id) => document.getElementById(id);
 
+const updateButtonHelp = (button) => {
+  button.title = byId('button-help-enabled').checked ? button.dataset.buttonHelp : '';
+};
+byId('button-help-enabled').addEventListener('change', () => {
+  document.querySelectorAll('button[data-button-help]').forEach(updateButtonHelp);
+});
+document.querySelectorAll('button[data-button-help]').forEach(updateButtonHelp);
+for (const eventName of ['mouseover', 'focusin']) {
+  document.addEventListener(eventName, (event) => {
+    const button = event.target.closest('button[data-button-help]');
+    if (button) updateButtonHelp(button);
+  });
+}
+
 const openHelp = (key) => {
   const help = PAGE_HELP[key];
   byId('help-title').textContent = help.title;
@@ -71,7 +85,7 @@ const download = async (path, filename, options = {}) => {
   });
   if (!response.ok) {
     const data = await response.json();
-    throw new Error(data.message || '파일을 내려받지 못했습니다.');
+    throw Object.assign(new Error(data.message || '파일을 내려받지 못했습니다.'), data);
   }
   const link = document.createElement('a');
   link.href = URL.createObjectURL(await response.blob());
@@ -94,25 +108,30 @@ const showMessage = (text, error = false) => {
   if (text && dialog) dialog.querySelector('form').prepend(dialogMessage);
 };
 
-const run = async (action, success) => {
+const run = async (action, success, isCurrent = () => true) => {
   state.busy++;
   byId('shutdown').disabled = true;
   try {
     setStatus('저장 중');
     showMessage('');
     const result = await action();
-    setStatus('저장됨');
-    if (success) showMessage(success);
+    if (isCurrent()) {
+      setStatus('저장됨');
+      if (success) showMessage(success);
+    }
     return result;
   } catch (error) {
-    setStatus('저장 실패');
-    const message = error.code === 'CONFLICT'
-      ? `${error.message} 새로고침 후 다시 검토하세요.`
-      : error.message;
-    showMessage([message, ...(error.issues ?? []).map((issue) => issueText(issue))].join(' · '), true);
+    if (isCurrent()) {
+      setStatus('저장 실패');
+      const message = error.code === 'CONFLICT'
+        ? `${error.message} 새로고침 후 다시 검토하세요.`
+        : error.message;
+      showMessage([message, ...(error.issues ?? []).map((issue) => issueText(issue))].join(' · '), true);
+    }
     throw error;
   } finally {
     state.busy--;
+    if (!state.busy && byId('save-status').textContent === '저장 중') setStatus('저장됨');
     byId('shutdown').disabled = state.busy > 0 || state.stopping;
   }
 };
@@ -160,6 +179,17 @@ const badgeCell = (text, warning) => {
   return td;
 };
 
+const actionButtonHelp = {
+  수정: '선택한 항목을 수정할 입력 화면을 엽니다.',
+  삭제: '선택한 항목을 확인 후 삭제합니다.',
+  검토: '배정 결과를 검토하고 최종 결정을 수정합니다.',
+  선택됨: '학기 선택을 해제합니다.',
+  위로: '학기를 목록에서 한 칸 위로 이동합니다.',
+  아래로: '학기를 목록에서 한 칸 아래로 이동합니다.',
+  '추가 취소': '아직 저장하지 않은 강좌를 편집 목록에서 제거합니다.',
+  저장: '이 회원의 최종 배정 결정을 저장합니다.',
+  '자동 복원': '이 회원의 최종 결정을 처음 자동 배정 결과로 되돌립니다.',
+};
 const actionsCell = (...actions) => {
   const td = document.createElement('td');
   const group = document.createElement('div');
@@ -168,6 +198,7 @@ const actionsCell = (...actions) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
+    button.dataset.buttonHelp = actionButtonHelp[label];
     if (className) button.className = className;
     button.addEventListener('click', () => { void Promise.resolve(action()).catch(() => {}); });
     group.append(button);
@@ -176,7 +207,18 @@ const actionsCell = (...actions) => {
   return td;
 };
 
-const reviewWarnings = createWarningDialog({ byId, showMessage });
+const reviewWarnings = createWarningDialog({ byId, showMessage,
+  warningsEnabled: () => !byId('input-warnings-ignored').checked });
+
+document.querySelectorAll('[data-input-warnings-toggle]').forEach((toggle) => {
+  toggle.addEventListener('change', (event) => {
+    const ignored = event.currentTarget.checked;
+    document.querySelectorAll('[data-input-warnings-toggle]').forEach((input) => {
+      input.checked = input.defaultChecked = ignored;
+    });
+    document.documentElement.dataset.inputWarnings = ignored ? 'off' : 'on';
+  });
+});
 
 const resourceName = (items, id) => items.find((item) => item.id === id)?.name ?? id;
 const policyName = (policyId, policyVersion) => state.policies.find((policy) => (
@@ -299,7 +341,7 @@ const {
   cell, choicesCell, badgeCell, actionsCell,
   loadPaged, recordQuery, loadCatalogs,
 });
-const { open: openImport, submit: submitImport, commit: commitImport } = createImportsPage({
+const { open: openImport, submit: submitImport, commit: commitImport, invalidatePreview: invalidateImportPreview } = createImportsPage({
   state, byId, api, run, reviewWarnings, showMessage, loadCatalogs, loadApplications, loadEnrollments,
 });
 
@@ -421,6 +463,8 @@ byId('add-draft-item').addEventListener('click', () => { void addDraftItem().cat
 byId('preview-finalization').addEventListener('click', () => { void previewFinalization().catch(() => {}); });
 byId('finalize-form').addEventListener('submit', (event) => { void finalizeDraft(event).catch(() => {}); });
 byId('import-form').addEventListener('submit', (event) => { void submitImport(event).catch(() => {}); });
+byId('import-form').elements.file.addEventListener('change', invalidateImportPreview);
+byId('import-form').elements.mode.addEventListener('change', invalidateImportPreview);
 byId('commit-import').addEventListener('click', () => { void commitImport().catch(() => {}); });
 byId('refresh-applications').addEventListener('click', () => { void loadApplications(); });
 byId('refresh-enrollments').addEventListener('click', () => { void loadEnrollments(); });

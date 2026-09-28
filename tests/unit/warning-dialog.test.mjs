@@ -5,6 +5,7 @@ import { createWarningDialog } from '../../frontend/warning-dialog.js';
 
 test('an administrator sees errors, approves a warning with a reason, or cancels it', async () => {
   const messages = [];
+  let warningsEnabled = true;
   const form = Object.assign(new EventTarget(), {
     elements: { note: { value: '' } },
     reset() { this.elements.note.value = ''; },
@@ -25,6 +26,7 @@ test('an administrator sees errors, approves a warning with a reason, or cancels
   try {
     const reviewWarnings = createWarningDialog({
       byId: (id) => nodes[id], showMessage: (message, error) => messages.push({ message, error }),
+      warningsEnabled: () => warningsEnabled,
     });
     assert.equal(await reviewWarnings({ issues: [{ code: 'MEMBER_NAME_REQUIRED', severity: 'ERROR' }] }), null);
     assert.match(messages[0].message, /회원명을 입력하세요/);
@@ -45,6 +47,27 @@ test('an administrator sees errors, approves a warning with a reason, or cancels
     cancel.dispatchEvent(new Event('click'));
     assert.equal(await cancelled, null);
     assert.equal(dialog.open, false);
+
+    const approvedWithoutNote = reviewWarnings(preview);
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    assert.equal(await approvedWithoutNote, '');
+
+    warningsEnabled = false;
+    const skipped = reviewWarnings(preview);
+    assert.equal(dialog.open, false);
+    assert.equal(await skipped, '');
+    assert.equal(await reviewWarnings({ issues: [] }), '');
+    assert.equal(await reviewWarnings({ issues: [
+      ...preview.issues, { code: 'MEMBER_NAME_REQUIRED', severity: 'ERROR' },
+    ] }), null);
+    assert.match(messages.at(-1).message, /회원명을 입력하세요/);
+    assert.equal(messages.at(-1).error, true);
+
+    warningsEnabled = true;
+    const restored = reviewWarnings(preview);
+    assert.equal(dialog.open, true);
+    cancel.dispatchEvent(new Event('click'));
+    assert.equal(await restored, null);
   } finally {
     globalThis.document = previousDocument;
   }

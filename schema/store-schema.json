@@ -190,7 +190,7 @@
       "required": ["warningDigest", "note", "acknowledgedAt"],
       "properties": {
         "warningDigest": { "$ref": "#/$defs/id" },
-        "note": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "note": { "type": "string", "maxLength": 2000 },
         "acknowledgedAt": { "$ref": "#/$defs/timestamp" }
       }
     },
@@ -501,7 +501,7 @@
         "courseName": { "type": "string", "minLength": 1, "maxLength": 200 },
         "applicationOrder": { "$ref": "#/$defs/positiveSafeInteger" },
         "warningDigest": { "$ref": "#/$defs/id" },
-        "acknowledgementNote": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        "acknowledgementNote": { "type": "string", "maxLength": 2000 }
       }
     },
     "importBatch": {

@@ -2,9 +2,9 @@ import { issueText } from './issue-view.js';
 
 /** @typedef {{ code: string, severity: string, source?: { sheet?: string, row?: number, column?: string }, location?: string, detail?: { rowNumber?: number }, message?: string }} Issue */
 /**
- * @param {{ byId: (id: string) => any, showMessage: (message: string, error?: boolean) => void }} dependencies
+ * @param {{ byId: (id: string) => any, showMessage: (message: string, error?: boolean) => void, warningsEnabled?: () => boolean }} dependencies
  */
-export const createWarningDialog = ({ byId, showMessage }) => {
+export const createWarningDialog = ({ byId, showMessage, warningsEnabled = () => true }) => {
   /** @param {{ issues: Issue[] }} preview @param {(issue: Issue) => { memberName?: string, courseName?: string }} issueContext */
   const reviewWarnings = (preview, issueContext = () => ({})) => {
     const errors = preview.issues.filter((issue) => issue.severity === 'ERROR');
@@ -14,6 +14,7 @@ export const createWarningDialog = ({ byId, showMessage }) => {
     }
     const warnings = preview.issues.filter((issue) => issue.severity === 'WARNING');
     if (!warnings.length) return Promise.resolve('');
+    if (!warningsEnabled()) return Promise.resolve('');
     const dialog = byId('warning-dialog');
     const form = byId('warning-form');
     form.reset();

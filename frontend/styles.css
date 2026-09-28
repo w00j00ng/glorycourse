@@ -33,7 +33,8 @@ button { cursor: pointer; }
 .nav-label { margin: 0 12px 12px; color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .12em; }
 .nav-item { width: 100%; margin-bottom: 6px; padding: 12px 14px; border: 0; border-radius: 8px; color: var(--ink); background: transparent; text-align: left; font-weight: 700; }
 .nav-item:hover, .nav-item.active { color: var(--green-dark); background: var(--mint); }
-.notice { margin: 36px 8px 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
+.button-help-setting { display: flex; align-items: center; gap: 8px; margin: 20px 8px 0; font-size: 13px; white-space: nowrap; }
+.button-help-setting input { width: auto; margin: 0; }
 main { min-width: 0; padding: 44px clamp(24px, 5vw, 72px); }
 .view { max-width: 1180px; margin: 0 auto; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
@@ -80,6 +81,9 @@ main { min-width: 0; padding: 44px clamp(24px, 5vw, 72px); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 24px 0 12px; }
 .toolbar label { flex: 1 1 180px; }
 label { display: grid; gap: 7px; color: #3d4844; font-size: 13px; font-weight: 750; }
+.input-warnings-toggle { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+.input-warnings-toggle input { width: auto; }
+:root[data-input-warnings="off"] #import-issues li:not([data-severity="ERROR"]) { display: none; }
 input, textarea, select { width: 100%; padding: 10px 11px; border: 1px solid #c9cbc5; border-radius: 6px; color: var(--ink); background: white; }
 input:focus, textarea:focus, select:focus, button:focus-visible { outline: 3px solid #74a99466; outline-offset: 1px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
@@ -87,6 +91,10 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 15px 16px; border-bottom: 1px solid #ebeae3; text-align: left; vertical-align: top; }
 th { color: var(--muted); background: #f2f2ec; font-size: 12px; letter-spacing: .04em; }
 td { font-size: 14px; }
+.enrollment-note { min-width: 130px; max-width: 300px; }
+.enrollment-note summary { cursor: pointer; color: var(--green-dark); }
+.enrollment-note p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.enrollment-note time { color: var(--muted); font-size: 12px; }
 tr:last-child td { border-bottom: 0; }
 .draft-row-changed td { background: #fff3dc; }
 .draft-row-changed td:first-child { box-shadow: inset 4px 0 var(--amber); }
@@ -149,8 +157,10 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
 .draft-reason-list li + li { margin-top: 5px; }
 .warning-list { padding-left: 20px; color: #784214; }
 .warning-list li + li { margin-top: 8px; }
+#import-issues li { display: flex; align-items: center; gap: 8px; }
+#import-issues .import-issue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #import-issues li.information { color: var(--muted); }
-.import-issue-dismiss { margin-left: 8px; padding: 4px 8px; font-size: 12px; }
+.import-issue-dismiss { flex-shrink: 0; padding: 4px 8px; font-size: 12px; }
 #backup-rows td:last-child { max-width: 320px; overflow-wrap: anywhere; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 #latest-backup { white-space: nowrap; font-size: 24px; }
 .import-state { display: flex; align-items: center; gap: 10px; margin: 24px 0 14px; padding-top: 22px; border-top: 1px solid var(--line); }
@@ -171,8 +181,9 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
   .runtime { max-width: 55vw; flex-wrap: wrap; justify-content: flex-end; }
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .nav-label, .notice { display: none; }
+  .nav-label { display: none; }
   .nav-item { width: auto; margin: 0; flex-shrink: 0; }
+  .button-help-setting { flex-shrink: 0; margin: 0 8px; }
   main { padding: 28px 16px; }
   .page-heading { align-items: flex-start; }
   .heading-actions { justify-content: flex-start; }

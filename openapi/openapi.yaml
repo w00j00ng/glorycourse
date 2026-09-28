@@ -25,7 +25,7 @@ x-operational-limits:
   storeBytes: 209715200
   allocationApplicants: 10000
   semesterCourses: 1000
-  choicesPerApplication: 100
+  choicesPerApplication: 5
 paths:
   /session:
     post:
@@ -447,6 +447,7 @@ paths:
       tags: [Applications]
       operationId: exportApplications
       summary: 현재 필터 전체 신청을 내려받는다.
+      description: 희망순위가 비었거나 범위를 벗어나거나 중복되면 해당 학기·회원과 수정 안내를 반환한다.
       parameters:
         - $ref: '#/components/parameters/SemesterIdQuery'
         - $ref: '#/components/parameters/CourseIdQuery'
@@ -455,6 +456,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/XlsxFile'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /applications/batch:
     post:
       tags: [Applications]
@@ -1538,7 +1541,9 @@ components:
           minLength: 1
           maxLength: 200
         preference:
-          $ref: '#/components/schemas/PositiveSafeInteger'
+          type: integer
+          minimum: 1
+          maximum: 5
     CreateApplicationsBatchRequest:
       type: object
       additionalProperties: false
@@ -1612,7 +1617,7 @@ components:
         choices:
           type: array
           minItems: 1
-          maxItems: 100
+          maxItems: 5
           items:
             $ref: '#/components/schemas/ApplicationChoiceInput'
     UpdateApplicationRequest:
@@ -1783,7 +1788,6 @@ components:
           minLength: 1
         acknowledgementNote:
           type: string
-          minLength: 1
           maxLength: 2000
     Acknowledgement:
       type: object
@@ -1795,7 +1799,6 @@ components:
           minLength: 1
         note:
           type: string
-          minLength: 1
           maxLength: 2000
         acknowledgedAt:
           $ref: '#/components/schemas/Timestamp'
@@ -1946,7 +1949,6 @@ components:
           minLength: 1
         acknowledgementNote:
           type: string
-          minLength: 1
           maxLength: 2000
     ImportRawRow:
       type: object
@@ -2358,7 +2360,7 @@ components:
     FinalizeDraftRequest:
       type: object
       additionalProperties: false
-      required: [preparedActionToken, expectedDraftRevision, acknowledgedWarningDigest, acknowledgementNote]
+      required: [preparedActionToken, expectedDraftRevision, acknowledgedWarningDigest]
       properties:
         preparedActionToken:
           type: string
@@ -2370,7 +2372,6 @@ components:
           minLength: 1
         acknowledgementNote:
           type: string
-          minLength: 1
           maxLength: 2000
     FinalizationReceipt:
       type: object

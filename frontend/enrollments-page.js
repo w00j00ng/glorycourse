@@ -92,6 +92,24 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     byId('enrollment-dialog').showModal();
   };
 
+  /** @param {EnrollmentRow['exceptionAcknowledgement']} acknowledgement */
+  const noteCell = (acknowledgement) => {
+    const td = cell('—');
+    td.className = 'enrollment-note';
+    if (!acknowledgement?.note.trim()) return td;
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = '메모 보기';
+    const note = document.createElement('p');
+    note.textContent = acknowledgement.note;
+    const time = document.createElement('time');
+    time.dateTime = acknowledgement.acknowledgedAt;
+    time.textContent = new Date(acknowledgement.acknowledgedAt).toLocaleString();
+    details.append(summary, note, time);
+    td.replaceChildren(details);
+    return td;
+  };
+
   const render = () => {
     byId('enrollment-rows').replaceChildren(...state.enrollments.map((item) => {
       const row = document.createElement('tr');
@@ -99,6 +117,7 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
         cell(item.semesterName),
         cell(item.memberName),
         cell(item.courseName),
+        noteCell(item.exceptionAcknowledgement),
         actionsCell(
           ['수정', () => openEnrollment(item)],
           ['삭제', () => deleteEnrollment(item), 'delete'],

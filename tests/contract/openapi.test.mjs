@@ -113,7 +113,7 @@ test('publishes enforceable initial safety limits', () => {
     storeBytes: 200 * 1024 * 1024,
     allocationApplicants: 10_000,
     semesterCourses: 1_000,
-    choicesPerApplication: 100,
+    choicesPerApplication: 5,
   });
 
   const ajv = new Ajv2020({ allErrors: true, strict: false });

@@ -85,7 +85,7 @@ export class EnrollmentConflictError extends Error {
 
 export class EnrollmentAcknowledgementError extends Error {
   constructor() {
-    super('Current warnings require their exact digest and a non-empty acknowledgement note');
+    super('Current warnings require their exact digest and an optional note of at most 2000 characters');
     this.name = 'EnrollmentAcknowledgementError';
   }
 }
@@ -186,12 +186,11 @@ export class EnrollmentService {
         const warningDigest = digestEnrollmentWarnings(issues);
         if (warningDigest !== payload.warningDigest) throw new EnrollmentStaleError();
         const warnings = issues.filter(({ severity }) => severity === 'WARNING');
-        const note = typeof input.acknowledgementNote === 'string' ? input.acknowledgementNote.trim() : undefined;
-        if (input.acknowledgedWarningDigest !== warningDigest
-          || (warnings.length && (!note || note.length > 2000))) throw new EnrollmentAcknowledgementError();
+        const note = validateAcknowledgementNote(input.acknowledgementNote);
+        if (input.acknowledgedWarningDigest !== warningDigest) throw new EnrollmentAcknowledgementError();
         items.forEach((item, index) => {
           if (!warnings.some(({ detail }) => detail.rowNumber === index + 1)) return;
-          const acknowledgement = { warningDigest, note: note!, acknowledgedAt: now };
+          const acknowledgement = { warningDigest, note, acknowledgedAt: now };
           enrollments(data).find(({ id }) => id === item.id)!.exceptionAcknowledgement = acknowledgement;
           item.exceptionAcknowledgement = acknowledgement;
         });
@@ -236,23 +235,23 @@ export class EnrollmentService {
         if (errors.length > 0) throw new EnrollmentConflictError(errors);
 
         const warnings = issues.filter(({ severity }) => severity === 'WARNING');
-        const note = input.acknowledgementNote?.trim();
-        if (
-          input.acknowledgedWarningDigest !== warningDigest
-          || (warnings.length > 0 && (!note || note.length > 2000))
-        ) throw new EnrollmentAcknowledgementError();
+        const note = validateAcknowledgementNote(input.acknowledgementNote);
+        if (input.acknowledgedWarningDigest !== warningDigest) throw new EnrollmentAcknowledgementError();
 
-        return applyEnrollmentChange(
+        const existingCourseIds = new Set(data.semesterCourses.map(({ id }) => id));
+        const result = applyEnrollmentChange(
           data,
           payload.input,
-          warnings.length === 0 ? null : {
+          warnings.length === 0 && !note ? null : {
             warningDigest,
-            note: note!,
+            note,
             acknowledgedAt: this.dependencies.now().toISOString(),
           },
           this.dependencies.now().toISOString(),
           this.dependencies.id,
         );
+        initializeEnrollmentCourseCapacities(data, existingCourseIds);
+        return result;
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError) throw new EnrollmentStaleError();
@@ -351,33 +350,10 @@ export const evaluateEnrollmentSelection = (
   }));
 };
 
-export const applyEnrollmentImport = (
-  data: EnrollmentData,
-  input: { semesterName: string; memberName: string; courseName: string },
-  acknowledgedWarningDigest: string,
-  acknowledgementNote: string | undefined,
-  now: string,
-  id: () => string,
-  informationalCodes: readonly string[] = [],
-): EnrollmentView => {
-  const clean = validateInput({ action: 'CREATE', ...input });
-  const issues = enrollmentIssues(data, clean).filter(({ code }) => !informationalCodes.includes(code));
-  const errors = issues.filter(({ severity }) => severity === 'ERROR');
-  if (errors.length > 0) throw new EnrollmentConflictError(errors);
-  const warnings = issues.filter(({ severity }) => severity === 'WARNING');
-  const warningDigest = digestEnrollmentWarnings(issues);
-  const note = acknowledgementNote?.trim();
-  if (
-    acknowledgedWarningDigest !== warningDigest
-    || (warnings.length > 0 && (!note || note.length > 2000))
-  ) throw new EnrollmentAcknowledgementError();
-  return applyEnrollmentChange(
-    data,
-    clean,
-    warnings.length === 0 ? null : { warningDigest, note: note!, acknowledgedAt: now },
-    now,
-    id,
-  ) as EnrollmentView;
+const validateAcknowledgementNote = (value: unknown): string => {
+  if (value === undefined) return '';
+  if (typeof value !== 'string' || value.length > 2000) throw new EnrollmentAcknowledgementError();
+  return value.trim();
 };
 
 const validateInput = (input: PreviewInput): CleanInput => {
@@ -607,7 +583,8 @@ const validateBatchInput = (inputs: BatchInput[]): BatchInput[] => {
   });
 };
 
-const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: string, id: () => string) => {
+export const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: string, id: () => string) => {
+  const existingCourseIds = new Set(data.semesterCourses.map(({ id }) => id));
   const issues: EnrollmentIssue[] = [];
   const items: EnrollmentView[] = [];
   for (const [index, input] of inputs.entries()) {
@@ -631,11 +608,22 @@ const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], now: st
       }
     });
   }
+  initializeEnrollmentCourseCapacities(data, existingCourseIds);
   return { items, issues: issues.map((issue) => ({
     ...issue,
     message: `${issue.detail.rowNumber}행 (${inputs[Number(issue.detail.rowNumber) - 1]!.memberName}): ${issue.message}`,
     subject: { entityType: 'Enrollment' },
   })) };
+};
+
+export const initializeEnrollmentCourseCapacities = (data: EnrollmentData, existingCourseIds: ReadonlySet<string>): void => {
+  const created = data.semesterCourses.filter(({ id }) => !existingCourseIds.has(id));
+  if (!created.length) return;
+  const counts = new Map<string, number>();
+  for (const { semesterCourseId } of data.enrollments) {
+    counts.set(semesterCourseId, (counts.get(semesterCourseId) ?? 0) + 1);
+  }
+  for (const course of created) course.capacity = counts.get(course.id) ?? 0;
 };
 
 export const digestEnrollmentWarnings = (issues: EnrollmentIssue[]): string => createHash('sha256')
