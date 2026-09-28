@@ -62,6 +62,70 @@ const test = base.extend({
   },
 });
 
+test('an administrator toggles button help across pages and newly rendered controls', async ({ page, app }) => {
+  const helpToggle = page.getByRole('checkbox', { name: '버튼 도움말 표시', exact: true });
+  await expect(helpToggle).toBeChecked();
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#refresh-catalog').hover();
+  await expect(page.locator('#refresh-catalog')).toHaveAttribute('title', '학기와 개설 강좌 목록을 다시 불러옵니다.');
+
+  await helpToggle.uncheck();
+  await expect(page.locator('button[title]:not([title=""])')).toHaveCount(0);
+  for (const name of ['도움말 이전 학기', '도움말 현재 학기']) {
+    await page.locator('#new-semester').click();
+    await page.locator('#semester-create-form [name="name"]').fill(name);
+    await page.locator('#semester-create-form [type="submit"]').click();
+    await expect(page.locator('#catalog-semester-rows')).toContainText(name);
+  }
+  const selectedSemester = page.locator('#catalog-semester-rows').getByRole('button', { name: '선택됨' });
+  await selectedSemester.hover();
+  await expect(selectedSemester).toHaveAttribute('title', '');
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#copy-catalog-courses').hover();
+  await expect(page.locator('#copy-catalog-courses')).toHaveAttribute('title', '');
+
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  await expect(helpToggle).not.toBeChecked();
+  await page.locator('#new-draft').hover();
+  await expect(page.locator('#new-draft')).toHaveAttribute('title', '');
+  await helpToggle.check();
+  await page.locator('#new-draft').focus();
+  await expect(page.locator('#new-draft')).toHaveAttribute('title', '학기와 배정 방식을 선택해 배정초안을 만듭니다.');
+
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('[data-catalog-tab="semesters"]').click();
+  await selectedSemester.hover();
+  await expect(selectedSemester).toHaveAttribute('title', '학기 선택을 해제합니다.');
+  await page.locator('[data-catalog-tab="courses"]').click();
+  for (const [id, description] of [
+    ['copy-catalog-courses', '이전 학기의 강좌와 정원을 선택해 편집 목록에 추가합니다.'],
+    ['add-catalog-course', '강좌명과 정원을 여러 줄로 입력해 편집 목록에 추가합니다.'],
+  ]) {
+    await page.locator('#' + id).hover();
+    await expect(page.locator('#' + id)).toHaveAttribute('title', description);
+  }
+  await page.locator('#add-catalog-course').click();
+  await page.locator('#catalog-add-form [name="courses"]').fill('도움말 강좌, 3');
+  await page.locator('#catalog-add-form [type="submit"]').click();
+  const cancelAddition = page.locator('#catalog-course-rows').getByRole('button', { name: '추가 취소' });
+  await cancelAddition.hover();
+  await expect(cancelAddition).toHaveAttribute('title', '아직 저장하지 않은 강좌를 편집 목록에서 제거합니다.');
+
+  await helpToggle.uncheck();
+  await page.locator('#add-catalog-course').click();
+  await page.locator('#catalog-add-form [name="courses"]').fill('도움말 없는 강좌, 2');
+  await page.locator('#catalog-add-form [type="submit"]').click();
+  await cancelAddition.last().hover();
+  await expect(cancelAddition.last()).toHaveAttribute('title', '');
+  await page.getByRole('button', { name: '홈', exact: true }).click();
+  const workflowButton = page.locator('#dashboard-workflow button').first();
+  await workflowButton.hover();
+  await expect(workflowButton).toHaveAttribute('title', '');
+  await helpToggle.check();
+  await workflowButton.focus();
+  await expect(workflowButton).toHaveAttribute('title', /.+/);
+});
+
 test('an administrator reuses an unchanged backup and restores its reviewed data', async ({ page, app }) => {
   await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
   await page.locator('#new-semester').click();

@@ -58,7 +58,7 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     const deleteButton = /** @type {HTMLButtonElement} */ (action.querySelector('button'));
     if (enrollmentCount > 0) {
       deleteButton.disabled = true;
-      deleteButton.title = '수강이력이 있는 강좌는 삭제할 수 없습니다.';
+      deleteButton.dataset.buttonHelp = '수강이력이 있는 강좌는 삭제할 수 없습니다.';
     }
     row.append(nameCell, capacityCell, cell(usage), action);
     return row;

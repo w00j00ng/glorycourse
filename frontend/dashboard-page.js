@@ -76,6 +76,7 @@ export const createDashboardPage = ({ state, api, byId }) => {
       button.className = 'secondary';
       button.type = 'button';
       button.dataset.viewTarget = step.view;
+      button.dataset.buttonHelp = `${step.title} 화면으로 이동합니다.`;
       button.textContent = `${step.title} 열기`;
       card.append(title, description, button);
       return card;

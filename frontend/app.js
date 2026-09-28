@@ -32,6 +32,20 @@ const state = {
 };
 const byId = (id) => document.getElementById(id);
 
+const updateButtonHelp = (button) => {
+  button.title = byId('button-help-enabled').checked ? button.dataset.buttonHelp : '';
+};
+byId('button-help-enabled').addEventListener('change', () => {
+  document.querySelectorAll('button[data-button-help]').forEach(updateButtonHelp);
+});
+document.querySelectorAll('button[data-button-help]').forEach(updateButtonHelp);
+for (const eventName of ['mouseover', 'focusin']) {
+  document.addEventListener(eventName, (event) => {
+    const button = event.target.closest('button[data-button-help]');
+    if (button) updateButtonHelp(button);
+  });
+}
+
 const openHelp = (key) => {
   const help = PAGE_HELP[key];
   byId('help-title').textContent = help.title;
@@ -165,6 +179,17 @@ const badgeCell = (text, warning) => {
   return td;
 };
 
+const actionButtonHelp = {
+  수정: '선택한 항목을 수정할 입력 화면을 엽니다.',
+  삭제: '선택한 항목을 확인 후 삭제합니다.',
+  검토: '배정 결과를 검토하고 최종 결정을 수정합니다.',
+  선택됨: '학기 선택을 해제합니다.',
+  위로: '학기를 목록에서 한 칸 위로 이동합니다.',
+  아래로: '학기를 목록에서 한 칸 아래로 이동합니다.',
+  '추가 취소': '아직 저장하지 않은 강좌를 편집 목록에서 제거합니다.',
+  저장: '이 회원의 최종 배정 결정을 저장합니다.',
+  '자동 복원': '이 회원의 최종 결정을 처음 자동 배정 결과로 되돌립니다.',
+};
 const actionsCell = (...actions) => {
   const td = document.createElement('td');
   const group = document.createElement('div');
@@ -173,6 +198,7 @@ const actionsCell = (...actions) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
+    button.dataset.buttonHelp = actionButtonHelp[label];
     if (className) button.className = className;
     button.addEventListener('click', () => { void Promise.resolve(action()).catch(() => {}); });
     group.append(button);
