@@ -35,7 +35,6 @@ button { cursor: pointer; }
 .nav-item:hover, .nav-item.active { color: var(--green-dark); background: var(--mint); }
 .button-help-setting { display: flex; align-items: center; gap: 8px; margin: 20px 8px 0; font-size: 13px; white-space: nowrap; }
 .button-help-setting input { width: auto; margin: 0; }
-.notice { margin: 36px 8px 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
 main { min-width: 0; padding: 44px clamp(24px, 5vw, 72px); }
 .view { max-width: 1180px; margin: 0 auto; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
@@ -178,7 +177,7 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
   .runtime { max-width: 55vw; flex-wrap: wrap; justify-content: flex-end; }
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .nav-label, .notice { display: none; }
+  .nav-label { display: none; }
   .nav-item { width: auto; margin: 0; flex-shrink: 0; }
   .button-help-setting { flex-shrink: 0; margin: 0 8px; }
   main { padding: 28px 16px; }

@@ -31,7 +31,6 @@
       <button class="nav-item" data-view-target="enrollments" type="button">수강이력</button>
       <button class="nav-item" data-view-target="backups" type="button">자료 관리</button>
       <label class="button-help-setting"><input id="button-help-enabled" type="checkbox" checked>버튼 도움말 표시</label>
-      <p class="notice">이름이 같으면 같은 사람으로 처리됩니다. 동명이인은 식별 가능한 이름을 사용하세요.</p>
     </nav>
 
     <main>
@@ -212,6 +211,7 @@
   <dialog id="application-dialog">
     <form id="application-form">
       <div class="dialog-heading"><div><p class="eyebrow">APPLICATION</p><h2 id="application-dialog-title">신청 등록</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <p class="form-help">회원명이 같으면 같은 사람으로 처리됩니다. 동명이인은 구분되는 이름으로 입력하세요.</p>
       <div id="application-entry-rows"></div>
       <button id="add-application-entry" class="secondary" type="button" data-button-help="다른 회원의 수강신청을 함께 입력할 행을 추가합니다.">신청 행 추가</button>
       <label class="input-warnings-toggle"><input id="input-warnings-ignored" data-input-warnings-toggle type="checkbox">입력 경고 무시</label>
@@ -268,6 +268,7 @@
   <dialog id="enrollment-dialog">
     <form id="enrollment-form">
       <div class="dialog-heading"><div><p class="eyebrow">ENROLLMENT</p><h2 id="enrollment-dialog-title">이력 등록</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <p class="form-help">회원명이 같으면 같은 사람으로 처리됩니다. 동명이인은 구분되는 이름으로 입력하세요.</p>
       <div id="enrollment-entry-rows"></div>
       <button id="add-enrollment-entry" class="secondary" type="button" data-button-help="다른 수강이력을 함께 입력할 행을 추가합니다.">이력 행 추가</button>
       <label class="input-warnings-toggle"><input data-input-warnings-toggle type="checkbox">입력 경고 무시</label>
@@ -288,6 +289,7 @@
   <dialog id="import-dialog">
     <form id="import-form">
       <div class="dialog-heading"><div><p class="eyebrow">EXCEL IMPORT</p><h2 id="import-dialog-title">Excel 검토</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
+      <p class="form-help">회원명이 같으면 같은 사람으로 처리됩니다. 동명이인은 구분되는 이름으로 입력하세요.</p>
       <input name="kind" type="hidden">
       <div class="form-grid">
         <label>xlsx 파일<input name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
