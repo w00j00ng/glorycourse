@@ -624,6 +624,10 @@ for (const warningsEnabled of [true, false]) {
     await page.locator('#commit-import').click();
     if (warningsEnabled) {
       await expect(page.locator('#warning-dialog')).toBeVisible();
+      await page.locator('#cancel-warning').click();
+      await expect(page.locator('#commit-import')).toBeEnabled();
+      await page.locator('#commit-import').click();
+      await expect(page.locator('#warning-dialog')).toBeVisible();
       await page.locator('#warning-form [type="submit"]').click();
     }
     await expect(page.locator('#import-preview-status')).toContainText('반영됨');
@@ -757,6 +761,55 @@ for (const [earlierFails, reviewLatest] of [[false, true], [true, true], [false,
     await expect(page.locator('#enrollment-rows')).not.toContainText('처음 회원');
   });
 }
+
+test('an administrator retries a failed Excel save and cannot submit the same review twice while saving', async ({ page, app }) => {
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#enrollment-template').click()]);
+  const buffer = await app.completeEnrollmentTemplate(await readFile(await download.path()), [['과거 학기', '김가나', '창세기']]);
+  let release;
+  const delayed = new Promise((resolve) => { release = resolve; });
+  let saved;
+  const committed = new Promise((resolve) => { saved = resolve; });
+  let commits = 0;
+  await page.route('**/api/v1/imports/*/commit', async (route) => {
+    const request = ++commits;
+    if (request === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({
+        code: 'UNAVAILABLE', message: '잠시 후 다시 시도하세요.', issues: [],
+      }) });
+      return;
+    }
+    const response = await route.fetch();
+    if (request === 2) { saved(); await delayed; }
+    await route.fulfill({ response });
+  });
+  try {
+    await page.locator('#enrollments-view .import-open').click();
+    await page.locator('#import-form [name="file"]').setInputFiles({ name: '명단.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer });
+    await page.getByRole('button', { name: '파일 검토', exact: true }).click();
+    const commit = page.locator('#commit-import');
+    await commit.click();
+    await expect(page.locator('#dialog-message')).toContainText('잠시 후 다시 시도하세요.');
+    await expect(commit).toBeEnabled();
+    await commit.dblclick();
+    await committed;
+    await expect(commit).toBeDisabled();
+    const receipt = page.waitForResponse('**/api/v1/imports/*/commit');
+    release();
+    await receipt;
+    await expect(page.locator('#shutdown')).toBeEnabled();
+    await expect(page.locator('#save-status')).toHaveText('저장됨');
+    await expect(page.locator('#import-preview-status')).toContainText('반영됨');
+    await expect(page.locator('#dialog-message')).toContainText('Excel 자료를 반영했습니다.');
+    expect(commits).toBe(2);
+    await page.locator('#import-dialog .close-dialog').first().click();
+    await expect(page.locator('#enrollment-rows tr')).toHaveCount(1);
+    await expect(page.locator('#enrollment-rows')).toContainText('김가나');
+  } finally {
+    release();
+  }
+});
 
 test('an administrator reviews another file while an earlier commit response is delayed', async ({ page, app }) => {
   await page.getByRole('button', { name: '수강이력', exact: true }).click();

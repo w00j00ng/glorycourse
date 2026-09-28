@@ -182,65 +182,72 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
 
   const commit = async () => {
     const preview = state.importPreview;
-    if (!preview) return;
-    let invalidOrder = '';
-    const note = await reviewWarnings(preview);
-    if (note === null) return;
-    /** @type {Record<string, unknown>[]} */
-    const resolutions = preview.kind === 'ENROLLMENTS'
-      ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
-        entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
-        warningDigest: preview.warningDigest, acknowledgementNote: note,
-      }))
-      : [];
-    preview.applications.forEach((candidate, index) => {
-      const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
-      if (action) resolutions.push({
-        entity: 'APPLICATION', action,
-        semesterName: candidate.semesterName, memberName: candidate.memberName,
-      });
-      if (candidate.applicationOrderStatus !== 'NORMAL') {
-        const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
-        if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
-          invalidOrder = candidate.memberName;
-          return;
-        }
-        resolutions.push({
-          entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
-          semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+    const button = byId('commit-import');
+    if (!preview || button.disabled) return;
+    button.disabled = true;
+    let applied = false;
+    try {
+      let invalidOrder = '';
+      const note = await reviewWarnings(preview);
+      if (note === null || state.importPreview !== preview) return;
+      /** @type {Record<string, unknown>[]} */
+      const resolutions = preview.kind === 'ENROLLMENTS'
+        ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+          entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+          warningDigest: preview.warningDigest, acknowledgementNote: note,
+        }))
+        : [];
+      preview.applications.forEach((candidate, index) => {
+        const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
+        if (action) resolutions.push({
+          entity: 'APPLICATION', action,
+          semesterName: candidate.semesterName, memberName: candidate.memberName,
         });
-      }
-    });
-    if (invalidOrder) {
-      showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
-      return;
-    }
-    preview.contextChanges.forEach((change, index) => {
-      if (change.status !== 'EXISTING_CONFLICT') return;
-      resolutions.push({
-        entity: change.entity,
-        action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
-        field: change.field,
-        semesterName: change.semesterName,
-        ...(change.courseName ? { courseName: change.courseName } : {}),
+        if (candidate.applicationOrderStatus !== 'NORMAL') {
+          const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
+          if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
+            invalidOrder = candidate.memberName;
+            return;
+          }
+          resolutions.push({
+            entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
+            semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+          });
+        }
       });
-    });
-    const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${preview.previewId}/commit`, {
-      method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({
-        storeRevision: preview.storeRevision,
-        storeEpoch: preview.storeEpoch,
-        warningDigest: preview.warningDigest,
-        resolutions,
-      }),
-    }), 'Excel 자료를 반영했습니다.', () => state.importPreview === preview));
-    if (state.importPreview === preview) {
-      byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
-      byId('commit-import').disabled = true;
+      if (invalidOrder) {
+        showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
+        return;
+      }
+      preview.contextChanges.forEach((change, index) => {
+        if (change.status !== 'EXISTING_CONFLICT') return;
+        resolutions.push({
+          entity: change.entity,
+          action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
+          field: change.field,
+          semesterName: change.semesterName,
+          ...(change.courseName ? { courseName: change.courseName } : {}),
+        });
+      });
+      const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${preview.previewId}/commit`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({
+          storeRevision: preview.storeRevision,
+          storeEpoch: preview.storeEpoch,
+          warningDigest: preview.warningDigest,
+          resolutions,
+        }),
+      }), 'Excel 자료를 반영했습니다.', () => state.importPreview === preview));
+      applied = true;
+      if (state.importPreview === preview) {
+        byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
+      }
+      await loadCatalogs();
+      await Promise.all([loadApplications(), loadEnrollments()]);
+    } finally {
+      if (state.importPreview === preview) button.disabled = applied;
     }
-    await loadCatalogs();
-    await Promise.all([loadApplications(), loadEnrollments()]);
   };
 
   return { open, submit, commit, invalidatePreview };

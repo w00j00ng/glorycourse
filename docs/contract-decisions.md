@@ -84,7 +84,7 @@
 
 ## 수동 일괄 등록
 
-신청과 이력을 요청당 1~100건 등록한다. 신청은 `POST /applications/batch`에서 이름 Resolve와 희망 강좌를 포함해 전부 반영하거나 전부 거절한다. 이력은 `POST /enrollments/batch/preview`로 행 순서대로 누적 검증한 후 `POST /enrollments/batch`로 전부 반영한다. 준비 토큰은 전체 입력·revision·epoch·경고 digest·만료를 묶고 단건 작업과 혼용하지 않는다. 동일 학기·회원 중복은 오류, 정원·재수강 등 기존 경고는 묶음 전체 확인 사유를 요구한다. 오류 메시지와 detail에 1부터 시작하는 행 번호를 포함한다.
+신청과 이력을 요청당 1~100건 등록한다. 신청은 `POST /applications/batch`에서 이름 Resolve와 희망 강좌를 포함해 전부 반영하거나 전부 거절한다. 이력은 `POST /enrollments/batch/preview`로 행 순서대로 누적 검증한 후 `POST /enrollments/batch`로 전부 반영한다. 준비 토큰은 전체 입력·revision·epoch·경고 digest·만료를 묶고 단건 작업과 혼용하지 않는다. 동일 학기·회원 중복은 오류, 정원·재수강 등 기존 경고는 묶음 전체로 확인하며 관리자 메모는 선택 입력이다. 오류 메시지와 detail에 1부터 시작하는 행 번호를 포함한다.
 
 ## C-10 engineVersion
 

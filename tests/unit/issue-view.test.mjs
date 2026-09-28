@@ -8,7 +8,7 @@ test('shows allocation and enrollment problems in Korean with the affected perso
     {
       issue: { code: 'CAPACITY_EXCEEDED', severity: 'WARNING', message: 'Course capacity would be exceeded' },
       context: { memberName: '김은혜', courseName: '창세기' },
-      expected: '주의 · 김은혜 · 창세기: 강좌 정원을 초과합니다. 인원을 조정하거나, 그대로 진행하려면 사유를 입력하세요.',
+      expected: '주의 · 김은혜 · 창세기: 강좌 정원을 초과합니다. 수강인원과 정원을 확인하세요.',
     },
     {
       issue: { code: 'SAME_SEMESTER_ENROLLMENT', severity: 'ERROR', message: 'A member can have only one enrollment per semester' },
@@ -17,7 +17,7 @@ test('shows allocation and enrollment problems in Korean with the affected perso
     },
     {
       issue: { code: 'RETAKE', severity: 'WARNING', message: 'Member has completed this course in an earlier semester', detail: { rowNumber: 2 } },
-      expected: '주의 · 2행: 이전 학기에 수강한 강좌입니다. 다시 등록하려면 사유를 입력하세요.',
+      expected: '주의 · 2행: 이전 학기에 수강한 강좌입니다. 수강이력을 확인하세요.',
     },
   ];
   for (const { issue, context, expected } of cases) assert.equal(issueText(issue, context), expected);
