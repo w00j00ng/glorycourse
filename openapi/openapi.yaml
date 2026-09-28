@@ -1788,7 +1788,6 @@ components:
           minLength: 1
         acknowledgementNote:
           type: string
-          minLength: 1
           maxLength: 2000
     Acknowledgement:
       type: object
@@ -1800,7 +1799,6 @@ components:
           minLength: 1
         note:
           type: string
-          minLength: 1
           maxLength: 2000
         acknowledgedAt:
           $ref: '#/components/schemas/Timestamp'
@@ -1951,7 +1949,6 @@ components:
           minLength: 1
         acknowledgementNote:
           type: string
-          minLength: 1
           maxLength: 2000
     ImportRawRow:
       type: object
@@ -2363,7 +2360,7 @@ components:
     FinalizeDraftRequest:
       type: object
       additionalProperties: false
-      required: [preparedActionToken, expectedDraftRevision, acknowledgedWarningDigest, acknowledgementNote]
+      required: [preparedActionToken, expectedDraftRevision, acknowledgedWarningDigest]
       properties:
         preparedActionToken:
           type: string
@@ -2375,7 +2372,6 @@ components:
           minLength: 1
         acknowledgementNote:
           type: string
-          minLength: 1
           maxLength: 2000
     FinalizationReceipt:
       type: object

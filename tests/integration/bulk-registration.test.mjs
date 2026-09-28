@@ -45,13 +45,27 @@ test('previews all enrollment warnings together and commits all acknowledged row
   assert.deepEqual(store.read(), before);
   assert.ok(preview.issues.some((issue) => issue.code === 'CAPACITY_EXCEEDED' && issue.detail.rowNumber === 2));
   const request = { preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest };
-  await assert.rejects(enrollments.executeMany(request));
+  await assert.rejects(enrollments.executeMany({ ...request, acknowledgedWarningDigest: 'wrong-digest' }));
   await assert.rejects(enrollments.executeMany({ ...request, acknowledgementNote: 123 }), { name: 'EnrollmentAcknowledgementError' });
   assert.deepEqual(store.read(), before);
   const saved = await enrollments.executeMany({ ...request, acknowledgementNote: '2행 정원 초과 승인' });
   assert.equal(saved.length, 2);
   assert.equal(saved[1].exceptionAcknowledgement.note, '2행 정원 초과 승인');
   assert.equal((await openStore(file, empty)).read().enrollments.length, 2);
+});
+
+test('saves a warned cohort without a note and reloads the blank acknowledgement from SQLite', async (t) => {
+  const { file, store, applications, enrollments } = await workspace(t);
+  const first = await applications.create(application('가'));
+  await applications.updateSemesterContext({ semesterId: first.semesterId, expectedRevision: 1, order: 1,
+    semesterCourses: [{ courseName: '연기', capacity: 1 }] });
+  const preview = enrollments.previewMany([enrollment('가'), enrollment('나')]);
+  const saved = await enrollments.executeMany({ preparedActionToken: preview.preparedActionToken,
+    acknowledgedWarningDigest: preview.warningDigest });
+  assert.equal(saved[0].exceptionAcknowledgement, null);
+  assert.equal(saved[1].exceptionAcknowledgement.note, '');
+  const reopened = await openStore(file, empty);
+  assert.deepEqual(reopened.read().enrollments, store.read().enrollments);
 });
 
 test('sets each new offering capacity to its first registered cohort and preserves existing capacities', async (t) => {
@@ -112,7 +126,7 @@ test('requires retake acknowledgement even when the earlier semester appears las
   const preview = enrollments.previewMany(['다음 학기', '이전 학기'].map((semesterName) => ({ ...enrollment('가'), semesterName })));
   assert.ok(preview.issues.some((issue) => issue.code === 'RETAKE' && issue.detail.rowNumber === 1));
   const request = { preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest };
-  await assert.rejects(enrollments.executeMany(request));
+  await assert.rejects(enrollments.executeMany({ ...request, acknowledgedWarningDigest: 'wrong-digest' }));
   assert.deepEqual(store.read(), before);
   const saved = await enrollments.executeMany({ ...request, acknowledgementNote: '학기 간 재수강 확인' });
   assert.equal(saved[0].exceptionAcknowledgement.note, '학기 간 재수강 확인');

@@ -187,7 +187,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     const note = await reviewWarnings(preview);
     if (note === null) return;
     /** @type {Record<string, unknown>[]} */
-    const resolutions = preview.kind === 'ENROLLMENTS' && note
+    const resolutions = preview.kind === 'ENROLLMENTS'
       ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
         entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
         warningDigest: preview.warningDigest, acknowledgementNote: note,

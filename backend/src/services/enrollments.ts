@@ -85,7 +85,7 @@ export class EnrollmentConflictError extends Error {
 
 export class EnrollmentAcknowledgementError extends Error {
   constructor() {
-    super('Current warnings require their exact digest and a non-empty acknowledgement note');
+    super('Current warnings require their exact digest and an optional note of at most 2000 characters');
     this.name = 'EnrollmentAcknowledgementError';
   }
 }
@@ -186,12 +186,11 @@ export class EnrollmentService {
         const warningDigest = digestEnrollmentWarnings(issues);
         if (warningDigest !== payload.warningDigest) throw new EnrollmentStaleError();
         const warnings = issues.filter(({ severity }) => severity === 'WARNING');
-        const note = typeof input.acknowledgementNote === 'string' ? input.acknowledgementNote.trim() : undefined;
-        if (input.acknowledgedWarningDigest !== warningDigest
-          || (warnings.length && (!note || note.length > 2000))) throw new EnrollmentAcknowledgementError();
+        const note = validateAcknowledgementNote(input.acknowledgementNote);
+        if (input.acknowledgedWarningDigest !== warningDigest) throw new EnrollmentAcknowledgementError();
         items.forEach((item, index) => {
           if (!warnings.some(({ detail }) => detail.rowNumber === index + 1)) return;
-          const acknowledgement = { warningDigest, note: note!, acknowledgedAt: now };
+          const acknowledgement = { warningDigest, note, acknowledgedAt: now };
           enrollments(data).find(({ id }) => id === item.id)!.exceptionAcknowledgement = acknowledgement;
           item.exceptionAcknowledgement = acknowledgement;
         });
@@ -236,19 +235,16 @@ export class EnrollmentService {
         if (errors.length > 0) throw new EnrollmentConflictError(errors);
 
         const warnings = issues.filter(({ severity }) => severity === 'WARNING');
-        const note = input.acknowledgementNote?.trim();
-        if (
-          input.acknowledgedWarningDigest !== warningDigest
-          || (warnings.length > 0 && (!note || note.length > 2000))
-        ) throw new EnrollmentAcknowledgementError();
+        const note = validateAcknowledgementNote(input.acknowledgementNote);
+        if (input.acknowledgedWarningDigest !== warningDigest) throw new EnrollmentAcknowledgementError();
 
         const existingCourseIds = new Set(data.semesterCourses.map(({ id }) => id));
         const result = applyEnrollmentChange(
           data,
           payload.input,
-          warnings.length === 0 ? null : {
+          warnings.length === 0 && !note ? null : {
             warningDigest,
-            note: note!,
+            note,
             acknowledgedAt: this.dependencies.now().toISOString(),
           },
           this.dependencies.now().toISOString(),
@@ -352,6 +348,12 @@ export const evaluateEnrollmentSelection = (
     memberName: member.name,
     courseName: course.name,
   }));
+};
+
+const validateAcknowledgementNote = (value: unknown): string => {
+  if (value === undefined) return '';
+  if (typeof value !== 'string' || value.length > 2000) throw new EnrollmentAcknowledgementError();
+  return value.trim();
 };
 
 const validateInput = (input: PreviewInput): CleanInput => {

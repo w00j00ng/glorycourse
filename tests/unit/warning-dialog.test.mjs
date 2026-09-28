@@ -48,10 +48,14 @@ test('an administrator sees errors, approves a warning with a reason, or cancels
     assert.equal(await cancelled, null);
     assert.equal(dialog.open, false);
 
+    const approvedWithoutNote = reviewWarnings(preview);
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    assert.equal(await approvedWithoutNote, '');
+
     warningsEnabled = false;
     const skipped = reviewWarnings(preview);
     assert.equal(dialog.open, false);
-    assert.equal(await skipped, '입력 경고 무시 설정으로 확인 생략');
+    assert.equal(await skipped, '');
     assert.equal(await reviewWarnings({ issues: [] }), '');
     assert.equal(await reviewWarnings({ issues: [
       ...preview.issues, { code: 'MEMBER_NAME_REQUIRED', severity: 'ERROR' },

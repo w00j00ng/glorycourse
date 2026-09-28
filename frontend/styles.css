@@ -91,6 +91,10 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 15px 16px; border-bottom: 1px solid #ebeae3; text-align: left; vertical-align: top; }
 th { color: var(--muted); background: #f2f2ec; font-size: 12px; letter-spacing: .04em; }
 td { font-size: 14px; }
+.enrollment-note { min-width: 130px; max-width: 300px; }
+.enrollment-note summary { cursor: pointer; color: var(--green-dark); }
+.enrollment-note p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.enrollment-note time { color: var(--muted); font-size: 12px; }
 tr:last-child td { border-bottom: 0; }
 .draft-row-changed td { background: #fff3dc; }
 .draft-row-changed td:first-child { box-shadow: inset 4px 0 var(--amber); }

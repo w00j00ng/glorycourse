@@ -64,7 +64,7 @@ export class ImportCommitConflictError extends Error {
 
 export class ImportAcknowledgementError extends Error {
   constructor() {
-    super('Import warnings require the preview digest and a non-empty acknowledgement note');
+    super('Import warnings require the preview digest and an optional note of at most 2000 characters');
     this.name = 'ImportAcknowledgementError';
   }
 }
@@ -293,14 +293,12 @@ const applyEnrollments = (
     ));
     const warnings = rowIssues.filter(({ severity }) => severity === 'WARNING');
     const resolution = enrollmentResolution(resolutions, candidate);
-    const note = typeof resolution?.acknowledgementNote === 'string' ? resolution.acknowledgementNote.trim() : '';
-    if (warnings.length > 0 && (
-      resolution?.warningDigest !== preview.warningDigest
-      || !note || note.length > 2000
-    )) throw new ImportAcknowledgementError();
+    const note = resolution?.acknowledgementNote === undefined ? '' : resolution.acknowledgementNote;
+    if (typeof note !== 'string' || note.length > 2000) throw new ImportAcknowledgementError();
+    if (warnings.length > 0 && resolution?.warningDigest !== preview.warningDigest) throw new ImportAcknowledgementError();
     if (warnings.length > 0) {
       data.enrollments.find(({ id }) => id === item.id)!.exceptionAcknowledgement = {
-        warningDigest: digestEnrollmentWarnings(rowIssues), note, acknowledgedAt: now,
+        warningDigest: digestEnrollmentWarnings(rowIssues), note: note.trim(), acknowledgedAt: now,
       };
     }
   }

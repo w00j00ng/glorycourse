@@ -108,7 +108,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>학기</th><th>회원명</th><th>강좌</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <thead><tr><th>학기</th><th>회원명</th><th>강좌</th><th>관리자 메모</th><th><span class="sr-only">작업</span></th></tr></thead>
             <tbody id="enrollment-rows"></tbody>
           </table>
           <p id="enrollment-empty" class="empty">등록된 수강이력이 없습니다.</p>
@@ -215,7 +215,7 @@
       <div id="application-entry-rows"></div>
       <button id="add-application-entry" class="secondary" type="button" data-button-help="다른 회원의 수강신청을 함께 입력할 행을 추가합니다.">신청 행 추가</button>
       <label class="input-warnings-toggle"><input id="input-warnings-ignored" data-input-warnings-toggle type="checkbox">입력 경고 무시</label>
-      <p class="form-help">체크하면 안내·경고와 확인 메모 입력을 생략합니다. 오류는 계속 표시됩니다.</p>
+      <p class="form-help">체크하면 안내·경고 확인을 생략합니다. 오류는 계속 표시됩니다.</p>
       <p class="form-help">한 번에 최대 100건을 등록합니다. 모든 행이 올바를 때 함께 저장되며 새 이름은 저장할 때 생성됩니다.</p>
       <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit" data-button-help="입력한 수강신청을 검토한 뒤 저장합니다.">전체 저장</button></div>
     </form>
@@ -272,7 +272,7 @@
       <div id="enrollment-entry-rows"></div>
       <button id="add-enrollment-entry" class="secondary" type="button" data-button-help="다른 수강이력을 함께 입력할 행을 추가합니다.">이력 행 추가</button>
       <label class="input-warnings-toggle"><input data-input-warnings-toggle type="checkbox">입력 경고 무시</label>
-      <p class="form-help">최대 100건을 함께 저장합니다. 체크하면 안내·경고와 확인 메모 입력을 생략하며 오류는 계속 표시됩니다.</p>
+      <p class="form-help">최대 100건을 함께 저장합니다. 체크하면 안내·경고 확인을 생략하며 오류는 계속 표시됩니다.</p>
       <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit" data-button-help="입력한 수강이력을 검토한 뒤 저장합니다.">검토 후 저장</button></div>
     </form>
   </dialog>
@@ -281,8 +281,8 @@
     <form id="warning-form">
       <div class="dialog-heading"><div><p class="eyebrow">REVIEW REQUIRED</p><h2>경고 확인</h2></div></div>
       <ul id="warning-list" class="warning-list"></ul>
-      <label>확인 메모<textarea name="note" rows="3" maxlength="2000" required placeholder="검토한 내용을 기록하세요."></textarea></label>
-      <div class="dialog-actions"><button class="secondary" id="cancel-warning" type="button">취소</button><button class="danger" type="submit" data-button-help="경고와 확인 메모를 반영해 입력 내용을 저장합니다.">확인하고 저장</button></div>
+      <label>관리자 메모 (선택)<textarea name="note" rows="3" maxlength="2000" placeholder="필요한 경우 검토 내용을 기록하세요."></textarea></label>
+      <div class="dialog-actions"><button class="secondary" id="cancel-warning" type="button">취소</button><button class="danger" type="submit" data-button-help="표시된 경고를 확인하고 입력 내용을 저장합니다.">확인하고 저장</button></div>
     </form>
   </dialog>
 
@@ -297,7 +297,7 @@
       </div>
       <p class="form-help">검토만으로 업무 자료는 바뀌지 않습니다. 원본 보관과 실제 반영을 다음 단계에서 선택합니다.</p>
       <label class="input-warnings-toggle"><input data-input-warnings-toggle type="checkbox">입력 경고 무시</label>
-      <p class="form-help">체크하면 안내·경고와 확인 메모 입력을 생략합니다. 오류는 계속 표시됩니다.</p>
+      <p class="form-help">체크하면 안내·경고 확인을 생략합니다. 오류는 계속 표시됩니다.</p>
       <div class="dialog-actions" id="import-preview-action"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit" data-button-help="선택한 Excel 파일의 오류와 등록 내용을 확인합니다. 아직 저장하지 않습니다.">파일 검토</button></div>
       <section id="import-preview" hidden>
         <div class="import-state"><span class="badge">PREVIEW</span><strong id="import-preview-status">아직 저장되지 않음</strong></div>
@@ -377,7 +377,7 @@
       <div id="finalize-courses" class="import-candidates"></div>
       <h3>경고와 오류</h3>
       <ul id="finalize-issues" class="warning-list"></ul>
-      <label>확인 메모<textarea name="note" rows="3" maxlength="2000" required placeholder="확정 결과를 검토한 내용을 기록하세요."></textarea></label>
+      <label>관리자 메모 (선택)<textarea name="note" rows="3" maxlength="2000" placeholder="필요한 경우 확정 결과의 검토 내용을 기록하세요."></textarea></label>
       <p class="form-help">자료가 바뀌거나 검토 유효 시간이 지나면 새 미리보기가 필요합니다.</p>
       <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="danger" id="finalize-draft" type="submit" data-button-help="검토한 배정을 확정하고 수강이력을 저장합니다.">검토 내용으로 확정</button></div>
     </form>

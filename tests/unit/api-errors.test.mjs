@@ -67,7 +67,9 @@ test('tells the user how to correct rejected acknowledgement notes', () => {
       status: 422,
       body: {
         code: 'UNPROCESSABLE',
-        message: '확인 메모를 입력하고 검토한 경고 내용을 다시 확인하세요.',
+        message: name === 'RecoveryAcknowledgementError'
+          ? '확인 메모를 입력하고 검토한 경고 내용을 다시 확인하세요.'
+          : '검토한 경고 내용을 다시 확인하세요. 관리자 메모는 선택 입력이며 2000자까지 입력할 수 있습니다.',
         issues: [],
       },
     });

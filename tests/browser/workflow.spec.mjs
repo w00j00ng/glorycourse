@@ -506,6 +506,40 @@ test('an administrator turns direct registration warnings off and back on while 
   await expect(page.locator('#catalog-course-rows [name="capacity"]')).toHaveValue('1');
 });
 
+test('an administrator saves without an optional note and reads a saved multiline note after reopening the page', async ({ page, app }) => {
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  const entries = [
+    ['첫 회원', '', 1],
+    ['메모 없는 회원', '', 2],
+    ['메모 있는 회원', '정원 초과를 확인했습니다.\n<img src=x onerror=alert(1)> 상담 후 수강 허용', 3],
+  ];
+  for (const [memberName, note, count] of entries) {
+    await page.locator('#new-enrollment').click();
+    const entry = page.locator('#enrollment-entry-rows > fieldset').first();
+    await entry.locator('[name="semesterName"]').fill('관리자 메모 학기');
+    await entry.locator('[name="memberName"]').fill(memberName);
+    if (count === 1) await entry.locator('[name="newCourseName"]').fill('메모 강좌');
+    else await entry.locator('[name="courseId"]').selectOption({ label: '메모 강좌' });
+    await page.locator('#enrollment-form [type="submit"]').click();
+    await expect(page.locator('#warning-dialog')).toBeVisible();
+    await expect(page.locator('#warning-form [name="note"]')).not.toHaveAttribute('required');
+    await page.locator('#warning-form [name="note"]').fill(note);
+    await page.locator('#warning-form [type="submit"]').click();
+    await expect(page.locator('#enrollment-dialog')).toBeHidden();
+    await expect(page.locator('#enrollment-rows tr')).toHaveCount(count);
+  }
+  const empty = page.locator('#enrollment-rows tr').filter({ hasText: '메모 없는 회원' });
+  await expect(empty.locator('.enrollment-note')).toHaveText('—');
+  const noted = page.locator('#enrollment-rows tr').filter({ hasText: '메모 있는 회원' });
+  await noted.getByText('메모 보기', { exact: true }).click();
+  await expect(noted.locator('.enrollment-note p')).toHaveText(entries[2][1]);
+  await expect(noted.locator('.enrollment-note img')).toHaveCount(0);
+  await expect(noted.locator('.enrollment-note time')).toHaveText(/\d/);
+  await page.reload();
+  await noted.getByText('메모 보기', { exact: true }).click();
+  await expect(noted.locator('.enrollment-note p')).toHaveText(entries[2][1]);
+});
+
 test('an administrator toggles all Excel registration notices and warnings while retaining errors', async ({ page, app }) => {
   await page.getByRole('button', { name: '수강이력', exact: true }).click();
   const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#enrollment-template').click()]);
@@ -590,13 +624,13 @@ for (const warningsEnabled of [true, false]) {
     await page.locator('#commit-import').click();
     if (warningsEnabled) {
       await expect(page.locator('#warning-dialog')).toBeVisible();
-      await page.locator('#warning-form [name="note"]').fill('정원 1명보다 많은 명단 확인');
       await page.locator('#warning-form [type="submit"]').click();
     }
     await expect(page.locator('#import-preview-status')).toContainText('반영됨');
     await expect(page.locator('#warning-dialog')).toBeHidden();
     await page.locator('#import-dialog .close-dialog').first().click();
     await expect(page.locator('#enrollment-rows tr')).toHaveCount(2);
+    await expect(page.locator('#enrollment-rows .enrollment-note')).toHaveText(['—', '—']);
     await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
     await page.locator('[data-catalog-tab="courses"]').click();
     await page.locator('#catalog-semester').selectOption({ label: '기존 학기' });
@@ -923,12 +957,6 @@ test('an administrator registers applications, reviews allocation, and sees save
   await expect(page.locator('#draft-item-rows')).toContainText('임시 회원');
   await page.locator('#preview-finalization').click();
   await page.locator('#finalize-form [name="note"]').fill('   ');
-  const rejected = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/finalize') && response.status() === 422);
-  await page.locator('#finalize-draft').click();
-  await rejected;
-  await expect(page.locator('#finalize-dialog')).toBeVisible();
-  await expect(page.locator('#finalize-dialog #dialog-message')).toContainText('확인 메모를 입력하고');
-  await page.locator('#finalize-form [name="note"]').fill('신청과 정원을 확인했습니다.');
   await page.locator('#finalize-draft').click();
   await expect(page.locator('#draft-rows tr')).toHaveCount(0);
 
@@ -937,6 +965,7 @@ test('an administrator registers applications, reviews allocation, and sees save
   await expect(page.locator('#enrollment-rows')).toContainText('김가나 수정');
   await expect(page.locator('#enrollment-rows')).toContainText('박다라');
   await expect(page.locator('#enrollment-rows')).toContainText('임시 회원');
+  await expect(page.locator('#enrollment-rows .enrollment-note')).toHaveText(['—', '—', '—']);
   await expect(page.locator('#enrollment-report-task')).toBeVisible();
   const [enrollmentReport] = await Promise.all([
     page.waitForEvent('download'),

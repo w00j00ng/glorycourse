@@ -625,6 +625,30 @@ test('rejects duplicate enrollment rows and requires acknowledgement for retakin
   assert.equal(same.issues.some(({ code }) => code === 'SAME_SEMESTER_ENROLLMENT'), false);
 });
 
+test('imports a warned enrollment with an omitted or blank optional note', async () => {
+  for (const [note, expected] of [[undefined, ''], ['', ''], ['  ', ''], ['  재수강 승인  ', '재수강 승인']]) {
+    const store = await Store.open(new MemoryAdapter(storeWithPriorEnrollment()), emptyStore());
+    const previews = previewService(store);
+    const preview = await previews.preview({ filename: 'optional-note.xlsx', kind: 'ENROLLMENTS',
+      bytes: await workbookWithRows('ENROLLMENTS', [['2026 봄', '홍길동', '기초']]) });
+    assert.ok(preview.issues.some(({ code }) => code === 'RETAKE'));
+    const resolution = { entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING',
+      semesterName: '2026 봄', memberName: '홍길동', courseName: '기초', warningDigest: preview.warningDigest,
+      ...(note === undefined ? {} : { acknowledgementNote: note }) };
+    const commits = commitService(store, previews);
+    const before = store.read();
+    for (const invalid of [123, null, 'x'.repeat(2001)]) {
+      await assert.rejects(commits.commit(requestFor(preview, 'invalid-note', [
+        { ...resolution, acknowledgementNote: invalid },
+      ])), ImportAcknowledgementError);
+      assert.deepEqual(store.read(), before);
+    }
+    const receipt = await commits.commit(requestFor(preview, 'optional-note', [resolution]));
+    assert.equal(receipt.inserted, 1);
+    assert.equal(store.read().enrollments[1].exceptionAcknowledgement.note, expected);
+  }
+});
+
 const storeWithPriorEnrollment = () => ({
   ...emptyStore(),
   semesters: [
