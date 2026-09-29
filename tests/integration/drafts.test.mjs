@@ -12,6 +12,7 @@ import {
   DraftValidationError,
 } from '../../backend/src/services/drafts.ts';
 import { openStore } from '../../backend/src/storage/store.ts';
+import { FinalizationService } from '../../backend/src/services/finalization.ts';
 import { draftFinalSelection } from '../../frontend/draft-view.js';
 
 const timestamp = '2026-09-23T00:00:00.000Z';
@@ -194,7 +195,7 @@ test('deletes an archived draft without deleting enrollments', async (t) => {
   assert.equal(store.read().enrollments.length, 1);
 });
 
-test('creates a manual draft with invalid automatic input and adds a member without an application', async (t) => {
+test('creates a manual draft with unresolved automatic input and assigns only registered applicants', async (t) => {
   const data = fixture();
   data.semesters[0].order = null;
   data.applications[0].applicationOrder = null;
@@ -206,19 +207,135 @@ test('creates a manual draft with invalid automatic input and adds a member with
 
   assert.equal(created.studentResults[0].autoDecision, 'NOT_EVALUATED');
   assert.equal(created.studentResults[0].autoReasonCode, 'MANUAL_ONLY');
-  const added = await service.addItem(created.draft.id, {
+  assert.deepEqual(created.studentResults.map(({ memberId }) => memberId), ['member-1']);
+  const assigned = await service.updateItem(created.draft.id, 'member-1', {
     expectedDraftRevision: 0,
-    memberId: 'member-2',
     finalDecision: 'SELECTED',
     finalSemesterCourseId: 'sc-b',
-    finalReasonCode: 'ADMIN_ADDED',
-    finalReasonDetail: { note: '현장 추가' },
+    finalReasonCode: 'ADMIN_OVERRIDE',
+    finalReasonDetail: { note: '관리자 수동 배정' },
   });
 
-  assert.equal(added.draft.revision, 1);
-  assert.equal(added.studentResults.find(({ memberId }) => memberId === 'member-2').sourceApplicationId, null);
+  assert.equal(assigned.draft.revision, 1);
+  assert.deepEqual(assigned.studentResults.map(({ memberId, sourceApplicationId, finalSemesterCourseId }) => (
+    [memberId, sourceApplicationId, finalSemesterCourseId]
+  )), [['member-1', 'application-1', 'sc-b']]);
   assert.equal(store.read().applications.length, beforeApplications);
   assert.equal(store.read().enrollments.length, 0);
+});
+
+test('builds an empty manual draft by existing and new member names, then finalizes the selected courses', async (t) => {
+  const data = fixture();
+  data.applications = [];
+  data.applicationChoices = [];
+  const { service, store } = await temporaryService(t, data);
+  const created = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
+  assert.equal(created.studentResults.length, 0);
+  for (const [revision, memberName, semesterCourseId] of [[0, ' 김영희 ', 'sc-a'], [1, '새 회원', 'sc-b']]) {
+    const added = await service.addManualItem(created.draft.id, { expectedDraftRevision: revision, memberName, semesterCourseId });
+    const item = added.studentResults.find(({ memberNameAtGeneration }) => memberNameAtGeneration === memberName.trim());
+    assert.equal(item.finalSemesterCourseId, semesterCourseId);
+    assert.equal(item.sourceApplicationId, null);
+    assert.equal(item.autoDecision, 'NOT_EVALUATED');
+    assert.equal(added.draft.revision, revision + 1);
+    assert.equal(added.isStale, false);
+  }
+  assert.equal(store.read().members.length, 3);
+  assert.equal(store.read().applications.length, 0);
+  assert.equal(store.read().enrollments.length, 0);
+  let finalizationId = 0;
+  const finalization = new FinalizationService(store, {
+    id: () => `manual-finalization-${++finalizationId}`, now: () => new Date(timestamp), secret: '0123456789abcdef0123456789abcdef',
+  });
+  const preview = finalization.preview(created.draft.id, { expectedDraftRevision: 2 });
+  assert.deepEqual(preview.enrollments.map(({ memberName, courseName }) => [memberName, courseName]).sort(), [['김영희', '기초'], ['새 회원', '심화']]);
+  const receipt = await finalization.finalize(created.draft.id, {
+    expectedDraftRevision: 2, preparedActionToken: preview.preparedActionToken,
+    acknowledgedWarningDigest: preview.warningDigest, acknowledgementNote: '', idempotencyKey: 'manual-finalization',
+  });
+  assert.equal(receipt.createdCount, 2);
+  assert.equal(store.read().enrollments.length, 2);
+});
+
+test('rejects invalid manual member additions without partial changes and explains the problem', async (t) => {
+  const data = fixture();
+  data.enrollments.push(stamped({ id: 'enrolled', semesterCourseId: 'sc-b', memberId: 'member-2', revision: 0, exceptionAcknowledgement: null }));
+  const { service, store } = await temporaryService(t, data);
+  const manual = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
+  const auto = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  const base = { expectedDraftRevision: 0, memberName: '신규 회원', semesterCourseId: 'sc-a' };
+  const cases = [
+    { id: auto.draft.id, request: base, expected: /수동 초안/ },
+    { request: { ...base, memberName: ' 홍길동 ' }, expected: /이미.*초안/ },
+    { request: { ...base, memberName: '김영희' }, expected: /수강이력/ },
+    { request: { ...base, semesterCourseId: 'sc-other' }, expected: /개설 강좌/ },
+    { request: { ...base, memberName: ' ' }, expected: /회원명/ },
+    { request: { ...base, memberName: '가'.repeat(201) }, expected: /회원명/ },
+    { request: { ...base, semesterCourseId: null }, expected: /강좌/ },
+    { request: null, expected: /입력/ },
+  ];
+  for (const { id = manual.draft.id, request, expected } of cases) {
+    const before = store.read();
+    await assert.rejects(service.addManualItem(id, request), (error) => {
+      assert.ok(error instanceof DraftValidationError);
+      assert.match(error.issues[0].message, expected);
+      return true;
+    });
+    assert.deepEqual(store.read(), before);
+  }
+  await service.addManualItem(manual.draft.id, base);
+  const before = store.read();
+  await assert.rejects(service.addManualItem(manual.draft.id, { ...base, memberName: '동시 입력' }), DraftRevisionConflictError);
+  assert.deepEqual(store.read(), before);
+  await store.write({}, (candidate) => { candidate.allocationDrafts.find(({ id }) => id === manual.draft.id).status = 'ARCHIVED'; });
+  await assert.rejects(service.addManualItem(manual.draft.id, { ...base, expectedDraftRevision: 1 }), DraftReadOnlyError);
+});
+
+test('keeps a previously saved member without an application available for draft review and editing', async (t) => {
+  const { service, store } = await temporaryService(t, fixture());
+  const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  await store.write({}, (data) => {
+    data.allocationDraftItems.push({
+      ...data.allocationDraftItems[0], id: 'legacy-item', memberId: 'member-2',
+      memberNameAtGeneration: '김영희', sourceApplicationId: null,
+      autoDecision: 'NOT_EVALUATED', autoSemesterCourseId: null, autoReasonCode: 'MANUAL_ONLY',
+      autoReasonDetail: { preferenceAttempts: [], fallback: null },
+      finalDecision: 'SELECTED', finalSemesterCourseId: 'sc-b', finalReasonCode: 'ADMIN_ADDED',
+      finalReasonDetail: { note: '기존 현장 추가' },
+    });
+  });
+  const detail = service.get(created.draft.id);
+  assert.equal(detail.studentResults.find(({ memberId }) => memberId === 'member-2').sourceApplicationId, null);
+  assert.equal(detail.courseSummary.find(({ semesterCourseId }) => semesterCourseId === 'sc-b').finalSelectedCount, 1);
+  const edited = await service.updateItem(created.draft.id, 'member-2', {
+    expectedDraftRevision: 0, finalDecision: 'REJECTED', finalSemesterCourseId: null,
+    finalReasonCode: 'ADMIN_EXCLUDED', finalReasonDetail: { note: '기존 행 제외' },
+  });
+  assert.equal(edited.studentResults.find(({ memberId }) => memberId === 'member-2').finalDecision, 'REJECTED');
+  assert.equal(edited.studentResults.length, 2);
+  assert.equal(store.read().applications.length, 1);
+});
+
+test('reports current semester enrollment members even when their history was registered after draft creation', async (t) => {
+  const data = fixture();
+  data.enrollments.push(stamped({ id: 'existing-history', semesterCourseId: 'sc-b', memberId: 'member-2', revision: 0, exceptionAcknowledgement: null }));
+  const { service, store } = await temporaryService(t, data);
+  const created = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
+  assert.deepEqual(created.currentEnrolledMembers, [{ id: 'member-2', name: '김영희' }]);
+  await store.write({}, (candidate) => {
+    candidate.enrollments.push(stamped({ id: 'later-history', semesterCourseId: 'sc-a', memberId: 'member-1', revision: 0, exceptionAcknowledgement: null }));
+  });
+  const detail = service.get(created.draft.id);
+  assert.deepEqual(detail.currentEnrolledMembers, [{ id: 'member-1', name: '홍길동' }, { id: 'member-2', name: '김영희' }]);
+  assert.equal(detail.existingEnrollments.length, 1, 'capacity evidence keeps the original snapshot');
+  const before = store.read();
+  for (const memberName of [' 김영희 ', '홍길동'.normalize('NFD')]) {
+    await assert.rejects(service.addManualItem(created.draft.id, { expectedDraftRevision: 0, memberName, semesterCourseId: 'sc-a' }), (error) => {
+      assert.match(error.issues[0].message, /같은 학기에 수강이력/);
+      return true;
+    });
+  }
+  assert.deepEqual(store.read(), before);
 });
 
 test('uses a semantic fingerprint, preserves deleted-source evidence, and replays the stored input', async (t) => {

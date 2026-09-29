@@ -61,15 +61,13 @@ test('identifies the application and recovery steps when invalid preferences pre
 test('tells the user how to correct rejected acknowledgement notes', () => {
   for (const name of [
     'EnrollmentAcknowledgementError', 'FinalizationAcknowledgementError',
-    'ImportAcknowledgementError', 'RecoveryAcknowledgementError',
+    'ImportAcknowledgementError',
   ]) {
     assert.deepEqual(responseFor(name), {
       status: 422,
       body: {
         code: 'UNPROCESSABLE',
-        message: name === 'RecoveryAcknowledgementError'
-          ? '확인 메모를 입력하고 검토한 경고 내용을 다시 확인하세요.'
-          : '검토한 경고 내용을 다시 확인하세요. 관리자 메모는 선택 입력이며 2000자까지 입력할 수 있습니다.',
+        message: '검토한 경고 내용을 다시 확인하세요. 관리자 메모는 선택 입력이며 2000자까지 입력할 수 있습니다.',
         issues: [],
       },
     });

@@ -34,7 +34,7 @@ test('restores a known page from the URL and falls back to home', () => {
   assert.equal(viewFromHash('#enrollments'), 'enrollments');
   assert.equal(viewFromHash('#drafts'), 'drafts');
   assert.equal(viewFromHash('#catalog'), 'catalog');
-  assert.equal(viewFromHash('#backups'), 'backups');
+  assert.equal(viewFromHash('#backups'), 'home');
   assert.equal(viewFromHash(''), 'home');
   assert.equal(viewFromHash('#unknown'), 'home');
 });

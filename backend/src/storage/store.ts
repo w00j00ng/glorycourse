@@ -273,10 +273,6 @@ export class Store {
     ))?.receipt ?? undefined;
   }
 
-  restoreHistory(): ReadonlyArray<Readonly<RestoreReceiptRecord>> {
-    return this.data.restoreReceipts;
-  }
-
   finalizationReceipt(idempotencyKey: string): Readonly<FinalizationReceiptRecord> | undefined {
     return this.data.finalizationReceipts.find((item) => item.idempotencyKey === idempotencyKey);
   }

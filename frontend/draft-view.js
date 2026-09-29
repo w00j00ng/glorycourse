@@ -38,6 +38,41 @@ export const draftApplicationSummaries = (snapshot) => {
   }));
 };
 
+/**
+ * @param {Pick<import('../backend/src/services/drafts.ts').DraftDetail, 'courseSummary' | 'studentResults'>} detail
+ * @param {ReadonlyMap<string, string>} [selections]
+ */
+export const draftCourseStatuses = (detail, selections = new Map()) => {
+  const counts = new Map(detail.courseSummary.map((course) => [course.semesterCourseId, course.finalSelectedCount]));
+  const snapshotIds = new Set(counts.keys());
+  for (const item of detail.studentResults) {
+    if (item.finalDecision === 'SELECTED' && item.finalSemesterCourseId && !snapshotIds.has(item.finalSemesterCourseId)) {
+      counts.set(item.finalSemesterCourseId, (counts.get(item.finalSemesterCourseId) ?? 0) + 1);
+    }
+  }
+  for (const item of detail.studentResults) {
+    const selected = selections.get(item.memberId);
+    if (selected === undefined) continue;
+    const previous = item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : '';
+    if (previous === selected) continue;
+    if (previous) counts.set(previous, (counts.get(previous) ?? 0) - 1);
+    if (selected) counts.set(selected, (counts.get(selected) ?? 0) + 1);
+  }
+  const courses = [...detail.courseSummary, ...[...counts].filter(([id]) => !snapshotIds.has(id)).map(([id, count]) => ({
+    semesterCourseId: id, capacity: null, existingEnrollmentCount: 0, finalSelectedCount: count, remaining: null,
+  }))];
+  return courses.map((course) => {
+    const hasSnapshot = snapshotIds.has(course.semesterCourseId);
+    const finalSelectedCount = counts.get(course.semesterCourseId) ?? 0;
+    const totalCount = course.existingEnrollmentCount + finalSelectedCount;
+    const remaining = course.capacity === null ? null : Math.max(0, course.capacity - totalCount);
+    const status = !hasSnapshot ? '현황 미확인 · 새 초안 필요' : course.capacity === null ? '정원 미정'
+      : totalCount > course.capacity ? `정원 초과 ${totalCount - course.capacity}명`
+        : remaining === 0 ? '정원 마감' : `잔여 ${remaining}명`;
+    return { ...course, finalSelectedCount, totalCount, remaining, status, hasSnapshot };
+  });
+};
+
 /** @param {DraftItem[]} items @param {{ query?: string, result?: string, courseName: (id: string | null) => string }} options */
 export const filterDraftItems = (items, { query = '', result = 'ALL', courseName }) => {
   const keyword = query.trim().normalize('NFC').toLocaleLowerCase('ko');

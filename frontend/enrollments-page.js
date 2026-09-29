@@ -20,7 +20,7 @@ import { reportFilename } from './download-name.js';
  *   resourceName: (items: { id: string, name: string }[], id: string) => string,
  *   cell: (text: string) => any,
  *   actionsCell: (...actions: any[]) => any,
- *   reviewWarnings: (preview: EnrollmentPreview, issueContext: (issue: import('../backend/src/services/enrollments.ts').EnrollmentIssue) => { memberName?: string, courseName?: string }) => Promise<string | null>,
+ *   reviewWarnings: (preview: EnrollmentPreview, issueContext: (issue: import('../backend/src/services/enrollments.ts').EnrollmentIssue) => { memberName?: string, courseName?: string }, initialNote?: string) => Promise<string | null>,
  * }} dependencies
  */
 export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, download, loadPaged, loadCatalogs, recordQuery,
@@ -86,6 +86,8 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     form.dataset.id = item?.id || '';
     form.dataset.revision = item?.revision ?? '';
     byId('enrollment-dialog-title').textContent = item ? '이력 수정' : '이력 등록';
+    byId('enrollment-note-field').hidden = !item;
+    byId('enrollment-note').value = item?.exceptionAcknowledgement?.note ?? '';
     byId('enrollment-entry-rows').replaceChildren();
     byId('add-enrollment-entry').hidden = Boolean(item);
     addEnrollmentEntry(item, Boolean(item));
@@ -171,7 +173,7 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
       const note = await reviewWarnings(preview, (issue) => {
         const row = items[Number(issue.detail?.rowNumber ?? 1) - 1];
         return { memberName: row?.memberName, courseName: row?.courseName };
-      });
+      }, form.dataset.id ? byId('enrollment-note').value : '');
       if (note === null) return;
       await run(() => api(form.dataset.id ? `/enrollments/${form.dataset.id}` : '/enrollments/batch', {
         method: form.dataset.id ? 'PATCH' : 'POST',

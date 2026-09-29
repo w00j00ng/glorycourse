@@ -34,6 +34,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     previewRequest++;
     state.importPreview = null;
     byId('import-preview').hidden = true;
+    byId('import-candidate-details').open = false;
     byId('import-preview-action').hidden = false;
     byId('commit-import').disabled = true;
   };
@@ -52,6 +53,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
   /** @param {ImportPreview} preview */
   const renderCandidates = (preview) => {
     const candidates = preview.kind === 'APPLICATIONS' ? preview.applications : preview.enrollments;
+    byId('import-candidate-details').open = false;
     byId('import-candidates').replaceChildren(...candidates.map((candidate) => {
       const card = document.createElement('div');
       card.className = 'import-candidate';
@@ -61,6 +63,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       detail.textContent = 'choices' in candidate
         ? `신청순서 ${candidate.applicationOrder ?? '미정'} · ${candidate.choices.map(({ courseName, preference }) => `${preference ?? '?'}순위 ${courseName || '강좌 미정'}`).join(', ')}`
         : candidate.courseName || '강좌 미정';
+      card.title = `${title.textContent} · ${detail.textContent}`;
       card.append(title, detail);
       return card;
     }));
@@ -124,7 +127,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       rows.push(resolutionSelect(
         `${change.semesterName}${change.courseName ? ` · ${change.courseName}` : ''} ${change.field === 'order' ? '순서' : '정원'}`,
         `context-action-${index}`,
-        [['KEEP_EXISTING', '기존 값 유지'], ['APPLY_FILE_VALUE', `파일 값 적용 (${change.fileValue})`]],
+        [['KEEP_EXISTING', '기존 값 유지'], ['APPLY_FILE_VALUE', `파일 값 적용 (${change.fileValue ?? '미정'})`]],
         'KEEP_EXISTING',
       ));
     });

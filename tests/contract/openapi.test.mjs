@@ -5,6 +5,7 @@ import test from 'node:test';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import YAML from 'yaml';
+import { DraftValidationError } from '../../backend/src/services/drafts.ts';
 
 const api = YAML.parse(await readFile(new URL('../../openapi/openapi.yaml', import.meta.url), 'utf8'));
 
@@ -21,6 +22,7 @@ const requiredOperations = {
   '/applications': ['get', 'post'],
   '/applications/batch': ['post'],
   '/applications/{id}': ['get', 'patch', 'delete'],
+  '/semesters/{id}/applications': ['get', 'delete'],
   '/enrollments': ['get', 'post'],
   '/enrollments/batch': ['post'],
   '/enrollments/batch/preview': ['post'],
@@ -43,9 +45,6 @@ const requiredOperations = {
   '/allocation-drafts/{id}/finalize-preview': ['post'],
   '/allocation-drafts/{id}/finalize': ['post'],
   '/semesters/{id}/enrollment-report': ['get', 'post'],
-  '/backups': ['get', 'post'],
-  '/restores/preview': ['post'],
-  '/restores': ['post'],
 };
 
 test('defines every designed operation with a unique operationId', () => {
@@ -94,12 +93,29 @@ test('requires idempotency keys on irreversible commits', () => {
   for (const [path, method] of [
     ['/imports/{previewId}/commit', 'post'],
     ['/allocation-drafts/{id}/finalize', 'post'],
-    ['/restores', 'post'],
   ]) {
     const parameters = api.paths[path][method].parameters ?? [];
     const header = parameters.find(({ name, in: location }) => name === 'Idempotency-Key' && location === 'header');
     assert.equal(header?.required, true, `${method.toUpperCase()} ${path}`);
   }
+});
+
+test('describes manual member assignment inputs and validation issues', () => {
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  addFormats(ajv);
+  const rootId = 'https://glorycourse.local/manual-draft-openapi.json';
+  ajv.addSchema({ ...api, $id: rootId }, rootId);
+  const validate = ajv.getSchema(`${rootId}#/components/schemas/AddManualDraftItemRequest`);
+  const request = { expectedDraftRevision: 0, memberName: '김영희', semesterCourseId: 'sc-1' };
+  for (const { input, expected } of [
+    { input: request, expected: true },
+    { input: { ...request, memberName: '' }, expected: false },
+    { input: { ...request, expectedDraftRevision: -1 }, expected: false },
+    { input: { ...request, semesterCourseId: null }, expected: false },
+  ]) assert.equal(validate(input), expected);
+  const validateIssue = ajv.getSchema(`${rootId}#/components/schemas/ValidationIssue`);
+  const error = new DraftValidationError('이미 이 초안에 있는 회원입니다.');
+  assert.equal(validateIssue(error.issues[0]), true, JSON.stringify(validateIssue.errors));
 });
 
 test('publishes enforceable initial safety limits', () => {

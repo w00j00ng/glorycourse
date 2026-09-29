@@ -29,7 +29,6 @@
       <button class="nav-item" data-view-target="applications" type="button">수강신청</button>
       <button class="nav-item" data-view-target="drafts" type="button">배정초안</button>
       <button class="nav-item" data-view-target="enrollments" type="button">수강이력</button>
-      <button class="nav-item" data-view-target="backups" type="button">자료 관리</button>
       <label class="button-help-setting"><input id="button-help-enabled" type="checkbox" checked>버튼 도움말 표시</label>
     </nav>
 
@@ -76,6 +75,7 @@
           <label>강좌명<select id="application-course-filter"><option value="">전체</option></select></label>
           <label>정렬<select id="application-sort"><option value="ORDER_ASC">신청순서 낮은 순</option><option value="ORDER_DESC">신청순서 높은 순</option><option value="NAME_ASC">회원명 가나다순</option><option value="NAME_DESC">회원명 역순</option></select></label>
           <button class="secondary" id="refresh-applications" type="button" data-button-help="현재 검색 조건으로 수강신청 목록을 다시 불러옵니다.">새로고침</button>
+          <button class="danger" id="delete-semester-applications" type="button" data-button-help="선택한 학기의 모든 수강신청을 검토 후 삭제합니다." disabled>선택 학기 신청 전체 삭제</button>
         </div>
         <div class="table-wrap">
           <table>
@@ -103,6 +103,7 @@
           <label>학기<select id="enrollment-semester-filter"><option value="">전체</option></select></label>
           <label>회원명<input id="enrollment-member-search" type="search" placeholder="회원명 일부"></label>
           <label>강좌명<select id="enrollment-course-filter"><option value="">전체</option></select></label>
+          <label>정렬<select id="enrollment-sort"><option value="">등록순</option><option value="NAME_ASC">회원명 가나다순</option><option value="NAME_DESC">회원명 역순</option><option value="COURSE_ASC">강좌명 가나다순</option><option value="COURSE_DESC">강좌명 역순</option><option value="SEMESTER_DESC">학기 최신 순</option><option value="SEMESTER_ASC">학기 이전 순</option></select></label>
           <button class="secondary" id="refresh-enrollments" type="button" data-button-help="현재 검색 조건으로 수강이력 목록을 다시 불러옵니다.">새로고침</button>
           <button class="danger" id="delete-semester-enrollments" type="button" data-button-help="선택한 학기의 모든 수강이력을 검토 후 삭제합니다." disabled>선택 학기 이력 전체 삭제</button>
         </div>
@@ -159,7 +160,7 @@
           </form>
         </section>
         <section id="catalog-courses-panel" aria-label="개설 강좌 관리" hidden>
-          <div class="toolbar"><label>관리할 학기<select id="catalog-semester"><option value="">학기를 선택하세요.</option></select></label></div>
+          <div class="toolbar"><label>관리할 학기<select id="catalog-semester"><option value="">학기를 선택하세요.</option></select></label><label>정렬<select id="catalog-course-sort"><option value="">등록순</option><option value="NAME_ASC">강좌명 가나다순</option><option value="NAME_DESC">강좌명 역순</option><option value="CAPACITY_ASC">정원 낮은 순</option><option value="CAPACITY_DESC">정원 높은 순</option></select></label></div>
           <p id="catalog-empty" class="empty">등록된 학기가 없습니다. 학기를 먼저 추가하세요.</p>
           <form id="catalog-form" hidden>
           <div class="catalog-course-heading"><h3>개설 강좌</h3><div class="heading-actions"><button class="secondary" id="copy-catalog-courses" type="button" data-button-help="이전 학기의 강좌와 정원을 선택해 편집 목록에 추가합니다.">이전 학기에서 가져오기</button><button class="secondary" id="add-catalog-course" type="button" data-button-help="강좌명과 정원을 여러 줄로 입력해 편집 목록에 추가합니다.">여러 강좌 추가</button></div></div>
@@ -176,23 +177,6 @@
         </section>
       </section>
 
-      <section id="backups-view" class="view" hidden>
-        <div class="page-heading">
-          <div><p class="eyebrow">BACKUP &amp; RESTORE</p><h2>자료 관리</h2><p>현재 자료를 백업하거나 검증된 백업 파일로 복원합니다.</p></div>
-          <div class="heading-actions"><button class="secondary" id="refresh-backups" type="button" data-button-help="자료 폴더의 백업 목록을 다시 불러옵니다.">새로고침</button><button class="secondary" id="create-backup" type="button" data-button-help="현재 자료를 백업합니다. 변경이 없으면 기존 백업을 사용합니다.">현재 자료 백업</button><button class="danger" id="open-restore" type="button" data-button-help="백업 파일을 검토한 뒤 현재 자료를 복원합니다.">백업 파일 복원</button><button class="secondary help-button" data-help="backups" type="button" aria-label="자료 관리 사용 방법" data-button-help="자료 관리 화면의 사용 순서와 주의사항을 확인합니다.">?</button></div>
-        </div>
-        <div class="summary-grid" aria-label="백업 요약">
-          <article><span>저장된 백업</span><strong id="backup-count">0</strong><small>SQLite 백업 파일</small></article>
-          <article><span>최근 백업</span><strong id="latest-backup">없음</strong><small>자료 폴더의 backups</small></article>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>생성 시각</th><th>자료 버전</th><th>크기</th><th>SHA-256</th></tr></thead>
-            <tbody id="backup-rows"></tbody>
-          </table>
-          <p id="backup-empty" class="empty">생성된 백업이 없습니다.</p>
-        </div>
-      </section>
     </main>
   </div>
 
@@ -270,6 +254,7 @@
       <div class="dialog-heading"><div><p class="eyebrow">ENROLLMENT</p><h2 id="enrollment-dialog-title">이력 등록</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
       <p class="form-help">회원명이 같으면 같은 사람으로 처리됩니다. 동명이인은 구분되는 이름으로 입력하세요.</p>
       <div id="enrollment-entry-rows"></div>
+      <label id="enrollment-note-field" hidden>관리자 메모 (선택)<textarea id="enrollment-note" name="adminNote" rows="3" maxlength="2000" placeholder="필요한 경우 수정 내용을 기록하세요."></textarea></label>
       <button id="add-enrollment-entry" class="secondary" type="button" data-button-help="다른 수강이력을 함께 입력할 행을 추가합니다.">이력 행 추가</button>
       <label class="input-warnings-toggle"><input data-input-warnings-toggle type="checkbox">입력 경고 무시</label>
       <p class="form-help">최대 100건을 함께 저장합니다. 체크하면 안내·경고 확인을 생략하며 오류는 계속 표시됩니다.</p>
@@ -309,8 +294,10 @@
         </div>
         <h3>검토 항목</h3>
         <ul id="import-issues" class="warning-list"></ul>
-        <h3>반영 후보</h3>
-        <div id="import-candidates" class="import-candidates"></div>
+        <details id="import-candidate-details" class="import-candidate-details">
+          <summary>반영 후보 <span class="candidate-show">상세보기</span><span class="candidate-hide">상세접기</span></summary>
+          <div id="import-candidates" class="import-candidates"></div>
+        </details>
         <div id="import-resolutions" class="import-resolutions"></div>
         <div class="dialog-actions"><button class="primary" id="commit-import" type="button" data-button-help="검토한 Excel 내용을 선택한 반영 방식으로 저장합니다.">업무 자료에 반영</button></div>
       </section>
@@ -327,7 +314,7 @@
       </div>
       <p id="draft-policy-description" class="form-help"></p>
       <p id="draft-readiness" class="form-help">학기를 선택하면 자동 배정 준비 상태를 확인합니다.</p>
-      <p class="form-help">기존 확정 인원은 좌석을 먼저 사용합니다. 동률은 저장된 seed와 비균등 고정 규칙으로 결정되며 균등 추첨이 아닙니다.</p>
+      <p id="draft-auto-help" class="form-help">기존 확정 인원은 좌석을 먼저 사용합니다. 동률은 저장된 seed와 비균등 고정 규칙으로 결정되며 균등 추첨이 아닙니다.</p>
       <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="primary" type="submit" data-button-help="선택한 학기와 배정 방식으로 검토할 배정초안을 저장합니다.">초안 생성</button></div>
     </form>
   </dialog>
@@ -336,6 +323,26 @@
     <form method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">DRAFT REVIEW</p><h2 id="draft-dialog-title">배정초안</h2><p id="draft-dialog-meta" class="form-help"></p></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
       <div id="draft-stale" class="message error" hidden>초안 생성 뒤 원본 자료가 변경되었습니다. 현재 초안을 확정하지 말고 새 초안을 검토하세요.</div>
+      <section class="draft-capacity" aria-labelledby="draft-capacity-title">
+        <h3 id="draft-capacity-title">강좌별 정원 현황</h3>
+        <p id="draft-capacity-status" class="form-help" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>강좌</th><th>기존 이력</th><th>초안 배정</th><th>합계 / 정원</th><th>잔여</th><th>상태</th></tr></thead>
+            <tbody id="draft-capacity-rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <fieldset id="draft-manual-entry" hidden>
+        <legend>회원 직접 배정</legend>
+        <div class="form-grid">
+          <label>회원명<input id="draft-add-member" list="draft-member-options" aria-describedby="draft-add-member-warning" maxlength="200" required placeholder="기존 회원 선택 또는 새 이름 입력"></label>
+          <label>배정 강좌<select id="draft-add-course" required></select></label>
+        </div>
+        <p id="draft-add-member-warning" class="message error" role="alert" hidden><strong>배정 불가:</strong> 이 회원은 같은 학기에 수강이력이 있습니다. 수강이력에서 확인하세요.</p>
+        <p class="form-help">같은 이름은 같은 회원으로 처리합니다. 동명이인은 식별 가능한 이름을 사용하세요. 추가한 회원의 배정은 아래 최종 결정에서 변경하거나 제외할 수 있습니다.</p>
+        <button id="draft-add-item" class="secondary" type="button" data-button-help="회원과 선택한 강좌를 수동 초안에 추가합니다. 새 이름은 회원으로 함께 등록합니다.">회원 배정 추가</button>
+      </fieldset>
       <div class="draft-toolbar">
         <label>결과 검색<input id="draft-search" type="search" placeholder="회원, 자동·최종 강좌"></label>
         <label>결과 필터<select id="draft-result-filter"><option value="ALL">전체</option><option value="PREFERENCE_ALLOCATED">희망 배정</option><option value="RANDOM_FALLBACK">대체 배정</option><option value="AUTO_REJECTED">자동 미배정</option><option value="MANUAL_CHANGED">관리자 변경</option></select></label>
@@ -356,13 +363,8 @@
         <span id="draft-item-page-status" aria-live="polite"></span>
         <button class="secondary" id="draft-item-next-page" type="button" data-button-help="배정 결과의 다음 페이지를 봅니다.">다음</button>
       </nav>
-      <fieldset id="draft-add-item">
-        <legend>신청 없는 회원 추가</legend>
-        <div class="form-grid"><label>회원<select id="draft-add-member"></select></label><label>배정 강좌<select id="draft-add-course"></select></label></div>
-        <div class="dialog-actions compact"><button class="secondary" id="add-draft-item" type="button" data-button-help="선택한 회원과 최종 강좌를 배정초안에 추가합니다.">선택 회원 추가</button></div>
-      </fieldset>
       <p class="form-help">최종 결정의 저장 버튼을 누르면 바로 저장됩니다. 닫은 뒤 다시 열어 계속 검토할 수 있습니다.</p>
-      <div class="dialog-actions"><button class="secondary close-dialog" type="button">닫기</button><button class="primary" id="preview-finalization" type="button" data-button-help="배정 확정 전에 경고와 생성될 수강이력을 검토합니다.">확정</button></div>
+      <div class="dialog-actions"><button class="secondary close-dialog" type="button">닫기</button><button class="primary" id="preview-finalization" type="button" data-button-help="저장된 최종 결정의 경고와 강좌별 인원을 확인하는 확정 검토 창을 엽니다.">확정</button></div>
     </form>
   </dialog>
 
@@ -383,26 +385,9 @@
     </form>
   </dialog>
 
-  <dialog id="restore-dialog">
-    <form id="restore-form">
-      <div class="dialog-heading"><div><p class="eyebrow">RESTORE REVIEW</p><h2>백업 파일 복원</h2></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
-      <label>백업 SQLite 파일<input name="file" type="file" accept=".sqlite,application/vnd.sqlite3" required></label>
-      <p class="form-help">파일을 먼저 검증합니다. 검토만으로 현재 자료는 바뀌지 않습니다.</p>
-      <section id="restore-preview" hidden>
-        <div class="summary-grid import-summary">
-          <article><span>현재 자료 버전</span><strong id="restore-current-revision">0</strong></article>
-          <article><span>백업 자료 버전</span><strong id="restore-backup-revision">0</strong></article>
-        </div>
-        <h3>복원 영향</h3>
-        <ul id="restore-issues" class="warning-list"></ul>
-        <label>확인 메모<textarea name="note" rows="3" maxlength="2000" placeholder="백업 이후 자료가 사라짐을 확인한 내용을 기록하세요."></textarea></label>
-      </section>
-      <div class="dialog-actions"><button class="secondary close-dialog" type="button">취소</button><button class="danger" id="restore-submit" type="submit" data-button-help="먼저 백업 내용을 검토하고, 확인 메모를 입력한 뒤 현재 자료를 복원합니다.">파일 검토</button></div>
-    </form>
-  </dialog>
-
   <datalist id="semester-options"></datalist>
   <datalist id="member-options"></datalist>
+  <datalist id="draft-member-options"></datalist>
   <datalist id="course-options"></datalist>
   <template id="application-entry-template"><fieldset class="manual-entry">
     <legend>신청</legend>

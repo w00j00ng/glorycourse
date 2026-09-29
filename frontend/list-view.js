@@ -1,6 +1,6 @@
 import { currentSemester } from './dashboard-view.js';
 
-const views = new Set(['home', 'applications', 'enrollments', 'drafts', 'catalog', 'backups']);
+const views = new Set(['home', 'applications', 'enrollments', 'drafts', 'catalog']);
 
 /** @param {import('./dashboard-view.js').Semester[]} semesters @param {string} selected @param {boolean} userSelected */
 export const applicationSemesterFilterValue = (semesters, selected, userSelected) => (

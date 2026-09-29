@@ -97,8 +97,16 @@ test('exports one row per semester and member with course columns in preference 
     { semesterName: '2026 봄', memberName: '김은혜', applicationOrder: 2, courseName: '합창', preference: 1 },
     { semesterName: '2026 가을', memberName: '홍길동', applicationOrder: 1, courseName: '합창', preference: 3 },
   ];
+  const contexts = [
+    { semesterName: '2026 봄', semesterOrder: 2, courses: [
+      { courseName: '기초', capacity: 10 }, { courseName: '심화', capacity: 12 }, { courseName: '합창', capacity: 0 },
+    ] },
+    { semesterName: '2026 가을', semesterOrder: 5, courses: [
+      { courseName: '합창', capacity: null }, { courseName: '발성', capacity: 7 },
+    ] },
+  ];
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(await exportApplicationRows(request));
+  await workbook.xlsx.load(await exportApplicationRows(request, contexts));
   const sheet = workbook.getWorksheet('수강신청');
   const expected = [
     ['2026 봄', '홍길동', 1, '기초', null, null, null, '심화'],
@@ -109,6 +117,18 @@ test('exports one row per semester and member with course columns in preference 
   assert.deepEqual(expected.map((_, index) => Array.from({ length: 8 }, (_, column) => (
     sheet.getRow(index + 2).getCell(column + 1).value
   ))), expected);
+  assert.deepEqual(workbook.getWorksheet('학기').getSheetValues().slice(2).map((row) => row.slice(1)), [
+    ['2026 봄', 2], ['2026 가을', 5],
+  ]);
+  const expectedCourses = [
+    ['2026 봄', '기초', 10], ['2026 봄', '심화', 12], ['2026 봄', '합창', 0],
+    ['2026 가을', '합창', null], ['2026 가을', '발성', 7],
+  ];
+  const courses = workbook.getWorksheet('개설강좌');
+  assert.equal(courses.rowCount, expectedCourses.length + 1);
+  assert.deepEqual(expectedCourses.map((_, index) => Array.from({ length: 3 }, (_, column) => (
+    courses.getRow(index + 2).getCell(column + 1).value
+  ))), expectedCourses);
 });
 
 test('refuses to export unresolved or out-of-range preferences instead of dropping choices', async () => {

@@ -15,7 +15,8 @@ test('selecting a semester twice closes its editor and marks the row unselected'
     const select = { value: '' };
     const nodes = {
       'catalog-semester-rows': rows, 'catalog-semester-empty': {}, 'semester-form': form,
-      'catalog-semester': select, 'catalog-form': {}, 'catalog-course-rows': { replaceChildren() {} },
+      'catalog-semester': select, 'catalog-form': {}, 'catalog-course-rows': { children: [], replaceChildren() {}, append() {} },
+      'catalog-course-sort': { value: '' },
       'catalog-course-empty': {}, 'catalog-empty': {}, 'copy-catalog-courses': {},
     };
     const state = { semesters: [{ id: 'semester-1', name: '2026 가을', order: 1 }],
@@ -55,7 +56,8 @@ test('moving a semester sends its neighbor and reloads the selected row', async 
     const nodes = {
       'catalog-semester': select, 'catalog-semester-rows': rows, 'catalog-semester-empty': {},
       'semester-form': { hidden: true, elements: { name: {} } }, 'catalog-form': {},
-      'catalog-course-rows': { replaceChildren() {} }, 'catalog-course-empty': {},
+      'catalog-course-rows': { children: [], replaceChildren() {}, append() {} }, 'catalog-course-empty': {},
+      'catalog-course-sort': { value: '' },
       'catalog-empty': {}, 'copy-catalog-courses': {},
     };
     const page = createCatalogPage({
@@ -98,7 +100,8 @@ test('choosing another semester closes the previously selected editor', async ()
     const nodes = {
       'catalog-semester': select, 'catalog-semester-rows': { replaceChildren() {} },
       'catalog-semester-empty': {}, 'semester-form': form, 'catalog-form': {},
-      'catalog-course-rows': { replaceChildren() {} }, 'catalog-course-empty': {},
+      'catalog-course-rows': { children: [], replaceChildren() {}, append() {} }, 'catalog-course-empty': {},
+      'catalog-course-sort': { value: '' },
       'catalog-empty': {}, 'copy-catalog-courses': {},
     };
     const page = createCatalogPage({
@@ -129,7 +132,8 @@ test('the semester editor keeps the newest selection when an older detail reques
       const nodes = {
         'catalog-semester': select, 'catalog-semester-rows': rows, 'catalog-semester-empty': {},
         'semester-form': semesterForm, 'catalog-form': { hidden: true },
-        'catalog-course-rows': { replaceChildren() {} }, 'catalog-course-empty': {},
+        'catalog-course-rows': { children: [], replaceChildren() {}, append() {} }, 'catalog-course-empty': {},
+        'catalog-course-sort': { value: '' },
         'catalog-empty': { hidden: true }, 'copy-catalog-courses': {},
       };
       const semesters = [{ id: 'a', name: '봄', order: 1 }, { id: 'b', name: '가을', order: 2 }];

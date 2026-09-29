@@ -12,6 +12,7 @@ import {
   type WorkbookLimits,
 } from '../excel/workbooks.ts';
 import { applyBatchCandidate, evaluateEnrollmentImport } from './enrollments.ts';
+import { applyContext } from './import-context.ts';
 import type { Store, DatabaseState } from '../storage/store.ts';
 
 export type ImportMode = 'MERGE_KEEP_EXISTING' | 'REPLACE_APPLICATION';
@@ -43,6 +44,7 @@ export type EnrollmentCandidate = {
   semesterName: string;
   memberName: string;
   courseName: string;
+  adminNote: string;
   sourceRef: { sheet: string; row: number };
 };
 export type ImportContextChange = {
@@ -332,14 +334,17 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
 const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강이력');
   const issues: ImportIssue[] = [];
+  const contextChanges = contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '개설강좌'), 'SEMESTER_COURSE', issues, 'ENROLLMENTS');
   const candidates = sourceRows.map((row): EnrollmentCandidate => {
     const semesterName = clean(row.cells['학기명']);
     const memberName = clean(row.cells['회원명']);
     const courseName = clean(row.cells['강좌명']);
+    const adminNote = clean(row.cells['관리자 메모']);
     if (!semesterName) issues.push(requiredRowIssue('SEMESTER_NAME_REQUIRED', 'Semester name is required', row, '학기명'));
     if (!memberName) issues.push(requiredRowIssue('MEMBER_NAME_REQUIRED', 'Member name is required', row, '회원명'));
     if (!courseName) issues.push(requiredRowIssue('COURSE_NAME_REQUIRED', 'Course name is required', row, '강좌명'));
-    return { semesterName, memberName, courseName, sourceRef: { sheet: row.sheet, row: row.row } };
+    if (adminNote.length > 2000) issues.push(requiredRowIssue('ENROLLMENT_NOTE_TOO_LONG', 'Administrator note must be at most 2000 characters', row, '관리자 메모'));
+    return { semesterName, memberName, courseName, adminNote, sourceRef: { sheet: row.sheet, row: row.row } };
   });
 
   const groups = new Map<string, EnrollmentCandidate[]>();
@@ -387,6 +392,10 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
       item.semesterId === semester.id && item.courseId === course.id
     ));
     for (const issue of evaluateEnrollmentImport(data, group[0]!)) {
+      if (issue.code === 'CAPACITY_UNRESOLVED' && !semesterCourse && contextChanges.some((change) => (
+        change.status === 'NEW' && nameKey(change.semesterName) === nameKey(group[0]!.semesterName)
+        && nameKey(change.courseName ?? '') === nameKey(group[0]!.courseName)
+      ))) continue;
       const informational = (issue.code === 'SEMESTER_ORDER_UNRESOLVED' && !semester)
         || (issue.code === 'CAPACITY_UNRESOLVED' && !semesterCourse);
       issues.push({
@@ -398,16 +407,25 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
       });
     }
   }
-  const cohort = applyBatchCandidate(structuredClone(data), pending, new Date().toISOString(), randomUUID);
-  for (const issue of cohort.issues) {
-    const source = pending[Number(issue.detail.rowNumber) - 1]!.sourceRef;
-    if (issues.some((existing) => existing.code === issue.code && existing.source.row === source.row)) continue;
-    issues.push({
-      ...issue,
-      blockingStages: issue.severity === 'ERROR' ? ['IMPORT_COMMIT'] : [],
-      acknowledgementStages: issue.severity === 'WARNING' ? ['IMPORT_COMMIT'] : [],
-      source,
-    });
+  const now = new Date().toISOString();
+  const actions = contextChanges.some(({ status }) => status === 'EXISTING_CONFLICT')
+    ? ['KEEP_EXISTING', 'APPLY_FILE_VALUE'] as const : ['APPLY_FILE_VALUE'] as const;
+  for (const action of actions) {
+    const prospective = structuredClone(data);
+    applyContext(prospective, contextChanges, contextChanges.filter(({ status }) => status === 'EXISTING_CONFLICT').map((change) => ({
+      entity: change.entity, field: change.field, semesterName: change.semesterName, courseName: change.courseName, action,
+    })), now, randomUUID);
+    const cohort = applyBatchCandidate(prospective, pending, now, randomUUID);
+    for (const issue of cohort.issues) {
+      const source = pending[Number(issue.detail.rowNumber) - 1]!.sourceRef;
+      if (issues.some((existing) => existing.code === issue.code && existing.source.sheet === source.sheet && existing.source.row === source.row)) continue;
+      issues.push({
+        ...issue,
+        blockingStages: issue.severity === 'ERROR' ? ['IMPORT_COMMIT'] : [],
+        acknowledgementStages: issue.severity === 'WARNING' ? ['IMPORT_COMMIT'] : [],
+        source,
+      });
+    }
   }
   return {
     sourceRowCount: sourceRows.length,
@@ -415,7 +433,7 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
     identicalRows,
     conflicts,
     issues,
-    contextChanges: [] as ImportContextChange[],
+    contextChanges,
     applications: [] as ApplicationCandidate[],
     enrollments: candidates,
   };
@@ -431,6 +449,7 @@ const contextCandidates = (
   rows: RawRow[],
   entity: ImportContextChange['entity'],
   issues: ImportIssue[],
+  kind: ImportKind = 'APPLICATIONS',
 ): ImportContextChange[] => {
   const groups = new Map<string, RawRow[]>();
   for (const row of rows) {
@@ -447,7 +466,7 @@ const contextCandidates = (
     const courseName = entity === 'SEMESTER_COURSE' ? clean(first.cells['강좌명']) : undefined;
     const field = entity === 'SEMESTER' ? 'order' : 'capacity';
     const column = entity === 'SEMESTER' ? '순서' : '정원';
-    const parsed = group.map((row) => parseContextInteger(row.cells[column], field === 'capacity'));
+    const parsed = group.map((row) => parseContextInteger(row.cells[column], field === 'capacity', kind === 'ENROLLMENTS'));
     const values = new Set(parsed.filter((item) => item.kind === 'VALID').map((item) => item.value));
     let sourceStatus: ImportContextChange['status'] | null = null;
     if (!semesterName || (entity === 'SEMESTER_COURSE' && !courseName)) {
@@ -471,6 +490,7 @@ const contextCandidates = (
       'SEMESTER_COURSE_CAPACITY_MISSING', 'Course capacity is required', missingRow, column,
     ));
     if (status !== 'NEW' && status !== 'IDENTICAL' && !missingRow) {
+      const blocksImport = kind === 'ENROLLMENTS' && (status === 'INVALID' || status === 'SOURCE_CONFLICT');
       issues.push({
         ...rowIssue(
           `${entity}_${field.toUpperCase()}_${status}`,
@@ -478,7 +498,8 @@ const contextCandidates = (
           first,
           column,
         ),
-        blockingStages: ['AUTO_ALLOCATE'],
+        severity: blocksImport ? 'ERROR' : 'WARNING',
+        blockingStages: blocksImport ? ['IMPORT_COMMIT'] : ['AUTO_ALLOCATE'],
       });
     }
     return {
@@ -537,11 +558,12 @@ const parsePositiveInteger = (raw: string | null | undefined): (
     : { kind: 'INVALID' };
 };
 
-const parseContextInteger = (raw: string | null | undefined, zeroAllowed: boolean): (
-  { kind: 'VALID'; value: number } | { kind: 'MISSING' | 'INVALID' }
+const parseContextInteger = (raw: string | null | undefined, zeroAllowed: boolean, unresolvedAllowed = false): (
+  { kind: 'VALID'; value: number | null } | { kind: 'MISSING' | 'INVALID' }
 ) => {
   const value = clean(raw);
   if (!value) return { kind: 'MISSING' };
+  if (unresolvedAllowed && value === '미정') return { kind: 'VALID', value: null };
   if (!/^\d+$/.test(value)) return { kind: 'INVALID' };
   const number = Number(value);
   return Number.isSafeInteger(number) && number >= (zeroAllowed ? 0 : 1)

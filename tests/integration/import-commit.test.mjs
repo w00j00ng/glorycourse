@@ -7,7 +7,7 @@ import test from 'node:test';
 import ExcelJS from '@excel.js/exceljs';
 
 import { createImportTemplate } from '../../backend/src/excel/workbooks.ts';
-import { ApplicationService } from '../../backend/src/services/applications.ts';
+import { ApplicationService, RevisionConflictError } from '../../backend/src/services/applications.ts';
 import {
   ImportAcknowledgementError,
   ImportCommitConflictError,
@@ -67,6 +67,14 @@ const applicationWorkbookWithContext = async ({ semesterRows, courseRows, applic
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
 
+const enrollmentWorkbookWithContext = async (rows, courses = []) => {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await createImportTemplate('ENROLLMENTS'));
+  workbook.getWorksheet('수강이력').addRows(rows);
+  workbook.getWorksheet('개설강좌').addRows(courses);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+};
+
 const requestFor = (preview, idempotencyKey = 'request-1', resolutions = []) => ({
   previewId: preview.previewId,
   idempotencyKey,
@@ -119,6 +127,123 @@ test('commits student rows with three, five, or sparse preferences and rejects d
       bytes: await workbookWithRows('APPLICATIONS', rows) });
     await assert.rejects(commits.commit(requestFor(invalid, `invalid-${invalid.previewId}`)), ImportCommitConflictError);
     assert.deepEqual(store.read(), before);
+  }
+});
+
+test('imports course capacities and individual enrollment notes from separate worksheets', async () => {
+  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const previews = previewService(store);
+  const commits = commitService(store, previews);
+  const note = '수정 이유\n<img src=x onerror=alert(1)>';
+  const bytes = await enrollmentWorkbookWithContext([
+    ['2028 가을', '홍길동', '창세기', note],
+    ['2028 가을', '김은혜', '창세기', ''],
+  ], [['2028 가을', '창세기', 20]]);
+  const preview = await previews.preview({ filename: 'history.xlsx', bytes, kind: 'ENROLLMENTS' });
+  assert.deepEqual(preview.contextChanges.map(({ status, fileValue }) => ({ status, fileValue })), [{ status: 'NEW', fileValue: 20 }]);
+  assert.equal(preview.issues.some(({ code }) => code === 'CAPACITY_UNRESOLVED' || code === 'CAPACITY_EXCEEDED'), false);
+  const receipt = await commits.commit(requestFor(preview));
+  assert.equal(receipt.inserted, 2);
+  assert.equal(store.read().semesterCourses[0].capacity, 20);
+  assert.deepEqual(store.read().enrollments.map(({ exceptionAcknowledgement }) => exceptionAcknowledgement?.note ?? ''), [note, '']);
+  const repeated = await previews.preview({ filename: 'history.xlsx', bytes, kind: 'ENROLLMENTS' });
+  const duplicate = await commits.commit(requestFor(repeated, 'repeat'));
+  assert.equal(duplicate.inserted, 0);
+  assert.equal(duplicate.skipped, 2);
+  assert.equal(store.read().enrollments[0].exceptionAcknowledgement.note, note);
+});
+
+test('rejects invalid enrollment capacities and oversized notes without changing any data', async () => {
+  const cases = [
+    { courses: [['2028 가을', '창세기', -1]], note: '', code: 'SEMESTER_COURSE_CAPACITY_INVALID' },
+    { courses: [['2028 가을', '창세기', 1.5]], note: '', code: 'SEMESTER_COURSE_CAPACITY_INVALID' },
+    { courses: [['2028 가을', '창세기', Number.MAX_SAFE_INTEGER + 1]], note: '', code: 'SEMESTER_COURSE_CAPACITY_INVALID' },
+    { courses: [['2028 가을', '창세기', '']], note: '', code: 'SEMESTER_COURSE_CAPACITY_MISSING' },
+    { courses: [['2028 가을', '창세기', 20], ['2028 가을', '창세기', 21]], note: '', code: 'SEMESTER_COURSE_CAPACITY_SOURCE_CONFLICT' },
+    { courses: [['2028 가을', '창세기', 20]], note: '가'.repeat(2001), code: 'ENROLLMENT_NOTE_TOO_LONG' },
+  ];
+  for (const { courses, note, code } of cases) {
+    const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+    const previews = previewService(store);
+    const before = store.read();
+    const bytes = await enrollmentWorkbookWithContext([['2028 가을', '홍길동', '창세기', note]], courses);
+    const preview = await previews.preview({ filename: 'invalid.xlsx', bytes, kind: 'ENROLLMENTS' });
+    assert.ok(preview.issues.some((issue) => issue.code === code && issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')), code);
+    await assert.rejects(commitService(store, previews).commit(requestFor(preview)), ImportCommitConflictError);
+    assert.deepEqual(store.read(), before, code);
+  }
+});
+
+test('preserves zero and unresolved file capacities and defaults omitted course rows to cohort size', async () => {
+  for (const [value, expected] of [[0, 0], ['미정', null], [undefined, 1]]) {
+    const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+    const previews = previewService(store);
+    const courses = value === undefined ? [] : [['2028 가을', '창세기', value]];
+    const bytes = await enrollmentWorkbookWithContext([['2028 가을', '홍길동', '창세기', '파일 메모']], courses);
+    const preview = await previews.preview({ filename: 'capacity.xlsx', bytes, kind: 'ENROLLMENTS' });
+    const resolutions = preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+      entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+      warningDigest: preview.warningDigest, acknowledgementNote: '공통 확인 메모',
+    }));
+    await commitService(store, previews).commit(requestFor(preview, 'capacity', resolutions));
+    assert.equal(store.read().semesterCourses[0].capacity, expected);
+    assert.equal(store.read().enrollments[0].exceptionAcknowledgement.note, '파일 메모');
+    if (value === 0) assert.ok(preview.issues.some(({ code, severity }) => code === 'CAPACITY_EXCEEDED' && severity === 'WARNING'));
+  }
+});
+
+test('rejects stale semester edits after importing a new offering including an unresolved capacity', async () => {
+  for (const [fileCapacity, expectedCapacity] of [['미정', null], [0, 0], [10, 10], [undefined, 1]]) {
+    const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+    const applications = new ApplicationService(store, { id: ids('catalog'), now });
+    const before = await applications.createSemester({ name: '2028 가을', order: 1 });
+    const staleEdit = { semesterId: before.semester.id, expectedRevision: before.allocationInputRevision,
+      order: 1, semesterCourses: [{ courseName: '창세기', capacity: 99 }] };
+    const previews = previewService(store);
+    const preview = await previews.preview({ filename: 'new-course.xlsx', kind: 'ENROLLMENTS',
+      bytes: await enrollmentWorkbookWithContext([['2028 가을', '홍길동', '창세기']],
+        fileCapacity === undefined ? [] : [['2028 가을', '창세기', fileCapacity]]) });
+    const resolutions = preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+      entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+      warningDigest: preview.warningDigest,
+    }));
+    await commitService(store, previews).commit(requestFor(preview, 'new-course', resolutions));
+    const imported = store.read();
+    assert.equal(imported.semesterCourses[0].capacity, expectedCapacity);
+    await assert.rejects(applications.updateSemesterContext(staleEdit), RevisionConflictError);
+    assert.deepEqual(store.read(), imported);
+  }
+});
+
+test('reviews both capacity decisions before importing histories and changes existing capacity only on approval', async () => {
+  for (const [fileCapacity, action, expectedCapacity] of [
+    [20, 'KEEP_EXISTING', 1], [20, 'APPLY_FILE_VALUE', 20], ['미정', 'APPLY_FILE_VALUE', null],
+  ]) {
+    const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+    const applications = new ApplicationService(store, { id: ids('catalog'), now });
+    const application = await applications.create({ semesterName: '2028 가을', memberName: '신청자', applicationOrder: 1,
+      choices: [{ courseName: '창세기', preference: 1 }] });
+    await applications.updateSemesterContext({ semesterId: application.semesterId, expectedRevision: 1,
+      order: 1, semesterCourses: [{ courseName: '창세기', capacity: 1 }] });
+    const previews = previewService(store);
+    const commits = commitService(store, previews);
+    const preview = await previews.preview({ filename: 'capacity.xlsx', kind: 'ENROLLMENTS',
+      bytes: await enrollmentWorkbookWithContext([
+        ['2028 가을', '가', '창세기'], ['2028 가을', '나', '창세기'],
+      ], [['2028 가을', '창세기', fileCapacity]]) });
+    assert.equal(preview.contextChanges[0].status, 'EXISTING_CONFLICT');
+    assert.ok(preview.issues.some(({ code, source }) => code === 'CAPACITY_EXCEEDED' && source.row === 3));
+    const before = store.read();
+    await assert.rejects(commits.commit(requestFor(preview)), ImportCommitConflictError);
+    assert.deepEqual(store.read(), before);
+    const resolutions = preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+      entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+      warningDigest: preview.warningDigest, acknowledgementNote: '',
+    }));
+    resolutions.push({ entity: 'SEMESTER_COURSE', field: 'capacity', semesterName: '2028 가을', courseName: '창세기', action });
+    const receipt = await commits.commit(requestFor(preview, 'decided', resolutions));
+    assert.equal(receipt.inserted, 2);
+    assert.equal(store.read().semesterCourses[0].capacity, expectedCapacity);
   }
 });
 

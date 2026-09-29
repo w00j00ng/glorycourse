@@ -595,6 +595,15 @@ test('creates and edits a draft, then replays finalization after the draft is re
   assert.equal(created.applicationSnapshot.applications[0].id, application.id);
   assert.equal(created.applicationSnapshot.choices[0].preference, 1);
   assert.equal(created.applicationSnapshot.semesterCourses[0].courseName, '발성');
+  const automaticAddition = await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}/items`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      expectedDraftRevision: 0, memberName: '현장 추가', semesterCourseId: context.semesterCourses[0].id,
+    }),
+  });
+  assert.equal(automaticAddition.status, 422);
+  assert.match(JSON.parse(automaticAddition.text).issues[0].message, /수동 초안/);
+  assert.equal(runtime.store.read().allocationDraftItems.length, 1);
   const archiveAttempt = await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}/archive`, {
     method: 'POST', headers, body: JSON.stringify({ expectedDraftRevision: 0 }),
   });
@@ -691,6 +700,10 @@ test('creates and edits a draft, then replays finalization after the draft is re
   assert.equal(report.status, 200);
   assert.equal(report.headers['content-type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   assert.equal(report.bytes.subarray(0, 2).toString('ascii'), 'PK');
+  const reportWorkbook = new ExcelJS.Workbook();
+  await reportWorkbook.xlsx.load(report.bytes);
+  assert.deepEqual(reportWorkbook.getWorksheet('수강이력').getRow(1).values.slice(1), ['학기명', '회원명', '강좌명', '관리자 메모']);
+  assert.equal(reportWorkbook.getWorksheet('개설강좌').getCell('C2').text, '1');
   const currentReport = JSON.parse((await call(runtime.origin, reportStatusPath,
     { headers: { 'X-Glorycourse-Session': restartedSession.token } })).text);
   assert.equal(currentReport.enrollmentReportIsCurrent, true);
@@ -770,6 +783,154 @@ test('sorts all applications before dividing them into pages', async (t) => {
   assert.equal(invalid.status, 400);
 });
 
+test('exports application semester and course settings with filtered students and reimports them on a new store', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const semesters = [];
+  for (const [name, order, semesterCourses] of [
+    ['2026 봄', 5, [{ courseName: '창세기', capacity: 10 }, { courseName: '마태복음', capacity: 12 }]],
+    ['2026 가을', 2, [{ courseName: '창세기', capacity: 0 }, { courseName: '마가복음', capacity: 8 }]],
+    ['신청 없는 학기', 9, [{ courseName: '요한복음', capacity: 40 }]],
+  ]) {
+    const created = await call(runtime.origin, '/api/v1/semesters', {
+      method: 'POST', headers, body: JSON.stringify({ name, order }),
+    });
+    assert.equal(created.status, 201);
+    const context = JSON.parse(created.text);
+    const configured = await call(runtime.origin, `/api/v1/semesters/${context.semester.id}/context`, {
+      method: 'PATCH', headers, body: JSON.stringify({ expectedRevision: context.allocationInputRevision, name, order, semesterCourses }),
+    });
+    assert.equal(configured.status, 200);
+    semesters.push(JSON.parse(configured.text));
+  }
+  const requests = [
+    { semesterName: '2026 봄', memberName: '나 회원', applicationOrder: 2, choices: [{ courseName: '창세기', preference: 1 }] },
+    { semesterName: '2026 가을', memberName: '가 회원', applicationOrder: 1, choices: [{ courseName: '창세기', preference: 1 }] },
+    { semesterName: '2026 봄', memberName: '다 회원', applicationOrder: 3, choices: [{ courseName: '마태복음', preference: 5 }] },
+  ];
+  const created = await call(runtime.origin, '/api/v1/applications/batch', {
+    method: 'POST', headers, body: JSON.stringify({ items: requests }),
+  });
+  assert.equal(created.status, 201);
+  const before = runtime.store.read();
+  let completeBytes;
+  for (const [query, expectedMembers, expectedSemesters, expectedCourses] of [
+    ['page=1&limit=1', ['나 회원', '가 회원', '다 회원'], [['2026 봄', 5], ['2026 가을', 2]], [
+      ['2026 봄', '창세기', 10], ['2026 봄', '마태복음', 12], ['2026 가을', '창세기', 0], ['2026 가을', '마가복음', 8],
+    ]],
+    [`semesterId=${semesters[0].semester.id}&memberName=${encodeURIComponent('나 회원')}&sort=NAME_DESC`, ['나 회원'], [['2026 봄', 5]], [
+      ['2026 봄', '창세기', 10], ['2026 봄', '마태복음', 12],
+    ]],
+    [`courseId=${semesters[0].semesterCourses[0].courseId}&sort=NAME_ASC`, ['가 회원', '나 회원'], [['2026 가을', 2], ['2026 봄', 5]], [
+      ['2026 가을', '창세기', 0], ['2026 가을', '마가복음', 8], ['2026 봄', '창세기', 10], ['2026 봄', '마태복음', 12],
+    ]],
+    [`memberName=${encodeURIComponent('없는 회원')}`, [], [], []],
+  ]) {
+    const exported = await call(runtime.origin, `/api/v1/applications/export?${query}`, { headers });
+    assert.equal(exported.status, 200);
+    completeBytes ??= exported.bytes;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported.bytes);
+    const values = (sheet) => workbook.getWorksheet(sheet).getSheetValues().slice(2).map((row) => row.slice(1));
+    assert.deepEqual(values('수강신청').map((row) => row[1]), expectedMembers, query);
+    assert.deepEqual(values('학기'), expectedSemesters, query);
+    assert.deepEqual(values('개설강좌'), expectedCourses, query);
+  }
+  assert.deepEqual(runtime.store.read(), before);
+
+  const restoredWorkspace = await localWorkspace(t);
+  const restored = await startLocalServer({ dataDirectory: restoredWorkspace.data, staticDirectory: restoredWorkspace.static, port: 0 });
+  t.after(() => restored.close());
+  const restoredSession = JSON.parse((await call(restored.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: restored.origin },
+  })).text);
+  const restoredHeaders = { Origin: restored.origin, 'X-Glorycourse-Session': restoredSession.token };
+  const upload = multipart({ kind: 'APPLICATIONS', mode: 'MERGE_KEEP_EXISTING' }, {
+    name: 'file', filename: 'applications.xlsx', bytes: completeBytes,
+  });
+  const previewResponse = await call(restored.origin, '/api/v1/imports/preview', {
+    method: 'POST', headers: { ...restoredHeaders, 'Content-Type': upload.contentType }, body: upload.body,
+  });
+  assert.equal(previewResponse.status, 200);
+  const preview = JSON.parse(previewResponse.text);
+  assert.deepEqual(preview.issues, []);
+  const committed = await call(restored.origin, `/api/v1/imports/${preview.previewId}/commit`, {
+    method: 'POST', headers: { ...restoredHeaders, 'Content-Type': 'application/json', 'Idempotency-Key': 'application-context-roundtrip' },
+    body: JSON.stringify({ storeRevision: preview.storeRevision, storeEpoch: preview.storeEpoch, warningDigest: preview.warningDigest, resolutions: [] }),
+  });
+  assert.equal(committed.status, 200);
+  assert.equal(JSON.parse(committed.text).inserted, 3);
+  for (const semester of semesters.slice(0, 2)) {
+    const restoredSemester = restored.store.read().semesters.find(({ name }) => name === semester.semester.name);
+    assert.equal(restoredSemester.order, semester.order);
+    const response = await call(restored.origin, `/api/v1/semesters/${restoredSemester.id}/context`, { headers: restoredHeaders });
+    assert.deepEqual(JSON.parse(response.text).semesterCourses.map(({ courseName, capacity }) => ({ courseName, capacity })),
+      semester.semesterCourses.map(({ courseName, capacity }) => ({ courseName, capacity })));
+  }
+});
+
+test('sorts filtered enrollment history before pagination and exports the same order without modifying data', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const requests = [
+    { semesterName: '가 학기', memberName: '나 회원', courseName: '마태복음' },
+    { semesterName: '가 학기', memberName: '가 회원', courseName: '창세기' },
+    { semesterName: '다 학기', memberName: '다 회원', courseName: '마태복음' },
+    { semesterName: '다 학기', memberName: '가 회원', courseName: '출애굽기' },
+    { semesterName: '나 학기', memberName: '라 회원', courseName: '요한복음' },
+  ];
+  const previewResponse = await call(runtime.origin, '/api/v1/enrollments/batch/preview', {
+    method: 'POST', headers, body: JSON.stringify({ items: requests }),
+  });
+  assert.equal(previewResponse.status, 200);
+  const preview = JSON.parse(previewResponse.text);
+  const created = await call(runtime.origin, '/api/v1/enrollments/batch', {
+    method: 'POST', headers, body: JSON.stringify({ preparedActionToken: preview.preparedActionToken,
+      acknowledgedWarningDigest: preview.warningDigest }),
+  });
+  assert.equal(created.status, 201);
+  await runtime.store.write({}, (data) => { data.semesters.find(({ name }) => name === '나 학기').order = null; });
+  const before = runtime.store.read();
+  const key = ({ semesterName, memberName, courseName }) => [semesterName, memberName, courseName];
+  for (const [sort, expected] of [
+    ['', [0, 1, 2, 3, 4]], ['NAME_ASC', [3, 1, 0, 2, 4]], ['NAME_DESC', [4, 2, 0, 3, 1]],
+    ['COURSE_ASC', [2, 0, 4, 1, 3]], ['COURSE_DESC', [3, 1, 4, 2, 0]],
+    ['SEMESTER_DESC', [3, 2, 1, 0, 4]], ['SEMESTER_ASC', [1, 0, 3, 2, 4]],
+  ]) {
+    for (const page of [1, 2, 3]) {
+      const query = new URLSearchParams({ page: String(page), limit: '2', ...(sort ? { sort } : {}) });
+      const response = await call(runtime.origin, `/api/v1/enrollments?${query}`, { headers });
+      assert.equal(response.status, 200, query.toString());
+      const result = JSON.parse(response.text);
+      assert.equal(result.total, 5);
+      assert.deepEqual(result.items.map(key), expected.slice((page - 1) * 2, page * 2).map((index) => key(requests[index])), query.toString());
+    }
+  }
+  const filtered = await call(runtime.origin, '/api/v1/enrollments?sort=SEMESTER_DESC&memberName=' + encodeURIComponent('가 회원'), { headers });
+  assert.deepEqual(JSON.parse(filtered.text).items.map(key), [requests[3], requests[1]].map(key));
+  const exported = await call(runtime.origin, '/api/v1/enrollments/export?sort=NAME_ASC&memberName=' + encodeURIComponent('가 회원'), { headers });
+  assert.equal(exported.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(exported.bytes);
+  assert.deepEqual(workbook.getWorksheet('수강이력').getSheetValues().slice(2).map((row) => row.slice(1, 4)), [requests[3], requests[1]].map(key));
+  for (const path of ['/enrollments', '/enrollments/export']) {
+    const invalid = await call(runtime.origin, `/api/v1${path}?sort=UNKNOWN`, { headers });
+    assert.equal(invalid.status, 400);
+    assert.equal(JSON.parse(invalid.text).message, '수강이력 정렬 기준이 올바르지 않습니다.');
+  }
+  assert.deepEqual(runtime.store.read(), before);
+});
+
 test('registers multiple applications and reviewed enrollments atomically through the protected API', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
@@ -830,106 +991,64 @@ test('registers multiple applications and reviewed enrollments atomically throug
   assert.equal(runtime.store.read().applications.length, 2);
 });
 
-test('creates, reviews, restores, and replays a local backup through the protected API', async (t) => {
+test('exports distinct course capacities and enrollment notes within the selected report scope', async (t) => {
   const workspace = await localWorkspace(t);
-  let runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
   t.after(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
   const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
-  const createApplication = (memberName) => call(runtime.origin, '/api/v1/applications', {
-    method: 'POST', headers, body: JSON.stringify({
-      semesterName: '2033 봄', memberName, applicationOrder: 1,
-      choices: [{ courseName: '연기', preference: 1 }],
-    }),
+  const inputs = ['홍길동', '김은혜', '박다라', '정원미정 회원'].map((memberName, index) => ({
+    semesterName: '2028 가을', memberName, courseName: index < 2 ? '창세기' : index === 2 ? '마가복음' : '미정 강좌',
+  }));
+  const review = await call(runtime.origin, '/api/v1/enrollments/batch/preview', { method: 'POST', headers, body: JSON.stringify({ items: inputs }) });
+  assert.equal(review.status, 200);
+  const preview = JSON.parse(review.text);
+  assert.equal((await call(runtime.origin, '/api/v1/enrollments/batch', { method: 'POST', headers, body: JSON.stringify({
+    preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest,
+  }) })).status, 201);
+  const note = '자료 보관\n<img src=x onerror=alert(1)>';
+  await runtime.store.write({}, (data) => {
+    const capacities = { 창세기: 20, 마가복음: 0, '미정 강좌': null };
+    for (const offering of data.semesterCourses) offering.capacity = capacities[data.courses.find(({ id }) => id === offering.courseId).name];
+    data.enrollments[0].exceptionAcknowledgement = { note, warningDigest: 'recorded', acknowledgedAt: '2028-01-01T00:00:00.000Z' };
   });
-  assert.equal((await createApplication('복원 회원')).status, 201);
-
-  const backups = await Promise.all([
-    call(runtime.origin, '/api/v1/backups', { method: 'POST', headers }),
-    call(runtime.origin, '/api/v1/backups', { method: 'POST', headers }),
-  ]);
-  assert.deepEqual(backups.map(({ status }) => status), [201, 201]);
-  const createdBackup = JSON.parse(backups[0].text);
-  assert.deepEqual(JSON.parse(backups[1].text), createdBackup);
-  assert.equal(createdBackup.storeRevision, 1);
-  assert.equal(createdBackup.file, undefined);
-  assert.equal((await readdir(join(workspace.data, 'backups'))).length, 1);
-  const listed = JSON.parse((await call(runtime.origin, '/api/v1/backups', {
-    headers: { 'X-Glorycourse-Session': session.token },
-  })).text);
-  assert.equal(listed.items.length, 1);
-  assert.deepEqual(listed.items[0], createdBackup);
-
-  assert.equal((await createApplication('삭제될 회원')).status, 201);
-  const [backupFilename] = await readdir(join(workspace.data, 'backups'));
-  const restoreBytes = await readFile(join(workspace.data, 'backups', backupFilename));
-  const previewResponse = await call(runtime.origin, '/api/v1/restores/preview', {
-    method: 'POST',
-    headers: { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/vnd.sqlite3' },
-    body: restoreBytes,
-  });
-  assert.equal(previewResponse.status, 200);
-  const preview = JSON.parse(previewResponse.text);
-  assert.equal(preview.backupStoreRevision, 1);
-  assert.equal(preview.issues[0].severity, 'WARNING');
-  assert.deepEqual(await readdir(join(workspace.data, 'recovery-work')), []);
-
-  const restoreRequest = {
-    preparedActionToken: preview.preparedActionToken,
-    acknowledgedWarningDigest: preview.warningDigest,
-    acknowledgementNote: '복원 이후 변경 내용이 사라짐을 확인함',
+  const download = async (query = '') => {
+    const response = await call(runtime.origin, `/api/v1/enrollments/export${query}`, { headers });
+    assert.equal(response.status, 200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(response.bytes);
+    assert.equal(workbook.getWorksheet('메타').getCell('B1').text, '2');
+    return workbook;
   };
-  const unacknowledged = await call(runtime.origin, '/api/v1/restores', {
-    method: 'POST',
-    headers: { ...headers, 'Idempotency-Key': 'restore-request-unacknowledged' },
-    body: JSON.stringify({ ...restoreRequest, acknowledgedWarningDigest: 'wrong' }),
-  });
-  assert.equal(unacknowledged.status, 422);
-  assert.equal(runtime.store.read().members.length, 2);
-  assert.equal((await createApplication('검토 이후 회원')).status, 201);
-  const stale = await call(runtime.origin, '/api/v1/restores', {
-    method: 'POST', headers: { ...headers, 'Idempotency-Key': 'restore-request-stale' }, body: JSON.stringify(restoreRequest),
-  });
-  assert.equal(stale.status, 409);
-  assert.equal(JSON.parse(stale.text).code, 'PREVIEW_STALE');
-  assert.equal(runtime.store.read().members.length, 3);
-  const refreshed = JSON.parse((await call(runtime.origin, '/api/v1/restores/preview', {
-    method: 'POST',
-    headers: { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/vnd.sqlite3' },
-    body: restoreBytes,
-  })).text);
-  restoreRequest.preparedActionToken = refreshed.preparedActionToken;
-  restoreRequest.acknowledgedWarningDigest = refreshed.warningDigest;
-  const restored = await call(runtime.origin, '/api/v1/restores', {
-    method: 'POST', headers: { ...headers, 'Idempotency-Key': 'restore-request-1' }, body: JSON.stringify(restoreRequest),
-  });
-  assert.equal(restored.status, 200);
-  const receipt = JSON.parse(restored.text);
-  assert.equal(receipt.storeRevision, 1);
-  assert.notEqual(receipt.storeEpoch, preview.backupStoreEpoch);
-  const replay = await call(runtime.origin, '/api/v1/restores', {
-    method: 'POST',
-    headers: { ...headers, 'Idempotency-Key': 'restore-request-1' },
-    body: JSON.stringify({
-      acknowledgementNote: restoreRequest.acknowledgementNote,
-      acknowledgedWarningDigest: restoreRequest.acknowledgedWarningDigest,
-      preparedActionToken: restoreRequest.preparedActionToken,
-    }),
-  });
-  assert.deepEqual(JSON.parse(replay.text), receipt);
-  assert.deepEqual(runtime.store.read().members.map(({ name }) => name), ['복원 회원']);
+  const all = await download();
+  assert.deepEqual(all.getWorksheet('수강이력').getRow(1).values.slice(1), ['학기명', '회원명', '강좌명', '관리자 메모']);
+  assert.equal(all.getWorksheet('수강이력').getCell('D2').text, note);
+  const courses = all.getWorksheet('개설강좌');
+  assert.deepEqual([2, 3, 4].map((row) => courses.getRow(row).values.slice(1)), [
+    ['2028 가을', '창세기', '20'], ['2028 가을', '마가복음', '0'], ['2028 가을', '미정 강좌', '미정'],
+  ]);
+  assert.equal(courses.rowCount, 4);
+  const filtered = await download(`?memberName=${encodeURIComponent('홍길동')}`);
+  assert.equal(filtered.getWorksheet('수강이력').rowCount, 2);
+  assert.equal(filtered.getWorksheet('개설강좌').rowCount, 2);
+  assert.equal(filtered.getWorksheet('개설강좌').getCell('C2').text, '20');
+});
 
-  await runtime.close();
-  runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  const restartedSession = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+test('removes the manual backup and restore API without changing stored data', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
-  const applications = JSON.parse((await call(runtime.origin, '/api/v1/applications', {
-    headers: { 'X-Glorycourse-Session': restartedSession.token },
-  })).text);
-  assert.deepEqual(applications.items.map(({ memberName }) => memberName), ['복원 회원']);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token };
+  const before = runtime.store.read();
+  for (const [path, method] of [['/backups', 'GET'], ['/backups', 'POST'], ['/restores/preview', 'POST'], ['/restores', 'POST'], ['/backup-folder', 'GET']]) {
+    assert.equal((await call(runtime.origin, `/api/v1${path}`, { method, headers })).status, 404, `${method} ${path}`);
+  }
+  assert.deepEqual(runtime.store.read(), before);
 });
 
 const testApi = async (request, { store }) => {
@@ -949,6 +1068,56 @@ const testApi = async (request, { store }) => {
   }
   return undefined;
 };
+
+test('previews semester application deletion and requires matching confirmation and current data before deleting', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', { method: 'POST', headers: { Origin: runtime.origin } })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const create = async (semesterName, memberName, applicationOrder) => {
+    const response = await call(runtime.origin, '/api/v1/applications', { method: 'POST', headers,
+      body: JSON.stringify({ semesterName, memberName, applicationOrder, choices: [{ courseName: '기초', preference: 1 }] }) });
+    assert.equal(response.status, 201);
+    return JSON.parse(response.text);
+  };
+  const target = await create('삭제 학기', '회원1', 1);
+  await create('삭제 학기', '회원2', 2);
+  const retained = await create('다른 학기', '회원3', 1);
+  const path = `/api/v1/semesters/${target.semesterId}/applications`;
+  const previewResponse = await call(runtime.origin, `${path}?memberName=회원1&page=2&limit=1`, { headers });
+  assert.equal(previewResponse.status, 200);
+  const preview = JSON.parse(previewResponse.text);
+  assert.deepEqual(preview, { semesterName: '삭제 학기', count: 2, ...runtime.store.version() });
+  const deleteRequest = { confirmationName: preview.semesterName, expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch };
+  await create('삭제 학기', '회원4', 3);
+  let before = runtime.store.read();
+  const stale = await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify(deleteRequest) });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(runtime.store.read(), before);
+  const current = JSON.parse((await call(runtime.origin, path, { headers })).text);
+  const currentRequest = { confirmationName: current.semesterName, expectedRevision: current.storeRevision, expectedEpoch: current.storeEpoch };
+  for (const [body, expected] of [[null, 400], [{ ...currentRequest, confirmationName: '다른 학기' }, 422],
+    [{ ...currentRequest, expectedEpoch: 'old-epoch' }, 409]]) {
+    const response = await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify(body) });
+    assert.equal(response.status, expected);
+    assert.deepEqual(runtime.store.read(), before);
+  }
+  assert.equal((await call(runtime.origin, path, { method: 'PUT', headers })).status, 405);
+  assert.equal((await call(runtime.origin, '/api/v1/semesters/missing/applications', { headers })).status, 404);
+  const deleted = await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify(currentRequest) });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(JSON.parse(deleted.text), { deletedCount: 3 });
+  assert.deepEqual(runtime.store.read().applications.map(({ id }) => id), [retained.id]);
+  assert.deepEqual(runtime.store.read().applicationChoices.map(({ applicationId }) => applicationId), [retained.id]);
+  before = runtime.store.read();
+  const empty = JSON.parse((await call(runtime.origin, path, { headers })).text);
+  assert.equal(empty.count, 0);
+  assert.equal((await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify({
+    confirmationName: empty.semesterName, expectedRevision: empty.storeRevision, expectedEpoch: empty.storeEpoch,
+  }) })).status, 422);
+  assert.deepEqual(runtime.store.read(), before);
+});
 
 const localWorkspace = async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'glorycourse-http-'));

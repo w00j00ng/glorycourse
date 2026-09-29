@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   describeAllocationEvidence,
   draftApplicationSummaries,
+  draftCourseStatuses,
   draftDecisionChanged,
   draftFinalSelection,
   filterDraftItems,
@@ -35,6 +36,58 @@ const items = [
     finalDecision: 'SELECTED', finalSemesterCourseId: 'course-acting', finalReasonCode: null,
   },
 ];
+
+test('shows course capacity including existing enrollments and unsaved final choices', () => {
+  const detail = {
+    courseSummary: [
+      { semesterCourseId: 'a', capacity: 3, existingEnrollmentCount: 1, finalSelectedCount: 1 },
+      { semesterCourseId: 'b', capacity: 1, existingEnrollmentCount: 0, finalSelectedCount: 1 },
+      { semesterCourseId: 'unknown', capacity: null, existingEnrollmentCount: 2, finalSelectedCount: 0 },
+      { semesterCourseId: 'closed', capacity: 0, existingEnrollmentCount: 0, finalSelectedCount: 0 },
+      { semesterCourseId: 'over', capacity: 1, existingEnrollmentCount: 2, finalSelectedCount: 0 },
+    ],
+    studentResults: [
+      { memberId: 'one', finalDecision: 'SELECTED', finalSemesterCourseId: 'a' },
+      { memberId: 'two', finalDecision: 'SELECTED', finalSemesterCourseId: 'b' },
+      { memberId: 'three', finalDecision: 'REJECTED', finalSemesterCourseId: null },
+    ],
+  };
+  const cases = [
+    { choices: [], expected: [[2, 1, '잔여 1명'], [1, 0, '정원 마감']] },
+    { choices: [['one', 'a']], expected: [[2, 1, '잔여 1명'], [1, 0, '정원 마감']] },
+    { choices: [['one', 'b']], expected: [[1, 2, '잔여 2명'], [2, 0, '정원 초과 1명']] },
+    { choices: [['two', '']], expected: [[2, 1, '잔여 1명'], [0, 1, '잔여 1명']] },
+    { choices: [['three', 'a']], expected: [[3, 0, '정원 마감'], [1, 0, '정원 마감']] },
+    { choices: [['one', 'b'], ['two', 'a']], expected: [[2, 1, '잔여 1명'], [1, 0, '정원 마감']] },
+  ];
+  for (const { choices, expected } of cases) {
+    const statuses = draftCourseStatuses(detail, new Map(choices));
+    assert.deepEqual(statuses.slice(0, 2).map(({ totalCount, remaining, status }) => [totalCount, remaining, status]), expected);
+    assert.deepEqual(statuses.slice(2).map(({ totalCount, remaining, status }) => [totalCount, remaining, status]), [
+      [2, null, '정원 미정'], [0, 0, '정원 마감'], [2, 0, '정원 초과 1명'],
+    ]);
+  }
+  assert.equal(detail.courseSummary[0].finalSelectedCount, 1);
+});
+
+test('keeps assignments to courses added after generation visible without claiming verified capacity', () => {
+  const detail = {
+    courseSummary: [{ semesterCourseId: 'original', capacity: 1, existingEnrollmentCount: 0, finalSelectedCount: 0 }],
+    studentResults: [{ memberId: 'one', finalDecision: 'SELECTED', finalSemesterCourseId: 'new' }],
+  };
+  const cases = [
+    { selections: [], expected: [['original', 0, true], ['new', 1, false]] },
+    { selections: [['one', '']], expected: [['original', 0, true], ['new', 0, false]] },
+    { selections: [['one', 'original']], expected: [['original', 1, true], ['new', 0, false]] },
+  ];
+  for (const { selections, expected } of cases) {
+    const statuses = draftCourseStatuses(detail, new Map(selections));
+    assert.deepEqual(statuses.map(({ semesterCourseId, finalSelectedCount, hasSnapshot }) => [
+      semesterCourseId, finalSelectedCount, hasSnapshot,
+    ]), expected);
+    assert.equal(statuses.find(({ semesterCourseId }) => semesterCourseId === 'new').status, '현황 미확인 · 새 초안 필요');
+  }
+});
 
 test('pages a large draft after filtering and sorting without losing the selected page', () => {
   const rows = Array.from({ length: 10_000 }, (_, index) => ({ memberId: `member-${index + 1}` }));
