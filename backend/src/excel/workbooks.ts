@@ -5,7 +5,7 @@ import ExcelJS from '@excel.js/exceljs';
 import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
 
 export type ImportKind = 'APPLICATIONS' | 'ENROLLMENTS';
-export const TEMPLATE_VERSIONS = { APPLICATIONS: '2', ENROLLMENTS: '1' } as const;
+export const TEMPLATE_VERSIONS = { APPLICATIONS: '2', ENROLLMENTS: '2' } as const;
 export type RawRow = { sheet: string; row: number; cells: Record<string, string | null> };
 export type WorkbookIssue = { code: string; message: string; location?: string };
 export type WorkbookLimits = {
@@ -34,7 +34,7 @@ export const SHEET_HEADERS = {
   '학기': ['학기명', '순서'],
   '개설강좌': ['학기명', '강좌명', '정원'],
   '수강신청': applicationHeaders(),
-  '수강이력': ['학기명', '회원명', '강좌명'],
+  '수강이력': ['학기명', '회원명', '강좌명', '관리자 메모'],
 } as const;
 
 export class WorkbookValidationError extends Error {
@@ -89,7 +89,9 @@ export const createImportTemplate = async (
       }
     }
   } else {
+    addHeaderSheet(workbook, '개설강좌');
     addHeaderSheet(workbook, '수강이력');
+    metadata.addRow(['이력 보관', '개설강좌 시트에 정원을 입력합니다. 정원이 없으면 미정으로 적습니다. 강좌 행을 생략하면 새 강좌 정원은 등록 이력 수가 됩니다. 관리자 메모는 선택 입력이며 최대 2000자입니다.']);
   }
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
@@ -100,9 +102,12 @@ export const exportApplicationRows = async (rows: Array<{
   applicationOrder: number | null;
   courseName: string;
   preference: number | null;
-}>): Promise<Buffer> => {
+}>, contexts: ApplicationTemplateContext[] = []): Promise<Buffer> => {
   const workbook = new ExcelJS.Workbook();
   await loadWorkbook(workbook, await createImportTemplate('APPLICATIONS'));
+  workbook.getWorksheet('학기')!.addRows(contexts.map(({ semesterName, semesterOrder }) => [semesterName, semesterOrder]));
+  workbook.getWorksheet('개설강좌')!.addRows(contexts.flatMap(({ semesterName, courses }) =>
+    courses.map(({ courseName, capacity }) => [semesterName, courseName, capacity])));
   const sheet = workbook.getWorksheet('수강신청');
   if (!sheet) throw new Error('Application worksheet is missing from the template');
   const applications = new Map<string, (string | number | null)[]>();
@@ -244,7 +249,7 @@ export const readSafeWorkbook = async (options: {
 export const extractRawRows = (workbook: ExcelJS.Workbook, kind: ImportKind): RawRow[] => {
   const sheetNames = kind === 'APPLICATIONS'
     ? ['학기', '개설강좌', '수강신청']
-    : ['수강이력'];
+    : ['개설강좌', '수강이력'];
   const rows: RawRow[] = [];
   for (const sheetName of sheetNames) {
     const sheet = workbook.getWorksheet(sheetName);

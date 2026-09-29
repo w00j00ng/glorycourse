@@ -4,7 +4,6 @@ import { orderSemesters } from './dashboard-view.js';
 import { createDashboardPage } from './dashboard-page.js';
 import { createDraftsPage } from './drafts-page.js';
 import { createDraftDetail } from './draft-detail.js';
-import { createBackupsPage } from './backups-page.js';
 import { createFinalizationPage } from './finalization-page.js';
 import { createApplicationsPage } from './applications-page.js';
 import { createCatalogPage } from './catalog-page.js';
@@ -281,7 +280,7 @@ const recordQuery = (prefix) => new URLSearchParams([
   ['memberName', byId(`${prefix}-member-search`).value],
   ['semesterId', byId(`${prefix}-semester-filter`).value],
   ['courseId', byId(`${prefix}-course-filter`).value],
-  ...(prefix === 'application' ? [['sort', byId('application-sort').value]] : []),
+  ['sort', byId(`${prefix}-sort`).value],
 ].filter(([, value]) => value)).toString();
 
 const loadPaged = async (name, path, filters = '', pagination = state.pagination[name]) => {
@@ -300,17 +299,19 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
   return result.items;
 };
 
-const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseName } = createDraftDetail({
+const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseName,
+  renderMemberOptions, showMemberWarning } = createDraftDetail({
   state, byId, fillSelect, cell, actionsCell, policyName,
   renderPagination: (name) => renderPagination(name),
+  fillDatalist: (id, items) => fillDatalist(id, items),
   saveDraftItem: (item, courseId) => saveDraftItem(item, courseId),
   restoreDraftItem: (item) => restoreDraftItem(item),
 });
 
 const { load: loadDrafts, openCreate: openDraftCreate, showPolicyDescription,
   showReadiness: showDraftReadiness, openDraft, submitDraft, saveDraftItem,
-  restoreDraftItem, addDraftItem } = createDraftsPage({
-  state, byId, api, run, showDraft, showMessage, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName,
+  restoreDraftItem, addManualDraftItem } = createDraftsPage({
+  state, byId, api, run, showDraft, loadCatalogs, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName,
 });
 
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,
@@ -323,7 +324,7 @@ const { previewFinalization, finalizeDraft } = createFinalizationPage({
 });
 
 const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,
-  submitCatalog, setCatalogTab, openCatalogAdd, addCatalogCourses, copyCatalogCourses,
+  submitCatalog, setCatalogTab, sortCatalogCourses, openCatalogAdd, addCatalogCourses, copyCatalogCourses,
   openCatalogCopy, loadCatalogCopyCourses } = createCatalogPage({
   state, byId, api, run, showMessage, loadCatalogs, fillSelect, cell, actionsCell,
 });
@@ -333,6 +334,7 @@ const {
   addApplicationEntry,
   openApplication,
   submitApplication,
+  deleteSemesterApplications,
   showTemplateSummary: showApplicationTemplateSummary,
   openTemplate: openApplicationTemplate,
   downloadTemplate: downloadApplicationTemplate,
@@ -343,16 +345,6 @@ const {
 });
 const { open: openImport, submit: submitImport, commit: commitImport, invalidatePreview: invalidateImportPreview } = createImportsPage({
   state, byId, api, run, reviewWarnings, showMessage, loadCatalogs, loadApplications, loadEnrollments,
-});
-
-const {
-  load: loadBackups, createManualBackup, openRestore, clearRestorePreview, submitRestore,
-} = createBackupsPage({
-  api, byId, run, showMessage, cell,
-  reloadOtherViews: async () => {
-    await loadCatalogs();
-    await Promise.all([loadApplications(), loadEnrollments(), loadDrafts()]);
-  },
 });
 
 const { load: loadDashboard, renderWorkflow: renderDashboardWorkflow } = createDashboardPage({ state, api, byId });
@@ -399,7 +391,6 @@ const viewLoaders = {
   enrollments: loadEnrollments,
   drafts: loadDrafts,
   catalog: loadCatalogManagement,
-  backups: loadBackups,
 };
 const navigateTo = async (name) => {
   activateView(name);
@@ -446,20 +437,33 @@ byId('semester-form').addEventListener('submit', (event) => { void submitSemeste
 byId('delete-semester').addEventListener('click', () => { void deleteSemester().catch(() => {}); });
 byId('catalog-form').addEventListener('submit', (event) => { void submitCatalog(event).catch(() => {}); });
 byId('catalog-semester').addEventListener('change', () => { void loadCatalogManagement().catch(() => {}); });
+byId('catalog-course-sort').addEventListener('change', sortCatalogCourses);
 document.querySelectorAll('[data-catalog-tab]').forEach((button) => button.addEventListener('click', () => setCatalogTab(button.dataset.catalogTab)));
 byId('refresh-catalog').addEventListener('click', () => {
   void loadCatalogs().then(() => loadCatalogManagement()).catch(() => {});
 });
 byId('draft-create-form').addEventListener('submit', (event) => { void submitDraft(event).catch(() => {}); });
 byId('draft-create-form').elements.policy.addEventListener('change', showPolicyDescription);
+byId('draft-create-form').elements.mode.addEventListener('change', () => {
+  showPolicyDescription();
+  void showDraftReadiness().catch(() => {});
+});
 byId('draft-create-form').elements.semesterId.addEventListener('change', () => { void showDraftReadiness().catch(() => {}); });
+byId('draft-add-item').addEventListener('click', () => { void addManualDraftItem().catch(() => {}); });
+byId('draft-add-member').addEventListener('focus', renderMemberOptions);
+byId('draft-add-member').addEventListener('input', showMemberWarning);
+byId('draft-add-member').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.isComposing) {
+    event.preventDefault();
+    void addManualDraftItem().catch(() => {});
+  }
+});
 byId('draft-grouping').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
 byId('draft-sort').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
 byId('draft-result-filter').addEventListener('change', () => resetPage('draft-item', renderDraftItems));
 byId('draft-search').addEventListener('input', () => resetPage('draft-item', renderDraftItems));
 byId('draft-item-previous-page').addEventListener('click', () => changePage('draft-item', -1, renderDraftItems));
 byId('draft-item-next-page').addEventListener('click', () => changePage('draft-item', 1, renderDraftItems));
-byId('add-draft-item').addEventListener('click', () => { void addDraftItem().catch(() => {}); });
 byId('preview-finalization').addEventListener('click', () => { void previewFinalization().catch(() => {}); });
 byId('finalize-form').addEventListener('submit', (event) => { void finalizeDraft(event).catch(() => {}); });
 byId('import-form').addEventListener('submit', (event) => { void submitImport(event).catch(() => {}); });
@@ -467,13 +471,9 @@ byId('import-form').elements.file.addEventListener('change', invalidateImportPre
 byId('import-form').elements.mode.addEventListener('change', invalidateImportPreview);
 byId('commit-import').addEventListener('click', () => { void commitImport().catch(() => {}); });
 byId('refresh-applications').addEventListener('click', () => { void loadApplications(); });
+byId('delete-semester-applications').addEventListener('click', () => { void deleteSemesterApplications().catch(() => {}); });
 byId('refresh-enrollments').addEventListener('click', () => { void loadEnrollments(); });
 byId('refresh-drafts').addEventListener('click', () => { void loadDrafts(); });
-byId('refresh-backups').addEventListener('click', () => { void loadBackups(); });
-byId('create-backup').addEventListener('click', () => { void createManualBackup().catch(() => {}); });
-byId('open-restore').addEventListener('click', openRestore);
-byId('restore-form').addEventListener('submit', (event) => { void submitRestore(event).catch(() => {}); });
-byId('restore-form').elements.file.addEventListener('change', clearRestorePreview);
 byId('application-template').addEventListener('click', openApplicationTemplate);
 byId('application-template-form').elements.semesterId.addEventListener('change', () => {
   void showApplicationTemplateSummary().catch((error) => showMessage(error.message, true));
@@ -499,7 +499,7 @@ for (const id of ['application-semester-filter', 'application-course-filter']) {
     resetPage('application', loadApplications);
   });
 }
-for (const id of ['enrollment-semester-filter', 'enrollment-course-filter']) {
+for (const id of ['enrollment-semester-filter', 'enrollment-course-filter', 'enrollment-sort']) {
   byId(id).addEventListener('change', () => resetPage('enrollment', loadEnrollments));
 }
 byId('application-previous-page').addEventListener('click', () => changePage('application', -1, loadApplications));

@@ -33,6 +33,7 @@ test('an administrator sees errors, approves a warning with a reason, or cancels
     assert.equal(messages[0].error, true);
     assert.equal(dialog.open, false);
     assert.equal(await reviewWarnings({ issues: [] }), '');
+    assert.equal(await reviewWarnings({ issues: [] }, undefined, '  경고 없는 수정 메모  '), '경고 없는 수정 메모');
 
     const preview = { issues: [{ code: 'CAPACITY_EXCEEDED', severity: 'WARNING' }] };
     const approved = reviewWarnings(preview);
@@ -52,10 +53,17 @@ test('an administrator sees errors, approves a warning with a reason, or cancels
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     assert.equal(await approvedWithoutNote, '');
 
+    const approvedEdit = reviewWarnings(preview, undefined, '수정 창에서 작성한 메모');
+    assert.equal(form.elements.note.value, '수정 창에서 작성한 메모');
+    form.elements.note.value = '확인 창에서 보완한 메모';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    assert.equal(await approvedEdit, '확인 창에서 보완한 메모');
+
     warningsEnabled = false;
     const skipped = reviewWarnings(preview);
     assert.equal(dialog.open, false);
     assert.equal(await skipped, '');
+    assert.equal(await reviewWarnings(preview, undefined, '  확인을 생략한 수정 메모  '), '확인을 생략한 수정 메모');
     assert.equal(await reviewWarnings({ issues: [] }), '');
     assert.equal(await reviewWarnings({ issues: [
       ...preview.issues, { code: 'MEMBER_NAME_REQUIRED', severity: 'ERROR' },

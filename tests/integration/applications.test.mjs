@@ -3,12 +3,14 @@ import test from 'node:test';
 
 import {
   ApplicationConflictError,
+  ApplicationNotFoundError,
   ApplicationService,
   ApplicationValidationError,
   RevisionConflictError,
 } from '../../backend/src/services/applications.ts';
-import { Store } from '../../backend/src/storage/store.ts';
+import { Store, StoreEpochConflictError, StoreRevisionConflictError } from '../../backend/src/storage/store.ts';
 import { DraftService } from '../../backend/src/services/drafts.ts';
+import { EnrollmentService } from '../../backend/src/services/enrollments.ts';
 
 const emptyStore = () => ({
   meta: { storeEpoch: 'epoch-1', storeRevision: 0 },
@@ -436,6 +438,90 @@ test('deletes only the selected application and keeps shared masters', async () 
     [data.semesters.length, data.members.length, data.courses.length, data.semesterCourses.length],
     [1, 1, 1, 1],
   );
+});
+
+test('deletes every application and choice in one semester while preserving histories and saved drafts', async () => {
+  const { service, store } = await openService();
+  const [spring, , fall] = await service.createMany([
+    { semesterName: '2026 봄', memberName: '회원1', applicationOrder: 1,
+      choices: [{ courseName: '기초', preference: 1 }, { courseName: '심화', preference: 2 }] },
+    { semesterName: '2026 봄', memberName: '회원2', applicationOrder: 2,
+      choices: [{ courseName: '심화', preference: 1 }] },
+    { semesterName: '2026 가을', memberName: '회원1', applicationOrder: 1,
+      choices: [{ courseName: '기초', preference: 1 }] },
+  ]);
+  const context = service.getSemesterContext(spring.semesterId);
+  await service.updateSemesterContext({
+    semesterId: spring.semesterId, expectedRevision: context.allocationInputRevision,
+    name: '2026 봄', order: context.order,
+    semesterCourses: context.semesterCourses.map((course) => ({ ...course, capacity: 10 })),
+  });
+  const enrollments = new EnrollmentService(store, {
+    id: () => 'enrollment-1', now: () => new Date('2026-09-25T00:00:00.000Z'), secret: Buffer.alloc(32, 1),
+  });
+  const history = enrollments.preview({ action: 'CREATE', semesterName: '2026 봄', memberName: '회원1', courseName: '기초' });
+  await enrollments.execute({ preparedActionToken: history.preparedActionToken, acknowledgedWarningDigest: history.warningDigest });
+  let draftId = 0;
+  const drafts = new DraftService(store, {
+    id: () => `draft-${++draftId}`, seed: () => 'seed', now: () => new Date('2026-09-25T00:00:00.000Z'),
+  });
+  const draft = await drafts.create({ semesterId: spring.semesterId, mode: 'MANUAL', policyId: 'course-allocation',
+    policyVersion: '1.0.0', policySettings: { preferenceMode: 'NEW_FIRST', fallbackMode: 'MAX_CARDINALITY_PRIORITIZED' } });
+  assert.equal(drafts.get(draft.draft.id).isStale, false);
+  const before = store.read();
+  const preview = service.previewSemesterApplicationDeletion(spring.semesterId);
+  assert.deepEqual(preview, { semesterName: '2026 봄', count: 2, ...store.version() });
+
+  const result = await service.deleteSemesterApplications(spring.semesterId, {
+    confirmationName: preview.semesterName, expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch,
+  });
+
+  assert.deepEqual(result, { deletedCount: 2 });
+  assert.deepEqual(service.list({ semesterId: spring.semesterId }), []);
+  assert.deepEqual(service.get(fall.id), fall);
+  const after = store.read();
+  assert.deepEqual(after.applicationChoices, before.applicationChoices.filter(({ applicationId }) => applicationId === fall.id));
+  for (const key of ['members', 'courses', 'semesterCourses', 'enrollments', 'allocationDrafts', 'allocationDraftItems']) {
+    assert.deepEqual(after[key], before[key], key);
+  }
+  assert.deepEqual(after.semesters.find(({ id }) => id === fall.semesterId), before.semesters.find(({ id }) => id === fall.semesterId));
+  assert.equal(service.getSemesterContext(spring.semesterId).allocationInputRevision, context.allocationInputRevision + 2);
+  assert.equal(drafts.get(draft.draft.id).isStale, true);
+});
+
+test('rejects unconfirmed, stale, missing, and empty semester application deletion without changing data', async () => {
+  const { service, store } = await openService();
+  const application = await service.create({ semesterName: '2026 봄', memberName: '회원1', applicationOrder: 1,
+    choices: [{ courseName: '기초', preference: 1 }] });
+  const preview = service.previewSemesterApplicationDeletion(application.semesterId);
+  const request = { confirmationName: '2026 봄', expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch };
+  const before = store.read();
+  for (const invalid of [null, {}, { ...request, confirmationName: '2026 가을' },
+    { ...request, confirmationName: ' 2026 봄 ' }, { ...request, confirmationName: 1 },
+    { ...request, expectedRevision: -1 }, { ...request, expectedRevision: 1.5 },
+    { ...request, expectedRevision: String(request.expectedRevision) },
+    { ...request, expectedEpoch: '' }, { ...request, expectedEpoch: null }]) {
+    await assert.rejects(service.deleteSemesterApplications(application.semesterId, invalid), ApplicationValidationError);
+    assert.deepEqual(store.read(), before);
+  }
+  await assert.rejects(service.deleteSemesterApplications(application.semesterId, { ...request, expectedEpoch: 'older-epoch' }), StoreEpochConflictError);
+  assert.throws(() => service.previewSemesterApplicationDeletion('missing'), ApplicationNotFoundError);
+  await assert.rejects(service.deleteSemesterApplications('missing', request), ApplicationNotFoundError);
+  assert.deepEqual(store.read(), before);
+
+  await service.create({ semesterName: '2026 봄', memberName: '회원2', applicationOrder: 2,
+    choices: [{ courseName: '기초', preference: 1 }] });
+  const afterCreate = store.read();
+  await assert.rejects(service.deleteSemesterApplications(application.semesterId, request), StoreRevisionConflictError);
+  assert.deepEqual(store.read(), afterCreate);
+  const empty = await service.createSemester({ name: '빈 학기', order: 2 });
+  const emptyPreview = service.previewSemesterApplicationDeletion(empty.semester.id);
+  assert.equal(emptyPreview.count, 0);
+  const beforeEmptyDeletion = store.read();
+  await assert.rejects(service.deleteSemesterApplications(empty.semester.id, {
+    confirmationName: emptyPreview.semesterName, expectedRevision: emptyPreview.storeRevision, expectedEpoch: emptyPreview.storeEpoch,
+  }), ApplicationValidationError);
+  assert.deepEqual(store.read(), beforeEmptyDeletion);
 });
 
 test('filters applications by member name, semester, and course', async () => {

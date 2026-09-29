@@ -3,6 +3,10 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@excel.js/exceljs": ["node_modules/@excel.js/exceljs/index.d.ts"]
+    },
     "allowJs": true,
     "allowImportingTsExtensions": true,
     "checkJs": true,
@@ -11,7 +15,6 @@
   },
   "include": [
     "frontend/applications-page.js",
-    "frontend/backups-page.js",
     "frontend/catalog-page.js",
     "frontend/catalog-view.js",
     "frontend/dashboard-page.js",

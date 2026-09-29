@@ -21,7 +21,20 @@ process.on('message', async (message) => {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(Buffer.from(message.bytes, 'base64'));
       for (const row of message.rows) workbook.getWorksheet('수강이력').addRow(row);
+      for (const row of message.courses ?? []) workbook.getWorksheet('개설강좌').addRow(row);
       process.send({ type: 'template-completed', bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
+      return;
+    }
+    if (message.type === 'inspect-enrollment-workbook') {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(Buffer.from(message.bytes, 'base64'));
+      const enrollments = workbook.getWorksheet('수강이력');
+      const courses = workbook.getWorksheet('개설강좌');
+      process.send({ type: 'workbook-inspected', version: workbook.getWorksheet('메타').getCell('B1').text,
+        headers: enrollments.getRow(1).values.slice(1),
+        enrollments: enrollments.getSheetValues().slice(2).map((row) => row.slice(1)),
+        courses: courses.getSheetValues().slice(2).map((row) => row.slice(1)),
+      });
       return;
     }
     if (message.type === 'complete-template') {

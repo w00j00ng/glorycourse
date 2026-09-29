@@ -82,9 +82,12 @@ test('the application list shows its current rows, choices, actions, and empty s
     const empty = { hidden: true };
     const count = { textContent: '' };
     const choiceCount = { textContent: '' };
+    const semesterFilter = { value: '' };
+    const deleteSemesterButton = { disabled: false };
     const nodes = {
       'application-rows': rows, 'application-empty': empty,
       'application-count': count, 'choice-count': choiceCount,
+      'application-semester-filter': semesterFilter, 'delete-semester-applications': deleteSemesterButton,
     };
     const state = {
       applications: [{ memberName: '홍길동', semesterName: '2026 봄', applicationOrder: 2,
@@ -105,12 +108,15 @@ test('the application list shows its current rows, choices, actions, and empty s
     assert.equal(count.textContent, '12');
     assert.equal(choiceCount.textContent, '1');
     assert.equal(empty.hidden, true);
+    assert.equal(deleteSemesterButton.disabled, true);
 
+    semesterFilter.value = 'semester-1';
     state.applications = [];
     page.renderApplications();
     assert.equal(rows.children.length, 0);
     assert.equal(empty.hidden, false);
     assert.equal(choiceCount.textContent, '0');
+    assert.equal(deleteSemesterButton.disabled, false);
   } finally { globalThis.document = previousDocument; }
 });
 
@@ -160,6 +166,7 @@ test('registering multiple applications refreshes the catalog before querying th
     'application-dialog': { close: () => calls.push('close') },
     'application-rows': { replaceChildren() {} },
     'application-empty': {}, 'application-count': {}, 'choice-count': {},
+    'application-semester-filter': { value: '' }, 'delete-semester-applications': {},
   };
   const page = createApplicationsPage({
     state: { semesters: [], applications: [], pagination: { application: { page: 1, limit: 50, total: 0 } } },
@@ -178,6 +185,35 @@ test('registering multiple applications refreshes the catalog before querying th
   assert.deepEqual(JSON.parse(calls[0].options.body).items.map((item) => item.memberName), ['김가나', '박다라']);
   assert.deepEqual(calls.slice(1), ['close', 'catalog', 'semesterId=new']);
   assert.equal(submit.disabled, false);
+});
+
+test('changing the selected semester ignores its earlier deletion preview without prompting or deleting', async () => {
+  const previousWindow = globalThis.window;
+  try {
+    for (const selectedAfterRequest of ['semester-2', '']) {
+      const semesterFilter = { value: 'semester-1' };
+      const calls = [];
+      let resolvePreview;
+      globalThis.window = { prompt: () => { calls.push('prompt'); return '2026 봄'; } };
+      const page = createApplicationsPage({
+        state: { applications: [], pagination: { application: { page: 1, limit: 50, total: 0 } } },
+        byId: (id) => id === 'application-semester-filter' ? semesterFilter : { replaceChildren() {} },
+        run: (action) => action(),
+        api: async (path, options) => {
+          calls.push([options?.method ?? 'GET', path]);
+          return options?.method === 'DELETE' ? { deletedCount: 2 }
+            : new Promise((resolve) => { resolvePreview = resolve; });
+        },
+        loadPaged: async () => { calls.push('reload'); return []; },
+        recordQuery: () => '', showMessage: () => { calls.push('message'); },
+      });
+      const deletion = page.deleteSemesterApplications();
+      semesterFilter.value = selectedAfterRequest;
+      resolvePreview({ semesterName: '2026 봄', count: 2, storeRevision: 10, storeEpoch: 'epoch-1' });
+      await deletion;
+      assert.deepEqual(calls, [['GET', '/semesters/semester-1/applications']], selectedAfterRequest);
+    }
+  } finally { globalThis.window = previousWindow; }
 });
 
 test('deleting an application asks for confirmation and refreshes the list', async () => {

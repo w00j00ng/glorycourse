@@ -53,8 +53,8 @@ test('shows Excel review problems with their sheet and row instead of internal s
   for (const { issue, expected } of cases) assert.equal(issueText(issue), expected);
 });
 
-test('keeps Korean recovery guidance and does not expose unknown English diagnostics', () => {
-  assert.equal(issueText({ code: 'RESTORE_REPLACES_CURRENT_DATA', severity: 'WARNING', message: '백업 이후의 현재 자료가 사라집니다.' }), '주의: 백업 이후의 현재 자료가 사라집니다. 계속하려면 복원 내용을 확인하세요.');
+test('keeps Korean guidance and does not expose unknown English diagnostics', () => {
+  assert.equal(issueText({ code: 'ENROLLMENT_NOTE_TOO_LONG', severity: 'ERROR', source: { sheet: '수강이력', row: 2, column: '관리자 메모' } }), '오류 · 수강이력 시트 2행 관리자 메모: 관리자 메모는 2000자까지 입력할 수 있습니다. 메모를 줄인 뒤 다시 올리세요.');
   assert.equal(issueText({ code: 'APPLICATION_INPUT_INVALID', severity: 'ERROR', message: '1행: courseName must contain between 1 and 200 characters', detail: { rowNumber: 1 } }), '오류 · 1행: 수강신청 입력값을 확인하세요.');
   assert.equal(issueText({ code: 'SEMESTER_COURSES_CHANGED', severity: 'WARNING', message: 'Allocation input changed after this draft was created' }), '주의: 초안 생성 후 개설강좌가 변경되었습니다. 초안을 다시 만드세요.');
   assert.equal(issueText({ code: 'FUTURE_RULE', severity: 'ERROR', message: 'Internal future error' }), '오류: 자료를 확인한 뒤 다시 시도하세요.');

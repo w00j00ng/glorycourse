@@ -1,6 +1,7 @@
 import {
   describeAllocationEvidence,
   draftApplicationSummaries,
+  draftCourseStatuses,
   draftDecisionChanged,
   draftItemPage,
   filterDraftItems,
@@ -22,6 +23,7 @@ import {
  *   },
  *   byId: (id: string) => any,
  *   fillSelect: (select: HTMLSelectElement, items: { id: string, name: string }[], placeholder: string) => void,
+ *   fillDatalist: (id: string, items: { name: string }[]) => void,
  *   renderPagination: (name: string) => void,
  *   cell: (text: string) => HTMLElement,
  *   actionsCell: (...actions: [string, () => void | Promise<void>, string?][]) => HTMLElement,
@@ -30,20 +32,69 @@ import {
  *   restoreDraftItem: (item: DraftItem) => Promise<void>,
  * }} dependencies
  */
-export const createDraftDetail = ({ state, byId, fillSelect, renderPagination, cell, actionsCell,
+export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, renderPagination, cell, actionsCell,
   policyName, saveDraftItem, restoreDraftItem }) => {
+  /** @type {Map<string, ReturnType<typeof draftCourseStatuses>[number]>} */
+  let courseStatuses = new Map();
+  /** @type {Set<string>} */
+  let enrolledNames = new Set();
+
+  const showMemberWarning = () => {
+    const name = byId('draft-add-member').value.trim().normalize('NFC');
+    byId('draft-add-member-warning').hidden = !enrolledNames.has(name);
+  };
+
+  const renderMemberOptions = () => {
+    const members = state.draft?.currentEnrolledMembers ?? [];
+    const enrolledIds = new Set(members.map(({ id }) => id));
+    enrolledNames = new Set(members.map(({ name }) => name.trim().normalize('NFC')));
+    fillDatalist('draft-member-options', state.members.filter(({ id }) => !enrolledIds.has(id)));
+    showMemberWarning();
+  };
+
   /** @param {string | null} id */
   const courseName = (id) => id
     ? state.draftContext?.semesterCourses.find((course) => course.id === id)?.courseName ?? id
     : '제외';
 
-  const fillAddFields = () => {
-    if (!state.draft || !state.draftContext) return;
-    const memberIds = new Set(state.draft.studentResults.map(({ memberId }) => memberId));
-    fillSelect(byId('draft-add-member'), state.members.filter(({ id }) => !memberIds.has(id)), '회원을 선택하세요.');
-    fillSelect(byId('draft-add-course'), state.draftContext.semesterCourses.map((course) => ({
-      id: course.id, name: course.courseName,
-    })), '강좌를 선택하세요.');
+  /** @param {string} id */
+  const courseOptionName = (id) => {
+    const course = courseStatuses.get(id);
+    if (!course || !course.hasSnapshot) return `${courseName(id)} · 현황 미확인 · 새 초안 필요`;
+    const count = course.capacity === null ? `${course.totalCount}명` : `${course.totalCount}/${course.capacity}명`;
+    return `${courseName(id)} · ${count} · ${course.status}`;
+  };
+
+  const renderCapacities = () => {
+    if (!state.draft) return;
+    const original = new Map(state.draft.studentResults.map((item) => [
+      item.memberId, item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : '',
+    ]));
+    /** @type {HTMLSelectElement[]} */
+    const selects = Array.from(byId('draft-item-rows').querySelectorAll('select'));
+    const pending = new Map(selects.filter((select) => select.value !== original.get(select.dataset.memberId ?? ''))
+      .map((select) => [select.dataset.memberId ?? '', select.value]));
+    const courses = draftCourseStatuses(state.draft, pending);
+    courseStatuses = new Map(courses.map((course) => [course.semesterCourseId, course]));
+    byId('draft-capacity-status').textContent = `${pending.size
+      ? '저장 전 선택 미리보기 · 각 행의 저장으로 반영하세요.' : '저장된 최종 결정 기준.'} 기존 이력 포함 · 초안 생성 당시 정원`;
+    byId('draft-capacity-rows').replaceChildren(...courses.map((course) => {
+      const row = document.createElement('tr');
+      const statusCell = document.createElement('td');
+      const status = document.createElement('span');
+      const full = course.capacity !== null && course.totalCount >= course.capacity;
+      status.className = full || !course.hasSnapshot || course.capacity === null ? 'badge warning' : 'badge';
+      status.classList.toggle('draft-capacity-exceeded', course.capacity !== null && course.totalCount > course.capacity);
+      status.textContent = course.status;
+      statusCell.append(status);
+      row.append(cell(courseName(course.semesterCourseId)), cell(course.hasSnapshot ? String(course.existingEnrollmentCount) : '미확인'),
+        cell(String(course.finalSelectedCount)), cell(course.hasSnapshot ? `${course.totalCount} / ${course.capacity ?? '미정'}명` : '미확인'),
+        cell(!course.hasSnapshot ? '미확인' : course.remaining === null ? '미정' : `${course.remaining}명`), statusCell);
+      return row;
+    }));
+    for (const select of [...selects, byId('draft-add-course')]) {
+      for (const option of select.options) if (option.value) option.textContent = courseOptionName(option.value);
+    }
   };
 
   /** @param {DraftItem} item */
@@ -88,16 +139,18 @@ export const createDraftDetail = ({ state, byId, fillSelect, renderPagination, c
       const row = document.createElement('tr');
       row.classList.toggle('draft-row-changed', draftDecisionChanged(item));
       const finalSelect = document.createElement('select');
+      finalSelect.dataset.memberId = item.memberId;
       finalSelect.setAttribute('aria-label', `${item.memberNameAtGeneration} 최종 배정`);
       const selectedId = item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : null;
-      fillSelect(finalSelect, selectedId ? [{ id: selectedId, name: courseName(selectedId) }] : [], '제외');
+      fillSelect(finalSelect, selectedId ? [{ id: selectedId, name: courseOptionName(selectedId) }] : [], '제외');
       finalSelect.value = selectedId ?? '';
       finalSelect.disabled = readonly;
       if (!readonly) finalSelect.addEventListener('focus', () => {
         const selected = finalSelect.value;
-        fillSelect(finalSelect, context.semesterCourses.map((course) => ({ id: course.id, name: course.courseName })), '제외');
+        fillSelect(finalSelect, context.semesterCourses.map((course) => ({ id: course.id, name: courseOptionName(course.id) })), '제외');
         finalSelect.value = selected;
       }, { once: true });
+      finalSelect.addEventListener('change', renderCapacities);
       const finalCell = document.createElement('td');
       finalCell.append(finalSelect);
       const application = applications.get(item.sourceApplicationId ?? '');
@@ -127,6 +180,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, renderPagination, c
       ? '검색 조건에 맞는 학생이 없습니다.'
       : '검토할 학생이 없습니다.';
     byId('draft-item-empty').hidden = items.length !== 0;
+    renderCapacities();
   };
 
   /** @param {DraftDetail} detail @param {DraftContext} context */
@@ -141,22 +195,30 @@ export const createDraftDetail = ({ state, byId, fillSelect, renderPagination, c
       byId('draft-result-filter').value = 'ALL';
       byId('draft-grouping').value = 'STUDENT';
       byId('draft-sort').value = 'ORDER_ASC';
+      byId('draft-add-member').value = '';
     }
     byId('draft-dialog-title').textContent = `${context.semester.name} 배정초안`;
-    byId('draft-dialog-meta').textContent = `${detail.draft.mode} · ${policyName(detail.draft.policyId, detail.draft.policyVersion)} · revision ${detail.draft.revision}`;
+    byId('draft-dialog-meta').textContent = `${detail.draft.mode === 'MANUAL'
+      ? '수동 · 정책 미적용' : `자동 · ${policyName(detail.draft.policyId, detail.draft.policyVersion)}`} · revision ${detail.draft.revision}`;
     byId('draft-stale').hidden = !detail.isStale;
     const readonly = detail.draft.status !== 'DRAFT';
+    const manualEntry = byId('draft-manual-entry');
+    manualEntry.hidden = readonly || detail.draft.mode !== 'MANUAL';
+    manualEntry.disabled = manualEntry.hidden;
+    const course = byId('draft-add-course');
+    const selectedCourse = changedDraft ? '' : course.value;
+    fillSelect(course, context.semesterCourses.map(({ id, courseName }) => ({ id, name: courseName })), '강좌를 선택하세요.');
+    if (context.semesterCourses.some(({ id }) => id === selectedCourse)) course.value = selectedCourse;
+    renderMemberOptions();
     byId('draft-stale').textContent = readonly
       ? '이 화면은 초안 생성 당시 자료를 보여주며 현재 수강 자료와 차이가 있습니다.'
       : '초안 생성 뒤 원본 자료가 변경되었습니다. 현재 초안을 확정하지 말고 새 초안을 검토하세요.';
     byId('draft-readonly').hidden = !readonly;
     byId('draft-readonly').textContent = `${detail.draft.status} · 읽기 전용`;
-    byId('draft-add-item').hidden = readonly;
     byId('preview-finalization').hidden = readonly;
-    fillAddFields();
     renderItems();
     if (!byId('draft-dialog').open) byId('draft-dialog').showModal();
   };
 
-  return { show, renderItems, courseName, fillAddFields };
+  return { show, renderItems, courseName, renderMemberOptions, showMemberWarning };
 };

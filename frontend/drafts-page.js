@@ -11,7 +11,7 @@ import { draftFinalSelection } from './draft-view.js';
  *   api: (path: string, options?: RequestInit) => Promise<any>,
  *   run: (action: () => Promise<any>, success?: string) => Promise<any>,
  *   showDraft: (detail: any, context: any) => Promise<void> | void,
- *   showMessage: (message: string, error?: boolean) => void,
+ *   loadCatalogs: () => Promise<void>,
  *   fillSelect: (select: HTMLSelectElement, items: { id: string, name: string }[], placeholder: string) => void,
  *   loadPaged: (name: string, path: string, filters: string, pagination: { page: number, limit: number, total: number }) => Promise<DraftSummary[]>,
  *   cell: (text: string) => HTMLElement,
@@ -20,7 +20,7 @@ import { draftFinalSelection } from './draft-view.js';
  *   policyName: (id: string, version: string) => string,
  * }} dependencies
  */
-export const createDraftsPage = ({ state, byId, api, run, showDraft, showMessage, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
+export const createDraftsPage = ({ state, byId, api, run, showDraft, loadCatalogs, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
   let readinessRequest = 0;
   let draftOpenRequest = 0;
 
@@ -30,7 +30,7 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, showMessage
       row.append(
         cell(resourceName(state.semesters, item.semesterId)),
         cell(item.mode === 'AUTO' ? '자동' : '수동'),
-        cell(policyName(item.policyId, item.policyVersion)),
+        cell(item.mode === 'MANUAL' ? '미적용' : policyName(item.policyId, item.policyVersion)),
         cell(new Date(item.updatedAt).toLocaleString()),
         actionsCell(
           ['검토', () => openDraft(item.id)],
@@ -127,29 +127,29 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, showMessage
     await refreshAfterItemChange(id);
   };
 
-  const addDraftItem = async () => {
+  const addManualDraftItem = async () => {
     if (!state.draft) return;
-    const memberId = byId('draft-add-member').value;
-    const courseId = byId('draft-add-course').value;
-    if (!memberId || !courseId) return showMessage('추가할 회원과 강좌를 선택하세요.', true);
+    const member = byId('draft-add-member');
+    const course = byId('draft-add-course');
+    if (!member.reportValidity() || !course.reportValidity()) return;
+    const memberName = member.value;
     const { id, revision } = state.draft.draft;
     await run(() => api(`/allocation-drafts/${id}/items`, {
-      method: 'POST',
-      body: JSON.stringify({
-        memberId,
-        expectedDraftRevision: revision,
-        finalDecision: 'SELECTED',
-        finalSemesterCourseId: courseId,
-        finalReasonCode: 'ADMIN_ADDED',
-        finalReasonDetail: { note: '관리자가 배정초안에 회원을 추가했습니다.' },
-      }),
-    }), '회원을 초안에 추가했습니다.');
-    await refreshAfterItemChange(id);
+      method: 'POST', body: JSON.stringify({ expectedDraftRevision: revision, memberName, semesterCourseId: course.value }),
+    }), '회원을 수동 초안에 배정했습니다.');
+    if (state.draft?.draft.id === id && member.value === memberName) member.value = '';
+    await Promise.all([refreshAfterItemChange(id), loadCatalogs()]);
   };
 
   const showPolicyDescription = () => {
-    const value = byId('draft-create-form').elements.policy.value;
-    byId('draft-policy-description').textContent = state.policies.find((policy) => (
+    const form = byId('draft-create-form');
+    const manual = form.elements.mode.value === 'MANUAL';
+    form.elements.policy.disabled = manual;
+    byId('draft-auto-help').hidden = manual;
+    const value = form.elements.policy.value;
+    byId('draft-policy-description').textContent = manual
+      ? '수동 초안에는 배정 정책을 적용하지 않습니다. 회원과 강좌를 직접 지정하세요.'
+      : state.policies.find((policy) => (
       `${policy.policyId}\n${policy.policyVersion}` === value
     ))?.description ?? '';
   };
@@ -176,9 +176,13 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, showMessage
 
   const showReadiness = async () => {
     const request = ++readinessRequest;
-    const semesterId = byId('draft-create-form').elements.semesterId.value;
+    const form = byId('draft-create-form');
+    const manual = form.elements.mode.value === 'MANUAL';
+    const semesterId = form.elements.semesterId.value;
     if (!semesterId) {
-      byId('draft-readiness').textContent = '학기를 선택하면 자동 배정 준비 상태를 확인합니다.';
+      byId('draft-readiness').textContent = manual
+        ? '학기를 선택하세요. 신청자가 없어도 회원을 직접 추가할 수 있습니다.'
+        : '학기를 선택하면 자동 배정 준비 상태를 확인합니다.';
       return;
     }
     const [context, enrollments] = await Promise.all([
@@ -188,11 +192,13 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, showMessage
     const { issues, readyForAutoAllocation } = /** @type {{ issues: { code: string }[], readyForAutoAllocation: boolean }} */ (context);
     const { total } = /** @type {{ total: number }} */ (enrollments);
     const issueNames = issues.map(({ code }) => issueText({ code, severity: 'WARNING' }));
-    byId('draft-readiness').textContent = readyForAutoAllocation
+    byId('draft-readiness').textContent = manual
+      ? `신청자는 미배정으로 표시되며, 신청 없는 회원도 직접 추가할 수 있습니다. · 기존 확정 ${total}명`
+      : readyForAutoAllocation
       ? `자동 배정 준비됨 · 기존 확정 ${total}명`
       : `자동 배정 준비 필요: ${issueNames.join(', ')} · 기존 확정 ${total}명`;
   };
 
   return { load, openCreate, showPolicyDescription, showReadiness, openDraft, deleteDraft, submitDraft,
-    saveDraftItem, restoreDraftItem, addDraftItem };
+    saveDraftItem, restoreDraftItem, addManualDraftItem };
 };

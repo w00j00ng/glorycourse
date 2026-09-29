@@ -16,10 +16,41 @@ import { copySemesterCourses, parseSemesterCourses } from './catalog-view.js';
  * }} dependencies
  */
 export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCatalogs, fillSelect, cell, actionsCell }) => {
+  let courseRowOrder = 0;
+
+  const sortCatalogCourses = () => {
+    const table = byId('catalog-course-rows');
+    const sort = byId('catalog-course-sort').value;
+    const rows = /** @type {HTMLElement[]} */ ([...table.children]).map((row) => {
+      const value = /** @type {HTMLInputElement} */ (row.querySelector('[name="capacity"]')).value;
+      const capacity = Number(value);
+      return {
+        row,
+        name: /** @type {HTMLInputElement} */ (row.querySelector('[name="courseName"]')).value,
+        capacity: value !== '' && Number.isSafeInteger(capacity) && capacity >= 0 ? capacity : null,
+        order: Number(row.dataset.sortOrder),
+      };
+    });
+    rows.sort((left, right) => {
+      const orderDifference = left.order - right.order;
+      if (!sort) return orderDifference;
+      const nameDifference = left.name.localeCompare(right.name, 'ko');
+      if (sort === 'NAME_ASC') return nameDifference || orderDifference;
+      if (sort === 'NAME_DESC') return -nameDifference || orderDifference;
+      const capacityDifference = left.capacity === right.capacity ? 0
+        : left.capacity === null ? 1 : right.capacity === null ? -1 : left.capacity - right.capacity;
+      const selectedDifference = sort === 'CAPACITY_DESC' && left.capacity !== null && right.capacity !== null
+        ? -capacityDifference : capacityDifference;
+      return selectedDifference || nameDifference || orderDifference;
+    });
+    table.append(...rows.map(({ row }) => row));
+  };
+
   /** @param {Partial<CatalogContext['semesterCourses'][number]>} [course] */
   const catalogCourseRow = (course = {}) => {
     const row = document.createElement('tr');
     row.dataset.id = course.id ?? '';
+    row.dataset.sortOrder = String(courseRowOrder++);
     const nameCell = document.createElement('td');
     const name = document.createElement('input');
     name.name = 'courseName';
@@ -103,7 +134,9 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
     semesterForm.hidden = state.selectedSemesterId !== context.semester.id;
     semesterForm.elements.name.value = context.semester.name;
     byId('catalog-form').hidden = false;
+    courseRowOrder = 0;
     byId('catalog-course-rows').replaceChildren(...context.semesterCourses.map(catalogCourseRow));
+    sortCatalogCourses();
     byId('catalog-course-empty').hidden = context.semesterCourses.length !== 0;
     byId('catalog-empty').hidden = true;
     byId('copy-catalog-courses').disabled = !state.semesters.some(({ id }) => id !== context.semester.id);
@@ -189,7 +222,8 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
         expectedRevision: context.allocationInputRevision,
         name: context.semester.name,
         order: context.order,
-        semesterCourses: [...byId('catalog-course-rows').children].map((row) => ({
+        semesterCourses: [...byId('catalog-course-rows').children]
+          .sort((left, right) => Number(left.dataset.sortOrder) - Number(right.dataset.sortOrder)).map((row) => ({
           ...(row.dataset.id ? { id: row.dataset.id } : {}),
           courseName: row.querySelector('[name="courseName"]').value,
           capacity: row.querySelector('[name="capacity"]').value === ''
@@ -263,6 +297,7 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
       /** @type {HTMLInputElement} */ (row.querySelector('[name="courseName"]')).value);
     const added = copySemesterCourses(existingNames, courses);
     rows.append(...added.map(catalogCourseRow));
+    sortCatalogCourses();
     byId('catalog-course-empty').hidden = rows.children.length !== 0;
     byId('catalog-add-dialog').close();
     const skipped = courses.length - added.length;
@@ -285,6 +320,7 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
       /** @type {HTMLInputElement} */ (row.querySelector('[name="courseName"]')).value);
     const copied = copySemesterCourses(existingNames, selected);
     rows.append(...copied.map(catalogCourseRow));
+    sortCatalogCourses();
     byId('catalog-course-empty').hidden = rows.children.length !== 0;
     byId('catalog-copy-dialog').close();
     const skipped = selected.length - copied.length;
@@ -383,6 +419,6 @@ export const createCatalogPage = ({ state, byId, api, run, showMessage, loadCata
 
   return { loadCatalogManagement, renderSemesterRows, selectSemesterRow, moveSemester,
     createSemester, submitSemester, deleteSemester, submitCatalog, deleteSemesterCourse,
-    setCatalogTab, openCatalogAdd, addCatalogCourses, copyCatalogCourses,
+    setCatalogTab, sortCatalogCourses, openCatalogAdd, addCatalogCourses, copyCatalogCourses,
     openCatalogCopy, loadCatalogCopyCourses };
 };

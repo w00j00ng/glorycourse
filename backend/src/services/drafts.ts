@@ -18,6 +18,7 @@ import {
   type Store,
 } from '../storage/store.ts';
 import { nextSemesterOrder } from './semester-order.ts';
+import { resolveNamed } from './import-context.ts';
 
 type DraftStatus = 'DRAFT' | 'FINALIZED' | 'ARCHIVED';
 type DraftMode = 'AUTO' | 'MANUAL';
@@ -51,11 +52,18 @@ export type DraftItemInput = {
   finalReasonDetail: FinalReasonDetail | null;
 };
 
+export type AddManualDraftItemInput = {
+  expectedDraftRevision: number;
+  memberName: string;
+  semesterCourseId: string;
+};
+
 export type DraftDetail = {
   draft: ReturnType<typeof draftSummary>;
   studentResults: DraftItemRecord[];
   applicationSnapshot: Pick<AllocationSnapshot, 'applications' | 'choices' | 'semesterCourses'>;
   existingEnrollments: AllocationSnapshot['existingEnrollments'];
+  currentEnrolledMembers: { id: string; name: string }[];
   courseSummary: ReturnType<typeof summarizeCourses>;
   isStale: boolean;
   inputChanges: InputChange[];
@@ -70,9 +78,15 @@ export class DraftNotFoundError extends Error {
 }
 
 export class DraftValidationError extends Error {
+  readonly issues;
+
   constructor(message: string) {
     super(message);
     this.name = 'DraftValidationError';
+    this.issues = [{
+      code: 'DRAFT_INPUT_INVALID', message, severity: 'ERROR' as const,
+      blockingStages: [], acknowledgementStages: [], subject: { entityType: 'AllocationDraft' }, source: {}, detail: {},
+    }];
   }
 }
 
@@ -179,6 +193,8 @@ export class DraftService {
     const data = this.store.draftDetailData();
     const draft = requireDraft(data, id);
     const items = draftItems(data).filter(({ draftId }) => draftId === id);
+    const courseIds = new Set(data.semesterCourses.filter(({ semesterId }) => semesterId === draft.semesterId).map(({ id }) => id));
+    const enrolledIds = new Set(data.enrollments.filter(({ semesterCourseId }) => courseIds.has(semesterCourseId)).map(({ memberId }) => memberId));
     let isStale = true;
     let inputChanges: InputChange[] = [{ code: 'INPUT_UNAVAILABLE' }];
     try {
@@ -202,6 +218,7 @@ export class DraftService {
         semesterCourses: draft.inputSnapshot.semesterCourses,
       }),
       existingEnrollments: structuredClone(draft.inputSnapshot.existingEnrollments),
+      currentEnrolledMembers: data.members.filter(({ id }) => enrolledIds.has(id)).map(({ id, name }) => ({ id, name })),
       courseSummary: summarizeCourses(draft.inputSnapshot, items),
       isStale,
       inputChanges,
@@ -273,46 +290,41 @@ export class DraftService {
     return this.get(draftId);
   }
 
-  async addItem(
-    draftId: string,
-    input: DraftItemInput & { memberId: string },
-  ): Promise<DraftDetail> {
-    validateItemInput(input);
-    requireId(input.memberId, 'memberId');
+  async addManualItem(draftId: string, input: AddManualDraftItemInput): Promise<DraftDetail> {
+    if (!input || !plainObject(input)) throw new DraftValidationError('회원과 강좌 입력을 확인하세요.');
+    requireRevision(input.expectedDraftRevision);
+    if (typeof input.memberName !== 'string' || !input.memberName.trim() || input.memberName.trim().length > 200) {
+      throw new DraftValidationError('회원명은 1~200자로 입력하세요.');
+    }
+    if (typeof input.semesterCourseId !== 'string' || !input.semesterCourseId) {
+      throw new DraftValidationError('배정할 개설 강좌를 선택하세요.');
+    }
     await this.store.write({}, (data) => {
       const draft = editableDraft(data, draftId, input.expectedDraftRevision);
-      validateSelectedCourse(data, draft, input.finalDecision, input.finalSemesterCourseId);
-      if (draftItems(data).some((item) => item.draftId === draftId && item.memberId === input.memberId)) {
-        throw new DraftValidationError('Member already has an item in this draft');
-      }
-      const member = (data.members as Array<{ id: string; name: string }>)
-        .find(({ id }) => id === input.memberId);
-      if (!member) throw new DraftValidationError('Member was not found');
-      if (hasCurrentEnrollment(data, draft.semesterId, input.memberId)) {
-        throw new DraftValidationError('Member is already enrolled in the target semester');
+      if (draft.mode !== 'MANUAL') throw new DraftValidationError('회원 추가는 수동 초안에서 사용할 수 있습니다.');
+      if (!data.semesterCourses.some(({ id, semesterId }) => id === input.semesterCourseId && semesterId === draft.semesterId)) {
+        throw new DraftValidationError('이 학기의 개설 강좌를 선택하세요.');
       }
       const now = this.dependencies.now().toISOString();
+      const member = resolveNamed(data.members, input.memberName.trim(), now, this.dependencies.id);
+      const courseIds = new Set(data.semesterCourses.filter(({ semesterId }) => semesterId === draft.semesterId).map(({ id }) => id));
+      if (data.enrollments.some(({ memberId, semesterCourseId }) => memberId === member.id && courseIds.has(semesterCourseId))) {
+        throw new DraftValidationError('이 회원은 같은 학기에 수강이력이 있습니다. 수강이력에서 확인하세요.');
+      }
+      if (draftItems(data).some((item) => item.draftId === draftId && item.memberId === member.id)) {
+        throw new DraftValidationError('이미 이 초안에 있는 회원입니다. 기존 행의 최종 결정을 수정하세요.');
+      }
       draftItems(data).push({
-        id: this.dependencies.id(),
-        draftId,
-        memberId: member.id,
-        sourceApplicationId: null,
-        memberNameAtGeneration: member.name,
-        autoSemesterCourseId: null,
-        autoDecision: 'NOT_EVALUATED',
-        autoReasonCode: 'MANUAL_ONLY',
-        autoReasonDetail: { preferenceAttempts: [], fallback: null },
-        finalSemesterCourseId: input.finalSemesterCourseId,
-        finalDecision: input.finalDecision,
-        finalReasonCode: input.finalReasonCode,
-        finalReasonDetail: structuredClone(input.finalReasonDetail),
-        updatedAt: now,
+        id: this.dependencies.id(), draftId, memberId: member.id, memberNameAtGeneration: member.name,
+        sourceApplicationId: null, autoDecision: 'NOT_EVALUATED', autoSemesterCourseId: null,
+        autoReasonCode: 'MANUAL_ONLY', autoReasonDetail: { preferenceAttempts: [], fallback: null },
+        finalDecision: 'SELECTED', finalSemesterCourseId: input.semesterCourseId,
+        finalReasonCode: 'ADMIN_ADDED', finalReasonDetail: null, updatedAt: now,
       });
       bumpDraft(draft, now);
     });
     return this.get(draftId);
   }
-
 }
 
 const manualItems = (snapshot: AllocationSnapshot): ManualAllocationItem[] => {
@@ -438,13 +450,6 @@ const liveSnapshot = (data: DatabaseState, semesterId: string): AllocationSnapsh
     if (error instanceof AllocationSnapshotError) throw new DraftValidationError(error.message);
     throw error;
   }
-};
-
-const hasCurrentEnrollment = (data: DatabaseState, semesterId: string, memberId: string): boolean => {
-  const courseIds = new Set((data.semesterCourses as Array<{ id: string; semesterId: string }>)
-    .filter((item) => item.semesterId === semesterId).map(({ id }) => id));
-  return (data.enrollments as Array<{ memberId: string; semesterCourseId: string }>)
-    .some((item) => item.memberId === memberId && courseIds.has(item.semesterCourseId));
 };
 
 const summarizeCourses = (snapshot: AllocationSnapshot, items: DraftItemRecord[]) => {

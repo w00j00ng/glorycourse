@@ -53,10 +53,14 @@ export type EnrollmentView = Pick<Enrollment,
   memberName: string;
 };
 
+export const ENROLLMENT_SORTS = ['NAME_ASC', 'NAME_DESC', 'COURSE_ASC', 'COURSE_DESC', 'SEMESTER_ASC', 'SEMESTER_DESC'] as const;
+export type EnrollmentSort = (typeof ENROLLMENT_SORTS)[number];
+
 export type EnrollmentListFilters = {
   memberName?: string;
   semesterId?: string;
   courseId?: string;
+  sort?: EnrollmentSort;
 };
 
 export class EnrollmentValidationError extends Error {
@@ -269,13 +273,30 @@ export class EnrollmentService {
   list(filters: EnrollmentListFilters = {}): EnrollmentView[] {
     const data = this.store.enrollmentData();
     const memberName = filters.memberName?.trim().normalize('NFC');
-    return enrollments(data).filter((enrollment) => {
+    const items = enrollments(data).filter((enrollment) => {
       const semesterCourse = semesterCourses(data).find(({ id }) => id === enrollment.semesterCourseId);
       return semesterCourse
         && (!filters.semesterId || semesterCourse.semesterId === filters.semesterId)
         && (!filters.courseId || semesterCourse.courseId === filters.courseId)
         && (!memberName || members(data).find(({ id }) => id === enrollment.memberId)?.nameKey.includes(memberName));
     }).map((enrollment) => enrollmentView(data, enrollment));
+    if (!filters.sort) return items;
+    const semesterOrders = new Map(semesters(data).map(({ name, order }) => [name, order]));
+    return items.sort((left, right) => {
+      const leftOrder = semesterOrders.get(left.semesterName) ?? null;
+      const rightOrder = semesterOrders.get(right.semesterName) ?? null;
+      const semesterDifference = leftOrder === rightOrder ? 0
+        : leftOrder === null ? 1 : rightOrder === null ? -1 : rightOrder - leftOrder;
+      const nameDifference = left.memberName.localeCompare(right.memberName, 'ko');
+      const courseDifference = left.courseName.localeCompare(right.courseName, 'ko');
+      const selectedDifference = filters.sort === 'SEMESTER_ASC'
+        ? (leftOrder !== null && rightOrder !== null ? -semesterDifference : semesterDifference)
+        : filters.sort === 'SEMESTER_DESC' ? semesterDifference
+          : filters.sort === 'NAME_ASC' ? nameDifference
+            : filters.sort === 'NAME_DESC' ? -nameDifference
+              : filters.sort === 'COURSE_DESC' ? -courseDifference : courseDifference;
+      return selectedDifference || semesterDifference || nameDifference || courseDifference || left.id.localeCompare(right.id);
+    });
   }
 
   previewSemesterDeletion(semesterId: string) {
@@ -692,6 +713,9 @@ const resolveSemesterCourse = (
     updatedAt: now,
   };
   semesterCourses(data).push(created);
+  const semester = semesters(data).find(({ id }) => id === semesterId)!;
+  semester.allocationInputRevision += 1;
+  semester.updatedAt = now;
   return created;
 };
 

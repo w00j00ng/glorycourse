@@ -1,14 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 
 import { createImportTemplate, exportApplicationRows, exportRawRows } from '../excel/workbooks.ts';
 import { APPLICATION_SORTS, ApplicationService, type ApplicationInput, type ApplicationSort } from '../services/applications.ts';
 import { DraftService, type CreateDraftInput, type DraftItemInput } from '../services/drafts.ts';
-import { EnrollmentService } from '../services/enrollments.ts';
+import { ENROLLMENT_SORTS, EnrollmentService, type EnrollmentSort } from '../services/enrollments.ts';
 import { FinalizationService } from '../services/finalization.ts';
 import { ImportCommitService } from '../services/import-commit.ts';
 import { ImportPreviewService, type ImportMode, type ImportPreview } from '../services/import-preview.ts';
-import { publicBackup, RecoveryService } from '../services/recovery.ts';
 import type { Store } from '../storage/store.ts';
 import { HttpError } from './errors.ts';
 import { parseMultipart } from './multipart.ts';
@@ -20,7 +18,7 @@ type EnrollmentPreviewInput = Parameters<EnrollmentService['preview']>[0];
 type PreparedEnrollmentInput = Pick<Parameters<EnrollmentService['execute']>[0],
   'preparedActionToken' | 'acknowledgedWarningDigest' | 'acknowledgementNote'>;
 
-export const createApiRouter = (store: Store, options: { dataDirectory: string }): ApiHandler => {
+export const createApiRouter = (store: Store): ApiHandler => {
   const clock = () => new Date();
   const applications = new ApplicationService(store, { id: randomUUID, now: clock });
   const enrollments = new EnrollmentService(store, {
@@ -43,35 +41,8 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
     now: clock,
     secret: randomBytes(32),
   });
-  const recovery = new RecoveryService(store, {
-    dataFile: join(options.dataDirectory, 'db.sqlite'),
-    backupDirectory: join(options.dataDirectory, 'backups'),
-    id: randomUUID,
-    now: clock,
-  });
-
   return async (request): Promise<ApiResponse | undefined> => {
     const path = request.path.slice('/api/v1'.length);
-
-    if (path === '/backups') {
-      if (request.method === 'GET') return ok({ items: (await recovery.list()).map(publicBackup) });
-      if (request.method === 'POST') return { status: 201, json: publicBackup(await recovery.create()) };
-      return methodNotAllowed();
-    }
-
-    if (path === '/restores/preview') {
-      if (request.method !== 'POST') return methodNotAllowed();
-      if (!request.bodyFile) throw new HttpError(400, 'BAD_REQUEST', '백업 파일이 필요합니다.');
-      return ok(await recovery.preview(request.bodyFile));
-    }
-
-    if (path === '/restores') {
-      if (request.method !== 'POST') return methodNotAllowed();
-      const idempotencyKey = header(request, 'idempotency-key');
-      if (!idempotencyKey) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key 헤더가 필요합니다.');
-      const input = json<Omit<Parameters<RecoveryService['restore']>[0], 'idempotencyKey'>>(request);
-      return ok(await recovery.restore({ ...input, idempotencyKey }));
-    }
 
     if (path === '/semesters' && request.method === 'POST') {
       return {
@@ -124,6 +95,18 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
       return { status: 204 };
     }
 
+    const semesterApplications = match(path, /^\/semesters\/([^/]+)\/applications$/);
+    if (semesterApplications) {
+      if (request.method === 'GET') return ok(applications.previewSemesterApplicationDeletion(semesterApplications[1]));
+      if (request.method === 'DELETE') {
+        return ok(await applications.deleteSemesterApplications(
+          semesterApplications[1],
+          json<Parameters<ApplicationService['deleteSemesterApplications']>[1]>(request),
+        ));
+      }
+      return methodNotAllowed();
+    }
+
     if (path === '/applications') {
       if (request.method === 'GET') {
         return ok(page(applications.list(applicationFilters(request)), request));
@@ -146,13 +129,21 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
     }
     if (request.method === 'GET' && path === '/applications/export') {
       const items = applications.list(applicationFilters(request));
+      const contexts = [...new Set(items.map(({ semesterId }) => semesterId))].map((semesterId) => {
+        const context = applications.getSemesterContext(semesterId);
+        return {
+          semesterName: context.semester.name,
+          semesterOrder: context.order,
+          courses: context.semesterCourses.map(({ courseName, capacity }) => ({ courseName, capacity })),
+        };
+      });
       return xlsx(await exportApplicationRows(items.flatMap((item) => item.choices.map((choice) => ({
         semesterName: item.semesterName,
         memberName: item.memberName,
         applicationOrder: item.applicationOrder,
         courseName: choice.courseName,
         preference: choice.preference,
-      })))), 'glorycourse-applications.xlsx');
+      }))), contexts), 'glorycourse-applications.xlsx');
     }
 
     if (path === '/applications/batch') {
@@ -195,7 +186,7 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
 
     if (path === '/enrollments') {
       if (request.method === 'GET') {
-        return ok(page(enrollments.list(recordFilters(request)), request));
+        return ok(page(enrollments.list(enrollmentFilters(request)), request));
       }
       if (request.method === 'POST') {
         return {
@@ -213,8 +204,8 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
       return xlsx(await createImportTemplate('ENROLLMENTS'), 'glorycourse-enrollments-template.xlsx');
     }
     if (request.method === 'GET' && path === '/enrollments/export') {
-      const items = enrollments.list(recordFilters(request));
-      return xlsx(await enrollmentWorkbook(items), 'glorycourse-enrollments.xlsx');
+      const items = enrollments.list(enrollmentFilters(request));
+      return xlsx(await enrollmentWorkbook(items, store.enrollmentData().semesterCourses), 'glorycourse-enrollments.xlsx');
     }
 
     const semesterEnrollments = match(path, /^\/semesters\/([^/]+)\/enrollments$/);
@@ -333,12 +324,11 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
       return methodNotAllowed();
     }
 
-    const addDraftItem = match(path, /^\/allocation-drafts\/([^/]+)\/items$/);
-    if (addDraftItem) {
+    const addManualDraftItem = match(path, /^\/allocation-drafts\/([^/]+)\/items$/);
+    if (addManualDraftItem) {
       if (request.method !== 'POST') return methodNotAllowed();
-      const input = json<DraftItemInput & { memberId: string }>(request);
-      const detail = await drafts.addItem(addDraftItem[1], input);
-      return { status: 201, json: draftItem(detail, input.memberId) };
+      return { status: 201, json: await drafts.addManualItem(addManualDraftItem[1],
+        json<Parameters<DraftService['addManualItem']>[1]>(request)) };
     }
 
     const restoreDraftItem = match(path, /^\/allocation-drafts\/([^/]+)\/items\/([^/]+)\/restore-auto$/);
@@ -380,7 +370,7 @@ export const createApiRouter = (store: Store, options: { dataDirectory: string }
       if (request.method === 'GET') return ok(finalization.reportStatus(enrollmentReport[1]));
       if (request.method !== 'POST') return methodNotAllowed();
       const expectedStore = store.version();
-      const body = await enrollmentWorkbook(enrollments.list({ semesterId: enrollmentReport[1] }));
+      const body = await enrollmentWorkbook(enrollments.list({ semesterId: enrollmentReport[1] }), store.enrollmentData().semesterCourses);
       await finalization.recordEnrollmentReportDownload(enrollmentReport[1], expectedStore);
       return xlsx(body, 'glorycourse-enrollments.xlsx');
     }
@@ -518,13 +508,31 @@ const applicationFilters = (request: ApiRequest) => {
   return { ...recordFilters(request), ...(sort === null ? {} : { sort: sort as ApplicationSort }) };
 };
 
-const enrollmentWorkbook = (items: ReturnType<EnrollmentService['list']>): Promise<Buffer> => (
-  exportRawRows('ENROLLMENTS', items.map((item, index) => ({
-    sheet: '수강이력',
-    row: index + 2,
-    cells: { 학기명: item.semesterName, 회원명: item.memberName, 강좌명: item.courseName },
-  })))
-);
+const enrollmentFilters = (request: ApiRequest) => {
+  const sort = request.query.get('sort');
+  if (sort !== null && !ENROLLMENT_SORTS.includes(sort as EnrollmentSort)) {
+    throw new HttpError(400, 'BAD_REQUEST', '수강이력 정렬 기준이 올바르지 않습니다.');
+  }
+  return { ...recordFilters(request), ...(sort === null ? {} : { sort: sort as EnrollmentSort }) };
+};
+
+const enrollmentWorkbook = (
+  items: ReturnType<EnrollmentService['list']>,
+  semesterCourses: readonly { id: string; capacity: number | null }[],
+): Promise<Buffer> => {
+  const capacities = new Map(semesterCourses.map(({ id, capacity }) => [id, capacity]));
+  const courses = [...new Map(items.map((item) => [item.semesterCourseId, item])).values()];
+  return exportRawRows('ENROLLMENTS', [
+    ...courses.map((item, index) => ({
+      sheet: '개설강좌', row: index + 2,
+      cells: { 학기명: item.semesterName, 강좌명: item.courseName, 정원: capacities.get(item.semesterCourseId) === null ? '미정' : String(capacities.get(item.semesterCourseId)) },
+    })),
+    ...items.map((item, index) => ({
+      sheet: '수강이력', row: index + 2,
+      cells: { 학기명: item.semesterName, 회원명: item.memberName, 강좌명: item.courseName, '관리자 메모': item.exceptionAcknowledgement?.note ?? '' },
+    })),
+  ]);
+};
 
 const draftItem = (
   detail: ReturnType<DraftService['get']>,

@@ -5,7 +5,6 @@ import vm from 'node:vm';
 
 import { orderSemesters, currentSemester } from '../../frontend/dashboard-view.js';
 import { createDraftsPage } from '../../frontend/drafts-page.js';
-import { createDraftDetail } from '../../frontend/draft-detail.js';
 import { createEnrollmentsPage } from '../../frontend/enrollments-page.js';
 import { createImportsPage } from '../../frontend/imports-page.js';
 import { applicationSemesterFilterValue } from '../../frontend/list-view.js';
@@ -118,7 +117,6 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
         'semester-options': select(), 'member-options': select(), 'course-options': select(),
         'application-semester-filter': select(selectedSemester), 'application-course-filter': select(selectedCourse),
         'enrollment-semester-filter': select(selectedSemester), 'enrollment-course-filter': select(selectedCourse),
-        'draft-add-member': select(), 'draft-add-course': select(),
       };
       const requested = [];
       const context = vm.createContext({
@@ -126,7 +124,6 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
         state: {
           semesters: [], members: [], courses: [], applicationSemesterFilterTouched: touched,
           pagination: { application: { page: 2 } },
-          draft: { studentResults: [{ memberId: 'members-1' }] }, draftContext: { semesterCourses: [] },
         },
         byId: (id) => nodes[id], document: { createElement: () => ({}) },
         orderSemesters, applicationSemesterFilterValue,
@@ -140,9 +137,8 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
         },
       });
       const functions = ['loadCatalogItems', 'loadCatalogs', 'fillSelect', 'fillFilterSelect', 'fillDatalist'].map(appFunction).join('\n');
-      vm.runInContext(`${functions}\nglobalThis.load = loadCatalogs; globalThis.fillSelect = fillSelect;`, context);
+      vm.runInContext(`${functions}\nglobalThis.load = loadCatalogs;`, context);
       await context.load();
-      createDraftDetail({ state: context.state, byId: context.byId, fillSelect: context.fillSelect }).fillAddFields();
 
       for (const [name, items] of Object.entries(catalogs)) {
         assert.equal(context.state[name].length, count, `${name}: complete catalog`);
@@ -155,8 +151,6 @@ test('keeps all catalog choices beyond 200 records and preserves the selected fi
       assert.equal(nodes['enrollment-semester-filter'].value, selectedSemester);
       assert.equal(nodes['application-course-filter'].value, selectedCourse);
       assert.equal(nodes['enrollment-course-filter'].value, selectedCourse);
-      assert.equal(nodes['draft-add-member'].options.length, Math.max(0, count - 1) + 1);
-      if (count) assert.equal(nodes['draft-add-member'].options.at(-1).value, `members-${count}`);
       assert.equal(context.state.pagination.application.page, !touched && count > 1 ? 1 : 2);
     }
   }
@@ -205,7 +199,7 @@ test('keeps the latest draft list and page when earlier requests finish later', 
 
 test('shows readiness only for the semester currently chosen in the draft form', async () => {
   const pending = [];
-  const form = { elements: { semesterId: { value: 'first' } } };
+  const form = { elements: { semesterId: { value: 'first' }, mode: { value: 'AUTO' } } };
   const readiness = { textContent: '' };
   const { showReadiness } = createDraftsPage({
     state: { drafts: [], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 0 } } },
@@ -230,6 +224,20 @@ test('shows readiness only for the semester currently chosen in the draft form',
   await showReadiness();
   assert.equal(readiness.textContent, '학기를 선택하면 자동 배정 준비 상태를 확인합니다.');
   assert.equal(pending.length, 4);
+
+  form.elements.semesterId.value = 'second';
+  const automatic = showReadiness();
+  form.elements.mode.value = 'MANUAL';
+  const manual = showReadiness();
+  pending[6].resolve({ issues: [], readyForAutoAllocation: true });
+  pending[7].resolve({ total: 2 });
+  await manual;
+  const expected = '신청자는 미배정으로 표시되며, 신청 없는 회원도 직접 추가할 수 있습니다. · 기존 확정 2명';
+  assert.equal(readiness.textContent, expected);
+  pending[4].resolve({ issues: [], readyForAutoAllocation: true });
+  pending[5].resolve({ total: 2 });
+  await automatic;
+  assert.equal(readiness.textContent, expected);
 });
 
 test('opening another draft keeps the latest selection when an older context finishes later', async () => {
@@ -298,7 +306,6 @@ test('a completed draft item edit does not reopen an older draft after another d
   for (const [name, invoke, expectedPath] of [
     ['저장', (page) => page.saveDraftItem(item, 'course-2'), '/allocation-drafts/older/items/member-1'],
     ['자동 복원', (page) => page.restoreDraftItem(item), '/allocation-drafts/older/items/member-1/restore-auto'],
-    ['회원 추가', (page) => page.addDraftItem(), '/allocation-drafts/older/items'],
   ]) {
     const requests = [];
     let loads = 0;
@@ -309,7 +316,6 @@ test('a completed draft item edit does not reopen an older draft after another d
       pagination: { draft: { page: 1, limit: 50, total: 0 } },
     };
     const nodes = {
-      'draft-add-member': { value: 'member-1' }, 'draft-add-course': { value: 'course-2' },
       'draft-rows': { replaceChildren() {} }, 'draft-empty': {}, 'draft-count': {},
     };
     const page = createDraftsPage({

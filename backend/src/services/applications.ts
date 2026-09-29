@@ -238,6 +238,39 @@ export class ApplicationService {
     });
   }
 
+  previewSemesterApplicationDeletion(semesterId: string) {
+    const data = this.store.applicationData();
+    const semester = semesterById(data, semesterId);
+    return {
+      semesterName: semester.name,
+      count: applications(data).filter((application) => application.semesterId === semesterId).length,
+      ...this.store.version(),
+    };
+  }
+
+  async deleteSemesterApplications(semesterId: string, input: {
+    confirmationName: string; expectedRevision: number; expectedEpoch: string;
+  }): Promise<{ deletedCount: number }> {
+    if (!input || typeof input.confirmationName !== 'string'
+      || typeof input.expectedEpoch !== 'string' || !input.expectedEpoch) {
+      throw new ApplicationValidationError('학기 전체 삭제 요청이 올바르지 않습니다.');
+    }
+    requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
+    return this.store.write({ expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch }, (data) => {
+      const semester = semesterById(data, semesterId);
+      if (semester.name !== input.confirmationName) {
+        throw new ApplicationValidationError('삭제할 학기명을 정확히 입력하세요.');
+      }
+      const applicationIds = new Set(applications(data)
+        .filter((application) => application.semesterId === semesterId).map(({ id }) => id));
+      if (applicationIds.size === 0) throw new ApplicationValidationError('선택한 학기에 삭제할 수강신청이 없습니다.');
+      data.applications = applications(data).filter(({ id }) => !applicationIds.has(id));
+      data.applicationChoices = choices(data).filter(({ applicationId }) => !applicationIds.has(applicationId));
+      bumpSemester(semester, this.dependencies.now().toISOString());
+      return { deletedCount: applicationIds.size };
+    });
+  }
+
   getSemesterContext(semesterId: string): ReturnType<typeof semesterContext> {
     const data = this.store.applicationData();
     return semesterContext(data, semesterById(data, semesterId));

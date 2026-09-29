@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApplicationConflictError, ApplicationService } from '../../backend/src/services/applications.ts';
+import { ApplicationConflictError, ApplicationService, RevisionConflictError } from '../../backend/src/services/applications.ts';
 import {
   EnrollmentAcknowledgementError,
   EnrollmentConflictError,
@@ -92,6 +92,37 @@ test('sets capacity on direct creation or a move to a new offering without resiz
   await enrollments.execute({ preparedActionToken: preview.preparedActionToken,
     acknowledgedWarningDigest: preview.warningDigest, acknowledgementNote: '강좌 수정' });
   assert.deepEqual(store.read().semesterCourses.map(({ capacity }) => capacity), [1, 1]);
+});
+
+test('rejects stale semester edits after direct, batch, or moved enrollment creates a new offering', async () => {
+  for (const [action, expectedCapacity] of [['CREATE', 1], ['BATCH_CREATE', 2], ['UPDATE', 1]]) {
+    const { applications, enrollments, store, setNow } = await openServices();
+    const semester = await applications.createSemester({ name: '2024 봄', order: 1 });
+    const request = { semesterName: '2024 봄', memberName: '홍길동', courseName: '새 강좌' };
+    const old = action === 'UPDATE' ? await commitCreate(enrollments, { ...request, courseName: '이전 강좌' }) : null;
+    const context = applications.getSemesterContext(semester.semester.id);
+    const staleEdit = { semesterId: semester.semester.id, expectedRevision: context.allocationInputRevision,
+      order: 1, semesterCourses: [{ courseName: request.courseName, capacity: 99 }] };
+    setNow('2026-09-23T00:00:00.000Z');
+    if (action === 'BATCH_CREATE') {
+      const preview = enrollments.previewMany([request, { ...request, memberName: '김은혜' }]);
+      await enrollments.executeMany({ preparedActionToken: preview.preparedActionToken,
+        acknowledgedWarningDigest: preview.warningDigest });
+    } else {
+      const preview = enrollments.preview({ ...request, action, ...(old ? {
+        enrollmentId: old.id, expectedRevision: old.revision,
+      } : {}) });
+      await enrollments.execute({ preparedActionToken: preview.preparedActionToken,
+        acknowledgedWarningDigest: preview.warningDigest });
+    }
+    const after = applications.getSemesterContext(semester.semester.id);
+    assert.equal(after.semesterCourses.find(({ courseName }) => courseName === request.courseName).capacity, expectedCapacity);
+    assert.equal(after.allocationInputRevision, context.allocationInputRevision + 1);
+    const imported = store.read();
+    assert.equal(imported.semesters.find(({ id }) => id === semester.semester.id).updatedAt, '2026-09-23T00:00:00.000Z');
+    await assert.rejects(applications.updateSemesterContext(staleEdit), RevisionConflictError);
+    assert.deepEqual(store.read(), imported);
+  }
 });
 
 test('previews a retake without mutation and records an explicitly acknowledged warning', async () => {

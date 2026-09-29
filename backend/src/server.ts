@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir, mkdtemp, open, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -13,7 +13,6 @@ import { openStore, type Store, type DatabaseState } from './storage/store.ts';
 
 const LOOPBACK = '127.0.0.1';
 const DEFAULT_UPLOAD_BYTES = 20 * 1024 * 1024;
-const RESTORE_UPLOAD_BYTES = 512 * 1024 * 1024;
 
 export type ApiRequest = {
   method: string;
@@ -21,7 +20,6 @@ export type ApiRequest = {
   query: URLSearchParams;
   headers: IncomingMessage['headers'];
   body: Buffer;
-  bodyFile?: string;
 };
 export type ApiResponse = {
   status: number;
@@ -59,9 +57,7 @@ export const startLocalServer = async (options: {
       appVersion: options.version,
       onProgress: options.onProgress,
     });
-    const apiHandler = options.apiHandler ?? createApiRouter(store, {
-      dataDirectory: resolve(options.dataDirectory),
-    });
+    const apiHandler = options.apiHandler ?? createApiRouter(store);
     let guard: LocalSessionGuard;
     let stopping = false;
     let closing: Promise<void> | undefined;
@@ -148,10 +144,7 @@ const handleRequest = async (
     }
     if (path.startsWith('/api/v1/')) {
       context.guard.verifyRequest(request, { requireSession: true });
-      const upload = path === '/api/v1/restores/preview' && request.method === 'POST'
-        ? await readBodyFile(request, join(context.runtimeInfo.dataDirectory, 'recovery-work'), RESTORE_UPLOAD_BYTES)
-        : undefined;
-      const body = upload ? Buffer.alloc(0) : await readBody(request, context.uploadBytes);
+      const body = await readBody(request, context.uploadBytes);
       if (path === '/api/v1/shutdown') {
         if (request.method !== 'POST') throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'POST 요청만 허용합니다.');
         if (context.isStopping()) throw new HttpError(503, 'STOPPING', '프로그램이 종료 중입니다.');
@@ -172,19 +165,9 @@ const handleRequest = async (
       }
       const safe = request.method === 'GET' || request.method === 'HEAD';
       const handlerStore = safe ? { read: () => context.store.read() } : context.store;
-      let result: ApiResponse | undefined;
-      try {
-        result = await context.apiHandler?.({
-          method: request.method ?? 'GET',
-          path,
-          query: url.searchParams,
-          headers: request.headers,
-          body,
-          bodyFile: upload?.file,
-        }, { store: handlerStore });
-      } finally {
-        if (upload) await rm(upload.directory, { recursive: true, force: true });
-      }
+      const result = await context.apiHandler?.({
+        method: request.method ?? 'GET', path, query: url.searchParams, headers: request.headers, body,
+      }, { store: handlerStore });
       if (!result) throw new HttpError(404, 'NOT_FOUND', '대상을 찾을 수 없습니다.');
       writeApiResponse(response, result, request.method === 'HEAD');
       return;
@@ -225,44 +208,6 @@ const readBody = async (request: IncomingMessage, limit: number): Promise<Buffer
     chunks.push(bytes);
   }
   return Buffer.concat(chunks);
-};
-
-const readBodyFile = async (
-  request: IncomingMessage,
-  workDirectory: string,
-  limit: number,
-): Promise<{ directory: string; file: string }> => {
-  if (request.headers['content-type']?.toLowerCase() !== 'application/vnd.sqlite3') {
-    request.resume();
-    throw new HttpError(400, 'BAD_REQUEST', 'SQLite 백업 파일이 필요합니다.');
-  }
-  const declared = Number(request.headers['content-length']);
-  if (Number.isFinite(declared) && declared > limit) {
-    request.resume();
-    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', '요청 본문이 허용 한도를 초과했습니다.');
-  }
-  await mkdir(workDirectory, { recursive: true });
-  const directory = await mkdtemp(join(workDirectory, 'upload-'));
-  const file = join(directory, 'candidate.sqlite');
-  const output = await open(file, 'wx', 0o600);
-  let total = 0;
-  let complete = false;
-  try {
-    for await (const chunk of request) {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      total += bytes.byteLength;
-      if (total > limit) {
-        request.resume();
-        throw new HttpError(413, 'PAYLOAD_TOO_LARGE', '요청 본문이 허용 한도를 초과했습니다.');
-      }
-      await output.writeFile(bytes);
-    }
-    complete = true;
-    return { directory, file };
-  } finally {
-    try { await output.close(); }
-    finally { if (!complete) await rm(directory, { recursive: true, force: true }); }
-  }
 };
 
 const serveStatic = async (

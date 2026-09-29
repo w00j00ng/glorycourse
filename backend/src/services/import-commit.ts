@@ -10,7 +10,6 @@ import {
 import {
   type ApplicationCandidate,
   type EnrollmentCandidate,
-  type ImportContextChange,
   type ImportPreview,
   ImportPreviewNotFoundError,
   type ImportPreviewService,
@@ -27,7 +26,8 @@ import {
   type SemesterRecord as Semester,
   type Store,
 } from '../storage/store.ts';
-import { nextSemesterOrder } from './semester-order.ts';
+import { applyContext, bumpSemester, ImportCommitConflictError, resolveNamed, resolveSemester, resolveSemesterCourse } from './import-context.ts';
+export { ImportCommitConflictError } from './import-context.ts';
 type Dependencies = { id: () => string; now: () => Date };
 
 export type ImportReceipt = NonNullable<ImportBatch['receipt']>;
@@ -52,13 +52,6 @@ export class ImportIdempotencyConflictError extends Error {
   constructor() {
     super('Idempotency key was already used with a different request');
     this.name = 'ImportIdempotencyConflictError';
-  }
-}
-
-export class ImportCommitConflictError extends Error {
-  constructor(message = 'Import contains an unresolved conflict') {
-    super(message);
-    this.name = 'ImportCommitConflictError';
   }
 }
 
@@ -157,46 +150,6 @@ export class ImportCommitService {
   }
 }
 
-const applyContext = (
-  data: DatabaseState,
-  changes: ImportContextChange[],
-  resolutions: Resolution[],
-  now: string,
-  id: () => string,
-): void => {
-  for (const change of changes) {
-    if (['MISSING', 'INVALID', 'SOURCE_CONFLICT', 'IDENTICAL'].includes(change.status)) continue;
-    if (change.status === 'EXISTING_CONFLICT') {
-      const resolution = contextResolution(resolutions, change);
-      if (resolution?.action === 'KEEP_EXISTING') continue;
-      if (resolution?.action !== 'APPLY_FILE_VALUE') {
-        throw new ImportCommitConflictError('Context conflict requires an explicit previewed decision');
-      }
-    }
-    if (change.fileValue === null || !change.semesterName || (
-      change.entity === 'SEMESTER_COURSE' && !change.courseName
-    )) continue;
-    const semester = resolveSemester(data, change.semesterName, now, id);
-    if (change.entity === 'SEMESTER') {
-      if (semester.order !== change.fileValue) {
-        if (semesters(data).some((item) => item.id !== semester.id && item.order === change.fileValue)) {
-          throw new ImportCommitConflictError('Semester order must be unique');
-        }
-        semester.order = change.fileValue;
-        bumpSemester(semester, now);
-      }
-      continue;
-    }
-    const course = resolveNamed(courses(data), change.courseName!, now, id);
-    const semesterCourse = resolveSemesterCourse(data, semester.id, course.id, now, id);
-    if (semesterCourse.capacity !== change.fileValue) {
-      semesterCourse.capacity = change.fileValue;
-      semesterCourse.updatedAt = now;
-      bumpSemester(semester, now);
-    }
-  }
-};
-
 const applyApplications = (
   data: DatabaseState,
   preview: ImportPreview,
@@ -293,10 +246,12 @@ const applyEnrollments = (
     ));
     const warnings = rowIssues.filter(({ severity }) => severity === 'WARNING');
     const resolution = enrollmentResolution(resolutions, candidate);
-    const note = resolution?.acknowledgementNote === undefined ? '' : resolution.acknowledgementNote;
+    const commonNote = resolution?.acknowledgementNote === undefined ? '' : resolution.acknowledgementNote;
+    if (typeof commonNote !== 'string' || commonNote.length > 2000) throw new ImportAcknowledgementError();
+    const note = candidate.adminNote || (warnings.length > 0 ? commonNote : '');
     if (typeof note !== 'string' || note.length > 2000) throw new ImportAcknowledgementError();
     if (warnings.length > 0 && resolution?.warningDigest !== preview.warningDigest) throw new ImportAcknowledgementError();
-    if (warnings.length > 0) {
+    if (warnings.length > 0 || note.trim()) {
       data.enrollments.find(({ id }) => id === item.id)!.exceptionAcknowledgement = {
         warningDigest: digestEnrollmentWarnings(rowIssues), note: note.trim(), acknowledgedAt: now,
       };
@@ -456,14 +411,6 @@ const enrollmentResolution = (resolutions: Resolution[], candidate: EnrollmentCa
   && nameKey(String(item.courseName ?? '')) === nameKey(candidate.courseName)
 ));
 
-const contextResolution = (resolutions: Resolution[], change: ImportContextChange) => resolutions.find((item) => (
-  item.entity === change.entity
-  && item.field === change.field
-  && nameKey(String(item.semesterName ?? '')) === nameKey(change.semesterName)
-  && (change.entity === 'SEMESTER'
-    || nameKey(String(item.courseName ?? '')) === nameKey(change.courseName ?? ''))
-));
-
 const findApplication = (data: DatabaseState, semesterName: string, memberName: string): Application | undefined => {
   const semester = semesters(data).find(({ nameKey: key }) => key === nameKey(semesterName));
   const member = members(data).find(({ nameKey: key }) => key === nameKey(memberName));
@@ -505,46 +452,6 @@ const findEnrollmentCourse = (data: DatabaseState, candidate: EnrollmentCandidat
   const semesterCourse = semesterCourses(data).find(({ id }) => id === enrollment.semesterCourseId);
   const course = semesterCourse && courses(data).find(({ id }) => id === semesterCourse.courseId);
   return course?.name ?? null;
-};
-
-const resolveNamed = (items: Named[], name: string, now: string, id: () => string): Named => {
-  const key = nameKey(name);
-  const existing = items.find(({ nameKey: current }) => current === key);
-  if (existing) return existing;
-  const created = { id: id(), name, nameKey: key, createdAt: now, updatedAt: now };
-  items.push(created);
-  return created;
-};
-
-const resolveSemester = (data: DatabaseState, name: string, now: string, id: () => string): Semester => {
-  const existing = semesters(data).find(({ nameKey: key }) => key === nameKey(name));
-  if (existing) return existing;
-  const created: Semester = {
-    ...resolveNamed([], name, now, id),
-    order: nextSemesterOrder(semesters(data)),
-    allocationInputRevision: 0,
-  };
-  semesters(data).push(created);
-  return created;
-};
-
-const resolveSemesterCourse = (
-  data: DatabaseState,
-  semesterId: string,
-  courseId: string,
-  now: string,
-  id: () => string,
-): SemesterCourse => {
-  const existing = semesterCourses(data).find((item) => item.semesterId === semesterId && item.courseId === courseId);
-  if (existing) return existing;
-  const created = { id: id(), semesterId, courseId, capacity: null, createdAt: now, updatedAt: now };
-  semesterCourses(data).push(created);
-  return created;
-};
-
-const bumpSemester = (semester: Semester, now: string): void => {
-  semester.allocationInputRevision += 1;
-  semester.updatedAt = now;
 };
 
 const nameKey = (value: string): string => value.trim().normalize('NFC');

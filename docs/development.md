@@ -11,7 +11,7 @@
 | 경로 | 역할 |
 | --- | --- |
 | `backend/src/api/` | HTTP 라우팅, 요청 처리, 세션과 오류 응답 |
-| `backend/src/services/` | 신청·이력·배정·이관·복원의 업무 규칙 |
+| `backend/src/services/` | 신청·이력·배정·이관의 업무 규칙 |
 | `backend/src/allocation/` | 배정 입력 스냅샷과 계산 엔진 |
 | `backend/src/excel/` | XLSX 양식·현황 생성과 업로드 검증 |
 | `backend/src/storage/` | 저장 직렬화, 잠금, 백업과 마이그레이션 |
@@ -34,7 +34,7 @@ npm ci
 npm start
 ```
 
-브라우저에서 <http://127.0.0.1:4173>을 연다. 업무 자료는 기본적으로 `.data/db.sqlite`, 수동 백업과 복원 직전 안전 사본은 `.data/backups/`, DB 변경 전 안전 사본은 `.data/update-backups/`에 저장된다. `.data`는 Git에서 제외되며 동시에 두 서버를 같은 자료 경로로 실행할 수 없다.
+브라우저에서 <http://127.0.0.1:4173>을 연다. 업무 자료는 기본적으로 `.data/db.sqlite`, DB 변경 전 안전 사본은 `.data/update-backups/`에 저장된다. 수동 백업·복원 기능은 제거했으며 기존 파일은 삭제하지 않는다. `.data`는 Git에서 제외되며 동시에 두 서버를 같은 자료 경로로 실행할 수 없다.
 
 `npm start`를 실행한 터미널에서 **Ctrl+C**를 누르거나 화면의 **프로그램 종료**를 사용한다. 브라우저 탭만 닫으면 서버는 계속 실행된다. `InstanceAlreadyRunningError`가 나오면 같은 자료 폴더를 사용하는 기존 서버를 먼저 종료한다. 실행 중인 서버가 있는 상태에서 잠금 파일을 임의로 삭제하지 않는다.
 
@@ -52,27 +52,27 @@ npm start
 
 DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `schema_migrations`로 관리한다. 업무 자료는 JSON 문서가 아니라 명시 컬럼과 자식 테이블에 저장한다. 실행 전에 이력을 확인하고, 미적용 SQL이 있으면 `update-backups/`에 SQLite 백업을 만든 뒤 한 트랜잭션으로 적용한다. `npm run migrations:manifest`로 manifest를 갱신하고 `npm run migrations:check`로 검증한다. 미배포 개발용 `db.json` 및 이력 테이블이 없는 SQLite DB는 자동 이전하지 않는다.
 
-일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성은 빈 테이블에 삽입하고 백업 복원도 달라진 행만 적용한다. 복원 전 DB 전체 안전 사본은 유지한다. `Store.read()`는 전체 복제 없이 깊이 동결된 스냅샷을 반환하며, 임시 변경이 필요한 미리보기는 별도 copy-on-write 후보를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색은 자료량에 비례할 수 있다.
+일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성은 빈 테이블에 삽입한다. `Store.read()`는 전체 복제 없이 깊이 동결된 스냅샷을 반환하며, 임시 변경이 필요한 미리보기는 별도 copy-on-write 후보를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색은 자료량에 비례할 수 있다.
 
 1. 기존 최대 버전보다 큰 Unix 초 timestamp로 새 `.sql` 파일을 추가한다. 이미 배포한 파일의 이름·내용은 수정하거나 삭제하지 않는다.
 2. SQL은 UTF-8 BOM 없이 LF 줄바꿈으로 작성한다. 트랜잭션은 실행기가 관리하므로 `BEGIN`·`COMMIT`이나 `schema_migrations` 직접 변경문을 넣지 않는다.
 3. `store.ts`, `store-schema.json`, `storage/queries/`와 필요한 API 계약을 함께 갱신한다. 반복 값은 자식 테이블, 단일 값은 개별 컬럼으로 저장한다.
-4. `npm run migrations:manifest` 후 새 DB 생성·기존 DB 업그레이드·백업 복원 경로를 검증하고 `npm run verify`를 실행한다.
+4. `npm run migrations:manifest` 후 새 DB 생성·기존 DB 업그레이드·업데이트 안전 사본을 검증하고 `npm run verify`를 실행한다.
 
 적용 이력의 checksum 불일치, 누락 또는 실행 프로그램보다 새로운 DB 버전이면 시작을 거절한다. 마이그레이션에 실패하면 변경을 롤백하며, 임의로 이력 값을 고쳐서 우회하지 않는다. 지원하는 자동 다운그레이드는 없다.
 
 ## 화면과 업무 규칙 변경
 
-- 페이지별 도움말과 대시보드 업무 설명은 `frontend/help-content.js`의 `PAGE_HELP`를 공유한다. 필수 진행 단계인 `PROGRESS_WORKFLOW`에는 선택 기능인 백업을 포함하지 않는다.
+- 페이지별 도움말과 대시보드 업무 설명은 `frontend/help-content.js`의 `PAGE_HELP`를 공유한다. `PROGRESS_WORKFLOW`는 네 업무 페이지의 순서를 따른다.
 - 현재 학기 정렬과 다음 할 일 판단은 `frontend/dashboard-view.js`의 순수 함수다. 빈 자료, 설정 중, 신청 접수, 초안 검토, 확정과 현황 다운로드 상태를 사용자 입력·기대 안내 표로 검증한다.
 - 업무 완료는 일반 `GET /enrollments/export`가 아니라 `POST /semesters/{id}/enrollment-report`로 기록한다. 파일 생성 시점과 저장 시점의 자료가 같아야 하며, 상세 규칙은 [계약 결정 기록](contract-decisions.md)에 있다.
 - 사용자가 보는 버튼·양식·완료 조건을 변경하면 [사용 설명서](usage.md), [문제 해결](troubleshooting.md), [README](../README.md)도 맞춘다. `npm run docs:html`은 같은 Markdown 원본에서 배포용 오프라인 HTML을 `dist/guide-preview`에 생성한다. 현재 소스에 있는 기능과 공개된 배포본의 기능을 구별한다.
 
-## 백업과 복원
+## Excel 보관과 업데이트 안전 사본
 
-**자료 관리**에서 사용자가 요청할 때 SQLite 백업을 만들고 목록의 생성 시각·자료 버전·크기·SHA-256을 확인할 수 있다. 최근 정상 백업의 `storeEpoch`와 `storeRevision`이 현재 자료와 같으면 기존 백업을 반환한다. 일반 등록·수정·삭제, Excel 반영, 배정 확정은 자동 백업을 만들지 않는다.
+수강신청·수강이력 현황 Excel을 보관하고 각 화면의 Excel 업로드로 재등록한다. 신청 현황은 조회된 신청 학기의 순서와 전체 개설강좌·정원을 포함하며 미정은 공란이다. 이력 양식 버전 `2`는 학생별 선택 메모와 별도 개설강좌 시트의 정원을 보존한다. `미정`은 null 정원으로 읽으며 정원 충돌은 명시적 선택을 요구한다. 같은 이력은 기존 메모를 유지한다. 배정초안·시스템 기록은 Excel에 포함하지 않는다.
 
-복원할 때 `.sqlite` 백업 파일을 선택해 현재 자료와 백업의 버전을 먼저 검토한다. 구버전 백업은 임시 사본에 SQL 마이그레이션을 적용한다. 백업 이후 변경 내용이 사라진다는 경고를 확인한 뒤 메모를 입력해야 복원되며, 복원 직전의 현재 자료도 자동으로 백업된다.
+수동 백업·복원 UI/API와 전용 서비스는 제거한다. 역사적 DB 필드와 기존 파일을 유지하므로 이 기능 제거를 위한 migration은 필요하지 않다. SQL migration 전의 안전 사본은 `sqlite-snapshot.ts`를 통해 계속 생성·검증한다.
 
 ## 검증
 
@@ -86,8 +86,8 @@ npm run test:workbook-scale
 ```
 
 - `verify`: migration manifest, OpenAPI, 타입, 기능·계약·실제 파일 저장, 강제 종료 복구와 실행기 검증. 패키지·부하·실제 GUI 검증은 별도다.
-- `typecheck`: 백엔드 TypeScript와 분리된 대시보드·자료 관리·배정 확정·수강신청 양식·배정초안 상세 화면, 목록·학기/강좌·파일명·안내 문구 모듈의 JavaScript를 `checkJs`로 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
-- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 초안 최종 결정 저장·자동 복원·회원 추가와 확정, 대량 초안 페이지 처리, 수동 백업·복원을 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
+- `typecheck`: 백엔드 TypeScript와 분리된 대시보드·배정 확정·수강신청 양식·배정초안 상세 화면, 목록·학기/강좌·파일명·안내 문구 모듈의 JavaScript를 `checkJs`로 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
+- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 메모 수정과 Excel 정원·메모 재등록, 강좌 편집값 보존 정렬과 수강이력 전체 정렬·페이지·Excel, 초안 최종 결정 저장·자동 복원·정원 현황과 확정, 대량 초안 페이지 처리를 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
 - `test:coverage`: `verify`를 [c8](https://github.com/bcoe/c8)으로 실행해 `coverage/index.html`, `coverage/lcov.info`, `coverage/coverage-summary.json`과 요약을 생성한다. 백엔드 전체, 프런트엔드 JavaScript 전체, `launcher.mjs`와 `runtime-paths.mjs`가 대상이다. 별도로 실행하는 브라우저 테스트의 사용 줄은 이 수치에 합산되지 않아 `frontend/app.js`처럼 Node 테스트에서 실행하지 않는 파일은 0%로 포함된다. 빌드·검증 스크립트와 테스트 자체는 집계하지 않는다.
 - 기본 브랜치의 성공한 CI는 `coverage/pages/`의 정적 SVG 배지와 HTML 요약을 GitHub Pages에 배포한다. 저장소 설정의 **Pages → Build and deployment → Source**는 `GitHub Actions`로 한 번 지정해야 한다. CI는 README를 수정하거나 커밋하지 않으며 개인 토큰이나 외부 커버리지 서비스도 사용하지 않는다.
 - README 상단의 Backend·Frontend 배지는 `https://w00j00ng.github.io/glorycourse/coverage/` 아래의 고정 경로를 참조한다. 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다.

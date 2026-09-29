@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -80,7 +80,12 @@ try {
   assert.equal(running.instanceId, first);
   const page = await fetch(running.origin).then((r) => r.text());
   assert.match(page, /프로그램 종료/);
-  await post('/applications', application('배포 보존 회원'), 201);
+  const savedApplication = await post('/applications', application('배포 보존 회원'), 201);
+  const semesterId = savedApplication.semesterId;
+  await api(`/semesters/${semesterId}/context`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedRevision: 1, order: 1, semesterCourses: [{ courseName: '연기', capacity: 20 }] }),
+  });
   const workbook = await api('/applications/export');
   assert.equal(workbook.subarray(0, 2).toString(), 'PK');
   const form = new FormData();
@@ -89,16 +94,39 @@ try {
   form.set('file', new Blob([workbook]), '신청.xlsx');
   const importPreview = await api('/imports/preview', { method: 'POST', body: form });
   assert.ok(importPreview);
-  await api('/backups', { method: 'POST' }, 201);
-  const [backup] = await readdir(join(directory, 'backups'));
-  await post('/applications', application('복원으로 지울 회원'), 201);
-  const review = await api('/restores/preview', {
-    method: 'POST', headers: { 'Content-Type': 'application/vnd.sqlite3' }, body: await readFile(join(directory, 'backups', backup)),
+  const review = await post('/enrollments/preview', {
+    action: 'CREATE', semesterName: '2033 봄', memberName: '배포 보존 회원', courseName: '연기',
   });
-  await api('/restores', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'package-restore' },
-    body: JSON.stringify({ preparedActionToken: review.preparedActionToken, acknowledgedWarningDigest: review.warningDigest, acknowledgementNote: '배포 복원 검증' }),
+  const enrollment = await post('/enrollments', {
+    preparedActionToken: review.preparedActionToken, acknowledgedWarningDigest: review.warningDigest,
+    acknowledgementNote: 'Excel에 보관할 메모',
+  }, 201);
+  const history = await api('/enrollments/export');
+  assert.equal(history.subarray(0, 2).toString(), 'PK');
+  const deletion = await api(`/semesters/${semesterId}/enrollments`);
+  await api(`/semesters/${semesterId}/enrollments`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirmationName: '2033 봄', expectedRevision: deletion.storeRevision, expectedEpoch: deletion.storeEpoch }),
   });
+  assert.equal((await api('/enrollments')).total, 0);
+  const historyForm = new FormData();
+  historyForm.set('kind', 'ENROLLMENTS');
+  historyForm.set('mode', 'MERGE_KEEP_EXISTING');
+  historyForm.set('file', new Blob([history]), '수강이력.xlsx');
+  const historyPreview = await api('/imports/preview', { method: 'POST', body: historyForm });
+  await api(`/imports/${historyPreview.previewId}/commit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'package-history' },
+    body: JSON.stringify({ storeRevision: historyPreview.storeRevision, storeEpoch: historyPreview.storeEpoch,
+      warningDigest: historyPreview.warningDigest, resolutions: historyPreview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+        entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+        warningDigest: historyPreview.warningDigest, acknowledgementNote: '',
+      })) }),
+  });
+  assert.deepEqual((await api('/enrollments')).items.map(({ memberName, courseName, exceptionAcknowledgement }) => (
+    [memberName, courseName, exceptionAcknowledgement.note]
+  )), [['배포 보존 회원', '연기', 'Excel에 보관할 메모']]);
+  assert.equal((await api(`/semesters/${semesterId}/context`)).semesterCourses.find(({ id }) => id === enrollment.semesterCourseId).capacity, 20);
+  await api('/backups', {}, 404);
   assert.deepEqual((await api('/applications')).items.map((item) => item.memberName), ['배포 보존 회원']);
   assert.deepEqual(await api('/shutdown', { method: 'POST' }), { state: 'stopped' });
   // A new launcher waits for cleanup before attempting to use the same data again.
@@ -111,10 +139,11 @@ try {
   await connect();
   assert.notEqual(running.instanceId, first);
   assert.deepEqual((await api('/applications')).items.map((item) => item.memberName), ['배포 보존 회원']);
+  assert.equal((await api('/enrollments')).items[0].exceptionAcknowledgement.note, 'Excel에 보관할 메모');
   await launch('stop');
   await assert.rejects(readFile(join(directory, '.glorycourse.lock')), { code: 'ENOENT' });
   await launch('stop');
-  console.log(`PASS ${target.name}: archive integrity, bundled runtime, start twice, save, xlsx, backup/restore, UI shutdown API, restart, stop file`);
+  console.log(`PASS ${target.name}: archive integrity, bundled runtime, start twice, save, xlsx preservation, UI shutdown API, restart, stop file`);
 } finally {
   try { await launch('stop'); } catch { /* Preserve failing test output; never kill unrelated processes. */ }
   await rm(scratch, { recursive: true, force: true });

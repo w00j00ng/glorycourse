@@ -41,6 +41,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     byId('application-empty').hidden = state.applications.length !== 0;
     byId('application-count').textContent = String(state.pagination.application.total);
     byId('choice-count').textContent = String(state.applications.reduce((total, item) => total + item.choices.length, 0));
+    byId('delete-semester-applications').disabled = !byId('application-semester-filter').value;
   };
 
   const load = async () => {
@@ -142,6 +143,34 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     } finally { submit.disabled = false; }
   };
 
+  const deleteSemesterApplications = async () => {
+    const semesterId = byId('application-semester-filter').value;
+    if (!semesterId) return;
+    const path = `/semesters/${encodeURIComponent(semesterId)}/applications`;
+    const preview = /** @type {{ count: number, semesterName: string, storeRevision: number, storeEpoch: string }} */ (await run(() => api(path)));
+    if (byId('application-semester-filter').value !== semesterId) return;
+    if (preview.count === 0) {
+      showMessage(`${preview.semesterName}에 삭제할 수강신청이 없습니다.`);
+      return;
+    }
+    const confirmationName = window.prompt(
+      `${preview.semesterName}의 수강신청 ${preview.count}건을 모두 삭제합니다.\n` +
+      '검색 조건이나 페이지에 관계없이 삭제되며 되돌릴 수 없습니다.\n계속하려면 학기명을 정확히 입력하세요.',
+    );
+    if (confirmationName === null) return;
+    if (confirmationName !== preview.semesterName) {
+      showMessage('학기명이 일치하지 않아 삭제하지 않았습니다.', true);
+      return;
+    }
+    await run(() => api(path, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        confirmationName, expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch,
+      }),
+    }), `${preview.semesterName} 수강신청 ${preview.count}건을 삭제했습니다.`);
+    await load();
+  };
+
   const showTemplateSummary = async () => {
     const form = byId('application-template-form');
     const semesterId = form.elements.semesterId.value;
@@ -180,5 +209,5 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     byId('application-template-dialog').close();
   };
 
-  return { load, renderApplications, addApplicationEntry, openApplication, submitApplication, deleteApplication, showTemplateSummary, openTemplate, downloadTemplate };
+  return { load, renderApplications, addApplicationEntry, openApplication, submitApplication, deleteApplication, deleteSemesterApplications, showTemplateSummary, openTemplate, downloadTemplate };
 };

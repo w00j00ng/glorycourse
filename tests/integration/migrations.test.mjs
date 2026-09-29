@@ -7,7 +7,6 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { migrateDatabase } from '../../backend/src/storage/migrations.ts';
-import { createBackup, readBackupFile } from '../../backend/src/storage/backup.ts';
 import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
 import { openStore } from '../../backend/src/storage/store.ts';
 
@@ -143,7 +142,9 @@ test('upgrades populated v0.1.0 data without losing applications, enrollments, o
   assert.deepEqual(data.finalizationReceipts[0].receipt, { draftId: 'draft-1', receiptId: 'receipt-1',
     createdCount: 1, createdEnrollmentIds: ['enrollment-1'], finalizedAt: when });
   const backupBytes = await readFile(result.backupFile);
-  const restored = await readBackupFile(result.backupFile, join(directory, 'restore'));
+  const copy = join(directory, 'update-copy.sqlite');
+  await cp(result.backupFile, copy);
+  const restored = (await openStore(copy, empty)).read();
   assert.deepEqual(restored.enrollments, data.enrollments);
   assert.deepEqual(restored.finalizationReceipts, data.finalizationReceipts);
   assert.deepEqual(await readFile(result.backupFile), backupBytes);
@@ -222,31 +223,6 @@ test('changed, missing, or newer migration history blocks startup without modify
   assert.equal(history(file).length, baseNames.length + 1);
 });
 
-test('an old SQLite backup is upgraded on a temporary copy for restore review', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-old-backup-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const file = join(directory, 'db.sqlite');
-  const source = { ...structuredClone(empty), members: [{
-    id: 'member-1', name: '백업 이름', nameKey: '백업 이름',
-    createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z',
-  }] };
-  await openStore(file, source);
-  const backup = await createBackup(file, join(directory, 'backups'), {
-    id: 'before-update', now: new Date('2026-09-25T01:00:00.000Z'),
-  });
-  const originalBytes = await readFile(backup.file);
-  const migrationDirectory = join(directory, 'migrations');
-  await copyBase(migrationDirectory);
-  const update = '1790380800_update_name.sql';
-  await writeFile(join(migrationDirectory, update), "UPDATE members SET name = '새 이름' WHERE id = 'member-1';\n");
-  await manifest(migrationDirectory, [...baseNames, update]);
-  const candidate = await readBackupFile(backup.file, join(directory, 'recovery-work'), migrationDirectory);
-  assert.equal(candidate.members[0].name, '새 이름');
-  assert.equal(candidate.meta.storeEpoch, source.meta.storeEpoch);
-  assert.deepEqual(await readFile(backup.file), originalBytes);
-  assert.equal((await readdir(join(directory, 'recovery-work'))).length, 0);
-});
-
 test('refuses a migration that controls the transaction before touching the database', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-migration-control-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -283,9 +259,11 @@ test('upgrades a database and backup from before restore receipts without losing
   assert.deepEqual(upgraded.read().restoreReceipts, []);
   assert.equal(history(result.backupFile).length, 1);
   const before = await readFile(result.backupFile);
-  const candidate = await readBackupFile(result.backupFile, join(directory, 'recovery-work'));
+  const copy = join(directory, 'update-copy.sqlite');
+  await cp(result.backupFile, copy);
+  const candidate = (await openStore(copy, empty)).read();
   assert.equal(candidate.members[0].name, '회원');
-  assert.equal(candidate.meta.storeEpoch, 'before-receipts');
+  assert.notEqual(candidate.meta.storeEpoch, 'before-receipts');
   assert.deepEqual(candidate.restoreReceipts, []);
   assert.deepEqual(await readFile(result.backupFile), before);
 });
