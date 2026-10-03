@@ -27,7 +27,7 @@ npm run test:package
 
 1. 배포할 변경과 사용 설명서를 검토·커밋·push한다. `package.json`과 lockfile의 버전을 맞추고 공개할 커밋을 확정한다.
 2. Actions의 **Portable release**를 수동 실행하면 세 OS 빌드와 검증만 수행한다. 테스트용 artifact는 workflow 실행 화면에서 내려받는다.
-3. 공개할 커밋에 `v<package.json의 version>` 태그(현재 버전 기준 `v0.2.0`)를 만들어 push한다. 세 OS 검증이 전부 통과하면 **초안 Release**와 압축 파일 3개, `SHA256SUMS`를 만든다. 태그와 버전이 다르면 실패한다.
+3. 공개할 커밋에 `v<package.json의 version>` 태그(현재 버전 기준 `v0.2.1`)를 만들어 push한다. 세 OS 검증이 전부 통과하면 **초안 Release**와 압축 파일 3개, `SHA256SUMS`를 만든다. 태그와 버전이 다르면 실패한다.
 4. 해당 초안의 파일을 일반 사용자 환경으로 내려받아 아래 점검표를 수행한다. Windows의 시작·종료와 브라우저 열기를 확인하고, Mac/Linux를 직접 확인하지 못했다면 시험 배포 및 미검증 범위를 Release 본문에 명시한다. Mac 서명·공증과 조직 정책은 별도 조건이다.
 5. Windows 검증과 세 OS 패키지 CI가 통과하면 확인한 범위와 변경 내용을 Release 본문에 기록하고 **Publish release**를 누른다. README의 `latest` 다운로드 링크는 사전 배포가 아닌 공개 Release가 있어야 동작한다. Windows 첫 실행을 확인하지 못한 버전은 초안 또는 사전 배포로 유지한다.
 

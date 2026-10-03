@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: Glorycourse API
-  version: 0.2.0
+  version: 0.2.1
   description: 로컬 단일 관리자용 수강신청·수강이력 관리 API.
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
