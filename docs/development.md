@@ -27,12 +27,16 @@
 
 ## 실행과 종료
 
-Node.js 22.14 이상이 필요하다.
+실행 런타임은 Node.js 22.14 이상이 필요하며, 개발 의존성의 `node` 패키지에 배포본과 같은 22.23.3을 고정한다. `npm ci`로 설치하면 `npm start`와 `npm run` 명령은 프로젝트의 `node_modules/.bin/node`를 우선 사용한다. 시스템 Node.js가 20인 환경에서도 설치 후에는 필요한 런타임으로 실행된다. `npm ci --ignore-scripts`는 Node 바이너리 설치를 생략하므로, 이 옵션을 쓰는 CI는 먼저 지원 버전의 Node.js를 준비해야 한다.
 
 ```powershell
 npm ci
 npm start
 ```
+
+`node: bad option: --experimental-strip-types`가 나오면 시스템의 오래된 Node.js로 실행되고 있는 것이다. `npm ci`를 다시 실행하고 `node_modules/.bin/node --version`이 `v22.23.3`인지 확인한다. 런타임을 시스템에서 직접 관리하려면 `.nvmrc`를 사용하는 `nvm install`과 `nvm use`로 같은 버전을 선택할 수 있다. Node.js 20에는 내장 SQLite도 없으므로 시작 명령에서 타입 제거 옵션만 삭제해서 해결할 수 없다.
+
+시스템 Node.js 20으로 `npm ci`를 실행할 때는 설치 단계에서 `EBADENGINE` 경고가 나올 수 있다. 기본 설정에서는 설치가 계속되고 이후 npm 명령은 프로젝트 런타임을 사용한다. `engine-strict=true`로 설치 자체가 차단되는 환경에서는 먼저 `.nvmrc`의 Node.js 버전으로 전환한다.
 
 브라우저에서 <http://127.0.0.1:4173>을 연다. 업무 자료는 기본적으로 `.data/db.sqlite`, DB 변경 전 안전 사본은 `.data/update-backups/`에 저장된다. 수동 백업·복원 기능은 제거했으며 기존 파일은 삭제하지 않는다. `.data`는 Git에서 제외되며 동시에 두 서버를 같은 자료 경로로 실행할 수 없다.
 

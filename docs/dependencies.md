@@ -28,6 +28,7 @@
 | `yaml` 2.9.1 | 계약 테스트의 YAML 읽기 |
 | `c8` 12.0.0 | 테스트 커버리지와 HTML·LCOV 보고서 |
 | `marked` 16.0.0 | 배포용 오프라인 HTML 설명서 생성 (MIT) |
+| `node` 22.23.3 | npm 명령에서 사용할 프로젝트 전용 Node.js 런타임 (MIT, <https://github.com/aredridel/node-bin-gen>) |
 
 테스트 실행에는 Node.js 내장 test runner를 사용한다. 프런트엔드는 별도 프레임워크나 빌드 의존성이 없다. `marked`는 배포 파일을 만들 때만 사용하며, 생성된 HTML은 외부 스크립트 없이 열린다. 개발 의존성은 고객용 production 설치 대상에 포함하지 않는다.
 
