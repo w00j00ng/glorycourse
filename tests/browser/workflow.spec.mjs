@@ -83,8 +83,8 @@ test('an administrator uses aligned form controls and selects a page size with t
   const pageSize = page.getByRole('combobox', { name: '페이지당 표시' });
   await pageSize.selectOption('10');
   await pageSize.focus();
-  await pageSize.press('ArrowDown');
-  await pageSize.press('Enter');
+  await pageSize.press('2');
+  await pageSize.press('Tab');
   await expect(pageSize).toHaveValue('20');
 });
 
