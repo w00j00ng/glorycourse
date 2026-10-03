@@ -14,7 +14,7 @@
 | `backend/src/services/` | 신청·이력·배정·이관의 업무 규칙 |
 | `backend/src/allocation/` | 배정 입력 스냅샷과 계산 엔진 |
 | `backend/src/excel/` | XLSX 양식·현황 생성과 업로드 검증 |
-| `backend/src/storage/` | 저장 직렬화, 잠금, 백업과 마이그레이션 |
+| `backend/src/storage/` | 저장 직렬화, 잠금, SQLite 안전 사본과 마이그레이션 |
 | `backend/src/storage/queries/` | 업무 자료를 명시 컬럼과 자식 테이블로 읽고 쓰는 SQL 구현 |
 | `frontend/` | 화면, 메뉴, 도움말, 대시보드 판단과 다운로드 파일명 |
 | `schema/migrations/` | Unix timestamp SQL, manifest와 DB 변경 이력 |
@@ -23,7 +23,7 @@
 | `tests/` | 사용자 관점 기능·계약·저장·운영 테스트 |
 | `scripts/` | 실행기, 배포 패키지, migration manifest, 커버리지 보고서 |
 
-업무 SQL은 `storage/queries/`에서 관리하며 마이그레이션·백업 파일 검사 등 저장 장치 관리용 SQL은 해당 `storage/` 모듈에 있다. 실제 DB 자료를 JSON 문서로 저장하지 않는다. HTTP 요청·검증 스키마·배포 설정의 JSON 사용은 별개다.
+업무 SQL은 `storage/queries/`에서 관리하며 마이그레이션·안전 사본 검사 등 저장 장치 관리용 SQL은 해당 `storage/` 모듈에 있다. 실제 DB 자료를 JSON 문서로 저장하지 않는다. HTTP 요청·검증 스키마·배포 설정의 JSON 사용은 별개다.
 
 ## 실행과 종료
 
@@ -76,7 +76,9 @@ DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `
 
 수강신청·수강이력 현황 Excel을 보관하고 각 화면의 Excel 업로드로 재등록한다. 신청 현황은 조회된 신청 학기의 순서와 전체 개설강좌·정원을 포함하며 미정은 공란이다. 이력 양식 버전 `2`는 학생별 선택 메모와 별도 개설강좌 시트의 정원을 보존한다. `미정`은 null 정원으로 읽으며 정원 충돌은 명시적 선택을 요구한다. 같은 이력은 기존 메모를 유지한다. 배정초안·시스템 기록은 Excel에 포함하지 않는다.
 
-수동 백업·복원 UI/API와 전용 서비스는 제거한다. 역사적 DB 필드와 기존 파일을 유지하므로 이 기능 제거를 위한 migration은 필요하지 않다. SQL migration 전의 안전 사본은 `sqlite-snapshot.ts`를 통해 계속 생성·검증한다.
+수동 백업·복원 UI/API와 `services/recovery.ts`·`storage/backup.ts`는 제거했다. 역사적 DB 필드와 기존 파일을 유지하므로 이 기능 제거를 위한 migration은 필요하지 않다. SQL migration 전의 안전 사본은 `sqlite-snapshot.ts`를 통해 계속 생성·검증한다. 내부 `Store.restore()`와 어댑터의 복구 처리는 남아 있으며 사용자 복원 기능을 제공하지 않는다.
+
+이력 검토 준비 토큰은 기본 5분, 배정 확정 검토는 10분, Excel 검토는 15분 후 만료된다. 프로세스 재시작이나 검토 후 자료 변경으로도 반영이 거절될 수 있으므로 새로 검토한다. 화면의 **입력 경고 무시**는 확인 창과 안내·경고 표시만 생략하고 서버의 오류·충돌·digest 검증은 유지한다.
 
 ## 검증
 
@@ -90,7 +92,7 @@ npm run test:workbook-scale
 ```
 
 - `verify`: migration manifest, OpenAPI, 타입, 기능·계약·실제 파일 저장, 강제 종료 복구와 실행기 검증. 패키지·부하·실제 GUI 검증은 별도다.
-- `typecheck`: 백엔드 TypeScript와 분리된 대시보드·배정 확정·수강신청 양식·배정초안 상세 화면, 목록·학기/강좌·파일명·안내 문구 모듈의 JavaScript를 `checkJs`로 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
+- `typecheck`: 백엔드 TypeScript와 `tsconfig.frontend.json`에 열거한 화면·목록·학기/강좌·파일명·경고 표시 모듈의 JavaScript를 `checkJs`로 검사한다. 이 모듈들이 가져오는 도움말·대시보드 판단 모듈도 함께 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
 - `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 메모 수정과 Excel 정원·메모 재등록, 강좌 편집값 보존 정렬과 수강이력 전체 정렬·페이지·Excel, 초안 최종 결정 저장·자동 복원·정원 현황과 확정, 대량 초안 페이지 처리를 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
 - `test:coverage`: `verify`를 [c8](https://github.com/bcoe/c8)으로 실행해 `coverage/index.html`, `coverage/lcov.info`, `coverage/coverage-summary.json`과 요약을 생성한다. 백엔드 전체, 프런트엔드 JavaScript 전체, `launcher.mjs`와 `runtime-paths.mjs`가 대상이다. 별도로 실행하는 브라우저 테스트의 사용 줄은 이 수치에 합산되지 않아 `frontend/app.js`처럼 Node 테스트에서 실행하지 않는 파일은 0%로 포함된다. 빌드·검증 스크립트와 테스트 자체는 집계하지 않는다.
 - 기본 브랜치의 성공한 CI는 `coverage/pages/`의 정적 SVG 배지와 HTML 요약을 GitHub Pages에 배포한다. 저장소 설정의 **Pages → Build and deployment → Source**는 `GitHub Actions`로 한 번 지정해야 한다. CI는 README를 수정하거나 커밋하지 않으며 개인 토큰이나 외부 커버리지 서비스도 사용하지 않는다.

@@ -4,7 +4,7 @@
 
 ## 현재 검증 범위
 
-Windows용 ZIP은 로컬에서 생성하고 별도 임시 폴더에 추출해 검증한다. 태그를 push한 뒤에는 **그 태그의** Portable release 실행에서 Windows 2022 x64, macOS 15 arm64, Ubuntu 24.04 x64 패키지 검증 결과를 확인한다. CI의 실행기 검증만으로 일반 사용자 PC의 GUI 첫 실행이 확인되지는 않는다. Mac/Linux는 README에 시험 배포 대상으로 표시하고, Mac은 서명·공증과 Finder/Gatekeeper 검증 전까지 정식 지원으로 안내하지 않는다.
+로컬 패키지는 실행 중인 OS/아키텍처에서 생성하고 별도 임시 폴더에 추출해 검증한다. 저장소의 `docs/maintenance-review.md`에 있는 과거 로컬 Windows 검증은 새 버전의 통과 결과로 재사용하지 않는다. 태그를 push한 뒤에는 **그 태그의** Portable release 실행에서 Windows 2022 x64, macOS 15 arm64, Ubuntu 24.04 x64 패키지 검증 결과를 확인한다. CI의 실행기 검증만으로 일반 사용자 PC의 GUI 첫 실행이 확인되지는 않는다. Mac/Linux는 README에 시험 배포 대상으로 표시하고, Mac은 서명·공증과 Finder/Gatekeeper 검증 전까지 정식 지원으로 안내하지 않는다.
 
 ## 배포 전 로컬 확인
 
@@ -15,9 +15,9 @@ npm run package
 npm run test:package
 ```
 
-`scripts/release-config.json`이 동봉 Node 버전, OS/아키텍처, 공식 배포 파일 SHA-256 및 최종 파일명을 정한다. Node를 올릴 때 [공식 배포 검증 안내](https://github.com/nodejs/node#verifying-binaries)에 따라 검증값을 갱신하고 세 OS를 다시 확인한다. 패키징은 해당 OS/아키텍처에서 수행한다.
+`scripts/release-config.json`이 동봉 Node 버전, OS/아키텍처, 공식 배포 파일 SHA-256 및 최종 파일명을 정한다. 현재 Node는 개발 의존성·`.nvmrc`·CI와 같은 `22.23.3`이다. CI의 `npm ci --ignore-scripts`는 프로젝트 Node 바이너리 설치를 생략하므로 먼저 `setup-node`로 해당 버전을 준비한다. Node를 올릴 때 [공식 배포 검증 안내](https://github.com/nodejs/node#verifying-binaries)에 따라 검증값을 갱신하고 세 OS를 다시 확인한다. 패키징은 해당 OS/아키텍처에서 수행한다.
 
-`dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations` 전체 이력과 manifest, 저장 스키마, 실행기, production 의존성, Node 및 라이선스를 포함한다. 개발자의 자료 폴더와 작업 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다.
+`dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations` 전체 이력과 manifest, 저장 스키마, 실행기, production 의존성, Node 및 라이선스를 포함한다. Markdown은 `scripts/package.mjs`의 목록에 따라 README와 사용·문제 해결·개발·배포·계약·의존성 문서 6개를 동봉한다. 개발자의 자료 폴더, 테스트, OpenAPI와 나머지 점검·계획 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다.
 
 고객용 `사용설명서.html`과 `문제해결.html`은 배포 시 `docs/usage.md`와 `docs/troubleshooting.md`에서 생성해 압축 파일의 `Glorycourse` 폴더 바로 아래에 넣는다. 두 HTML 파일은 인터넷 연결이나 별도 프로그램 없이 기본 브라우저로 열 수 있다. 문구를 바꿀 때 생성된 HTML을 직접 수정하지 말고 Markdown 원본을 수정한다.
 
@@ -27,7 +27,7 @@ npm run test:package
 
 1. 배포할 변경과 사용 설명서를 검토·커밋·push한다. `package.json`과 lockfile의 버전을 맞추고 공개할 커밋을 확정한다.
 2. Actions의 **Portable release**를 수동 실행하면 세 OS 빌드와 검증만 수행한다. 테스트용 artifact는 workflow 실행 화면에서 내려받는다.
-3. 공개할 커밋에 버전과 같은 `v0.1.0` 형식의 태그를 만들어 push한다. 세 OS 검증이 전부 통과하면 **초안 Release**와 압축 파일 3개, `SHA256SUMS`를 만든다. 태그와 버전이 다르면 실패한다.
+3. 공개할 커밋에 `v<package.json의 version>` 태그(현재 버전 기준 `v0.2.0`)를 만들어 push한다. 세 OS 검증이 전부 통과하면 **초안 Release**와 압축 파일 3개, `SHA256SUMS`를 만든다. 태그와 버전이 다르면 실패한다.
 4. 해당 초안의 파일을 일반 사용자 환경으로 내려받아 아래 점검표를 수행한다. Windows의 시작·종료와 브라우저 열기를 확인하고, Mac/Linux를 직접 확인하지 못했다면 시험 배포 및 미검증 범위를 Release 본문에 명시한다. Mac 서명·공증과 조직 정책은 별도 조건이다.
 5. Windows 검증과 세 OS 패키지 CI가 통과하면 확인한 범위와 변경 내용을 Release 본문에 기록하고 **Publish release**를 누른다. README의 `latest` 다운로드 링크는 사전 배포가 아닌 공개 Release가 있어야 동작한다. Windows 첫 실행을 확인하지 못한 버전은 초안 또는 사전 배포로 유지한다.
 
@@ -71,5 +71,6 @@ Release 본문에는 주요 변경, 지원·시험 대상 OS, DB·Excel 형식 �
 - 화면 용어·버튼·업무 순서: [사용 설명서](usage.md), [문제 해결](troubleshooting.md), README의 빠른 안내를 갱신한다. `npm run docs:html`로 `dist/guide-preview`의 HTML을 확인한다.
 - 개발 명령·DB 관리·검증: [개발 환경](development.md)과 실제 npm scripts를 맞춘다.
 - API·저장·완료 조건: [계약 결정 기록](contract-decisions.md), OpenAPI, schema를 확인한다.
+- 저장소의 점검·계획 문서는 작성 당시 결과와 현재 구현 상태를 구분한다. 삭제된 기능·모듈이나 과거 테스트 수·성능 수치를 현재 지원·검증 결과로 안내하지 않는다.
 - 런타임·패키지: [직접 의존성](dependencies.md), lockfile, release config와 동봉 라이선스를 확인한다.
 - 커버리지 수치는 문서에 직접 기록하지 않는다. 기본 브랜치 CI가 배포하는 GitHub Pages 배지와 보고서 링크를 유지한다.

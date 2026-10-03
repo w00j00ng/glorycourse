@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: Glorycourse API
-  version: 0.1.0
+  version: 0.2.0
   description: 로컬 단일 관리자용 수강신청·수강이력 관리 API.
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
@@ -21,6 +21,7 @@ x-operational-limits:
   workbookSheets: 20
   workbookRows: 100000
   workbookCells: 1000000
+  # 이전 전체 자료 후보 제한의 선언이다. 현재 저장 경로에서 강제하지 않는다.
   storeBytes: 209715200
   allocationApplicants: 10000
   semesterCourses: 1000
@@ -1758,6 +1759,7 @@ components:
           maxLength: 200
     PreparedAction:
       type: object
+      description: 준비 토큰·경고 digest·자료 버전과 만료 시각을 반환한다. 수강이력 단건·일괄 검토의 기본 유효시간은 5분이다. 배정 확정 검토는 10분이며 재시작 또는 자료 변경 뒤에는 다시 검토해야 한다.
       additionalProperties: false
       required: [preparedActionToken, warningDigest, storeRevision, storeEpoch, expiresAt, issues]
       properties:
@@ -1818,6 +1820,7 @@ components:
           enum: [MERGE_KEEP_EXISTING, REPLACE_APPLICATION]
     ImportPreview:
       type: object
+      description: 파일 검토 결과는 기본 15분 동안 프로세스 메모리에 보관한다. 재시작·만료·자료 변경 뒤에는 새 Preview가 필요하다. STAGED 배치는 저장된 원본 행에서 재검토할 수 있다.
       additionalProperties: false
       required: [previewId, kind, mode, storeRevision, storeEpoch, expiresAt, warningDigest, sourceRowCount, insertCandidates, identicalRows, conflicts, issues, contextChanges, applications, enrollments]
       properties:
@@ -2350,6 +2353,7 @@ components:
         expectedDraftRevision:
           $ref: '#/components/schemas/SafeInteger'
     FinalizationPreview:
+      description: 배정 확정 검토의 준비 토큰은 기본 10분 후 만료된다. 초안 revision·자료 epoch/revision·선택 결과·경고 digest가 반영 시점과 일치해야 한다.
       allOf:
         - $ref: '#/components/schemas/PreparedAction'
         - type: object
