@@ -2,7 +2,7 @@
 
 일반 사용자는 패키지를 직접 설치하지 않고 [배포본](../README.md#다운로드)을 사용한다. 이 문서는 개발·배포 담당자를 위한 목록이다.
 
-모든 npm 의존성은 공개 레지스트리에서 설치하며 직접 의존성 버전은 [package.json](../package.json), 전체 설치 버전과 무결성 값은 [package-lock.json](../package-lock.json)에 고정한다. 비공개 저장소의 코드·패키지·생성물은 사용하지 않는다.
+모든 npm 의존성은 공개 레지스트리에서 설치하며 직접 의존성의 버전 조건은 [package.json](../package.json), 실제 설치 버전과 무결성 값은 [package-lock.json](../package-lock.json)에 기록한다. `npm ci`는 lockfile의 버전을 재현한다. 비공개 저장소의 코드·패키지·생성물은 사용하지 않는다.
 
 ## 실행 의존성
 
@@ -24,10 +24,12 @@
 | --- | --- |
 | `@redocly/cli` 2.54.2 | OpenAPI 계약 lint |
 | `@types/node` 22.20.4 | Node.js API 타입 |
+| `@playwright/test` ^1.63.0 (lockfile 1.63.0) | 실제 Chromium 사용자 흐름 검증 (Apache-2.0, <https://github.com/microsoft/playwright>) |
 | `typescript` 5.9.2 | `tsc --noEmit` 타입 검사 |
 | `yaml` 2.9.1 | 계약 테스트의 YAML 읽기 |
 | `c8` 12.0.0 | 테스트 커버리지와 HTML·LCOV 보고서 |
 | `marked` 16.0.0 | 배포용 오프라인 HTML 설명서 생성 (MIT) |
+| `node` 22.23.3 | npm 명령에서 사용할 프로젝트 전용 Node.js 런타임 (MIT, <https://github.com/aredridel/node-bin-gen>) |
 
 테스트 실행에는 Node.js 내장 test runner를 사용한다. 프런트엔드는 별도 프레임워크나 빌드 의존성이 없다. `marked`는 배포 파일을 만들 때만 사용하며, 생성된 HTML은 외부 스크립트 없이 열린다. 개발 의존성은 고객용 production 설치 대상에 포함하지 않는다.
 
