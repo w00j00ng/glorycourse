@@ -18,6 +18,7 @@
     "test:openapi": "redocly lint openapi/openapi.yaml --extends=spec",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.frontend.json",
     "test:launcher": "node tests/operational/launcher.test.mjs",
+    "test:npm-start": "node --test tests/operational/npm-start.test.mjs",
     "test:desktop": "node tests/operational/desktop-open.test.mjs",
     "docs:html": "node scripts/build-guide.mjs",
     "package": "node scripts/package.mjs",

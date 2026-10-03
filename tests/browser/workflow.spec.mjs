@@ -67,6 +67,27 @@ const test = base.extend({
   },
 });
 
+test('an administrator uses aligned form controls and selects a page size with the keyboard', async ({ page, app }) => {
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  const fields = ['#application-semester-filter', '#application-member-search', '#application-course-filter', '#application-sort'];
+  for (const width of [1280, 560]) {
+    await page.setViewportSize({ width, height: 900 });
+    const heights = [];
+    for (const field of fields) {
+      const control = page.locator(field);
+      await expect(control).toBeVisible();
+      heights.push((await control.boundingBox()).height);
+    }
+    expect(Math.max(...heights) - Math.min(...heights), `aligned fields at ${width}px`).toBeLessThan(1);
+  }
+  const pageSize = page.getByRole('combobox', { name: '페이지당 표시' });
+  await pageSize.selectOption('10');
+  await pageSize.focus();
+  await pageSize.press('ArrowDown');
+  await pageSize.press('Enter');
+  await expect(pageSize).toHaveValue('20');
+});
+
 test('an administrator toggles button help across pages and newly rendered controls', async ({ page, app }) => {
   const helpToggle = page.getByRole('checkbox', { name: '버튼 도움말 표시', exact: true });
   await expect(helpToggle).toBeChecked();
