@@ -26,7 +26,7 @@ const mixedRecords = (count) => {
     id: `${semester.id}-${course.id}`, semesterId: semester.id, courseId: course.id, capacity: count,
   })));
   data.applications = data.members.map((member, index) => stamped({
-    id: `application-${index}`, semesterId: 'current', memberId: member.id, applicationOrder: index + 1,
+    id: `application-${index}`, semesterId: 'current', memberId: member.id, affiliation: null, applicationOrder: index + 1,
     applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null, revision: 0,
   }));
   data.applicationChoices = data.applications.map((application, index) => stamped({
@@ -34,7 +34,7 @@ const mixedRecords = (count) => {
     preference: 1, sourceRefs: [{ importBatchId: 'import', sheet: '신청', row: index + 2 }],
   }));
   data.enrollments = data.members.map((member, index) => stamped({
-    id: `enrollment-${index}`, semesterCourseId: `past-course-${index % 10}`, memberId: member.id,
+    id: `enrollment-${index}`, semesterCourseId: `past-course-${index % 10}`, memberId: member.id, affiliation: null,
     exceptionAcknowledgement: null, revision: 0,
   }));
   data.importBatches = [{
@@ -54,7 +54,7 @@ const mixedRecords = (count) => {
     enrollmentReportDownloadedAt: null, enrollmentReportStoreRevision: null, finalization: null,
   })];
   data.allocationDraftItems = data.members.map((member, index) => ({
-    id: `draft-item-${index}`, draftId: 'draft', memberId: member.id, sourceApplicationId: `application-${index}`,
+    id: `draft-item-${index}`, draftId: 'draft', memberId: member.id, affiliation: null, sourceApplicationId: `application-${index}`,
     memberNameAtGeneration: member.name, autoSemesterCourseId: null, autoDecision: 'NOT_EVALUATED',
     autoReasonCode: 'MANUAL_ONLY', autoReasonDetail: { preferenceAttempts: [], fallback: null },
     finalSemesterCourseId: null, finalDecision: 'REJECTED', finalReasonCode: null, finalReasonDetail: null,

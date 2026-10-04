@@ -351,7 +351,7 @@ test('keeps a semester with applications, enrollments, drafts, or finalization r
     });
     if (use === 'enrollment') await store.write({}, (data) => {
       data.members.push({ id: 'member-1', name: '홍길동', nameKey: '홍길동', createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z' });
-      data.enrollments.push({ id: 'enrollment-1', memberId: 'member-1', semesterCourseId: context.semesterCourses[0].id,
+      data.enrollments.push({ id: 'enrollment-1', memberId: 'member-1', affiliation: null, semesterCourseId: context.semesterCourses[0].id,
         exceptionAcknowledgement: null, revision: 0, createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z' });
     });
     if (use === 'draft') await new DraftService(store, {

@@ -73,6 +73,7 @@ export const readRelationalStore = (db: DatabaseSync): DatabaseState => {
     import_batch_id AS importBatchId, sheet, row_number AS row FROM application_choice_source_refs
     ORDER BY application_choice_id, position`));
   const applications = all<Application>(db, `SELECT id, semester_id AS semesterId, member_id AS memberId,
+    affiliation,
     application_order AS applicationOrder, application_order_status AS applicationOrderStatus,
     order_resolution AS orderResolution, order_resolution_note AS orderResolutionNote, revision,
     created_at AS createdAt, updated_at AS updatedAt FROM applications ORDER BY position`);
@@ -84,7 +85,7 @@ export const readRelationalStore = (db: DatabaseSync): DatabaseState => {
     warning_digest AS warningDigest, note, acknowledged_at AS acknowledgedAt FROM enrollment_acknowledgements`)
     .map(({ enrollmentId, ...item }) => [enrollmentId, item]));
   const enrollments = all<Omit<Enrollment, 'exceptionAcknowledgement'>>(db, `SELECT id,
-    semester_course_id AS semesterCourseId, member_id AS memberId, revision,
+    semester_course_id AS semesterCourseId, member_id AS memberId, affiliation, revision,
     created_at AS createdAt, updated_at AS updatedAt
     FROM enrollments ORDER BY position`).map((item) => ({
     ...item, exceptionAcknowledgement: acknowledgements.get(item.id) ?? null,
@@ -159,7 +160,7 @@ const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } =
     semester_course_id AS id, course_id AS courseId, course_name AS courseName, capacity
     FROM allocation_snapshot_semester_courses ORDER BY allocation_draft_id, position`));
   const snapshotApplications = group(all<WithParent<Snapshot['applications'][number]>>(db, `SELECT allocation_draft_id AS parentId,
-    application_id AS id, member_id AS memberId, member_name AS memberName,
+    application_id AS id, member_id AS memberId, member_name AS memberName, affiliation,
     application_order AS applicationOrder, application_order_status AS applicationOrderStatus
     FROM allocation_snapshot_applications ORDER BY allocation_draft_id, position`));
   const snapshotChoices = group(all<WithParent<Snapshot['choices'][number]>>(db, `SELECT allocation_draft_id AS parentId,
@@ -169,7 +170,7 @@ const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } =
     enrollment_id AS id, member_id AS memberId, course_id AS courseId, semester_id AS semesterId,
     semester_order AS semesterOrder FROM allocation_snapshot_past_enrollments ORDER BY allocation_draft_id, position`));
   const snapshotExisting = group(all<WithParent<Snapshot['existingEnrollments'][number]>>(db, `SELECT allocation_draft_id AS parentId,
-    enrollment_id AS id, member_id AS memberId, member_name AS memberName,
+    enrollment_id AS id, member_id AS memberId, member_name AS memberName, affiliation,
     semester_course_id AS semesterCourseId FROM allocation_snapshot_existing_enrollments
     ORDER BY allocation_draft_id, position`));
 
@@ -189,7 +190,7 @@ const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } =
   const finalReasons = new Map(all<{ itemId: string; note: string }>(db, `SELECT
     allocation_draft_item_id AS itemId, note FROM allocation_item_final_reasons`).map(({ itemId, note }) => [itemId, { note }]));
   const items = all<Omit<DraftItem, 'autoReasonDetail' | 'finalReasonDetail'>>(db, `SELECT id, allocation_draft_id AS draftId, member_id AS memberId,
-    source_application_id AS sourceApplicationId, member_name_at_generation AS memberNameAtGeneration,
+    source_application_id AS sourceApplicationId, member_name_at_generation AS memberNameAtGeneration, affiliation,
     auto_semester_course_id AS autoSemesterCourseId, auto_decision AS autoDecision,
     auto_reason_code AS autoReasonCode, final_semester_course_id AS finalSemesterCourseId,
     final_decision AS finalDecision, final_reason_code AS finalReasonCode, updated_at AS updatedAt
@@ -325,10 +326,10 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
 
   const applicationInsert = prepareRow(db, 'applications',
     `id, position, semester_id, member_id, application_order, application_order_status, order_resolution,
-      order_resolution_note, revision, created_at, updated_at`);
+      order_resolution_note, revision, created_at, updated_at, affiliation`);
   changedRecords(data.applications, previous?.applications).forEach(({ item, position }) => applicationInsert.run(
     item.id, position, item.semesterId, item.memberId, item.applicationOrder, item.applicationOrderStatus,
-    item.orderResolution, item.orderResolutionNote, item.revision, item.createdAt, item.updatedAt,
+    item.orderResolution, item.orderResolutionNote, item.revision, item.createdAt, item.updatedAt, item.affiliation,
   ));
   const choiceInsert = prepareRow(db, 'application_choices',
     'id, position, application_id, semester_course_id, preference, created_at, updated_at');
@@ -350,12 +351,12 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
   writeDrafts(db, data.allocationDrafts, data.allocationDraftItems, previous);
 
   const enrollmentInsert = prepareRow(db, 'enrollments',
-    'id, position, semester_course_id, member_id, revision, created_at, updated_at');
+    'id, position, semester_course_id, member_id, revision, created_at, updated_at, affiliation');
   const acknowledgementInsert = db.prepare(`INSERT INTO enrollment_acknowledgements
     (enrollment_id, warning_digest, note, acknowledged_at) VALUES (?, ?, ?, ?)`);
   changedRecords(data.enrollments, previous?.enrollments).forEach(({ item, position, before }) => {
     enrollmentInsert.run(item.id, position, item.semesterCourseId, item.memberId,
-      item.revision, item.createdAt, item.updatedAt);
+      item.revision, item.createdAt, item.updatedAt, item.affiliation);
     if (replaceChildren(db, 'enrollment_acknowledgements', 'enrollment_id', item.id,
       before?.exceptionAcknowledgement, item.exceptionAcknowledgement) && item.exceptionAcknowledgement) acknowledgementInsert.run(
       item.id, item.exceptionAcknowledgement.warningDigest, item.exceptionAcknowledgement.note,
@@ -418,7 +419,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     VALUES (?, ?, ?, ?, ?, ?)`);
   const snapshotApplicationInsert = db.prepare(`INSERT INTO allocation_snapshot_applications
     (allocation_draft_id, position, application_id, member_id, member_name, application_order,
-      application_order_status) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      application_order_status, affiliation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
   const snapshotChoiceInsert = db.prepare(`INSERT INTO allocation_snapshot_choices
     (allocation_draft_id, position, choice_id, application_id, semester_course_id, preference)
     VALUES (?, ?, ?, ?, ?, ?)`);
@@ -426,8 +427,8 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     (allocation_draft_id, position, enrollment_id, member_id, course_id, semester_id, semester_order)
     VALUES (?, ?, ?, ?, ?, ?, ?)`);
   const snapshotExistingInsert = db.prepare(`INSERT INTO allocation_snapshot_existing_enrollments
-    (allocation_draft_id, position, enrollment_id, member_id, member_name, semester_course_id)
-    VALUES (?, ?, ?, ?, ?, ?)`);
+    (allocation_draft_id, position, enrollment_id, member_id, member_name, semester_course_id, affiliation)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`);
   const finalizationInsert = db.prepare(`INSERT INTO allocation_finalizations
     (allocation_draft_id, idempotency_key, request_hash) VALUES (?, ?, ?)`);
   const finalizationReceiptInsert = db.prepare(`INSERT INTO allocation_finalization_receipts
@@ -459,7 +460,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     if (replaceChildren(db, 'allocation_snapshot_applications', 'allocation_draft_id', draft.id,
       before?.inputSnapshot.applications, draft.inputSnapshot.applications)) draft.inputSnapshot.applications.forEach((item, itemPosition) => snapshotApplicationInsert.run(
       draft.id, itemPosition, item.id, item.memberId, item.memberName,
-      item.applicationOrder, item.applicationOrderStatus,
+      item.applicationOrder, item.applicationOrderStatus, item.affiliation,
     ));
     if (replaceChildren(db, 'allocation_snapshot_choices', 'allocation_draft_id', draft.id,
       before?.inputSnapshot.choices, draft.inputSnapshot.choices)) draft.inputSnapshot.choices.forEach((item, itemPosition) => snapshotChoiceInsert.run(
@@ -471,7 +472,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     ));
     if (replaceChildren(db, 'allocation_snapshot_existing_enrollments', 'allocation_draft_id', draft.id,
       before?.inputSnapshot.existingEnrollments, draft.inputSnapshot.existingEnrollments)) draft.inputSnapshot.existingEnrollments.forEach((item, itemPosition) => snapshotExistingInsert.run(
-      draft.id, itemPosition, item.id, item.memberId, item.memberName, item.semesterCourseId,
+      draft.id, itemPosition, item.id, item.memberId, item.memberName, item.semesterCourseId, item.affiliation,
     ));
 
     if (!replaceChildren(db, 'allocation_finalizations', 'allocation_draft_id', draft.id,
@@ -495,7 +496,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
   const itemInsert = prepareRow(db, 'allocation_draft_items',
     `id, position, allocation_draft_id, member_id, source_application_id, member_name_at_generation,
       auto_semester_course_id, auto_decision, auto_reason_code, final_semester_course_id,
-      final_decision, final_reason_code, updated_at`);
+      final_decision, final_reason_code, updated_at, affiliation`);
   const attemptInsert = db.prepare(`INSERT INTO allocation_item_preference_attempts
     (allocation_draft_item_id, position, choice_id_at_generation, semester_course_id,
       course_name_at_generation, preference, decision, reason_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -513,7 +514,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     itemInsert.run(item.id, position, item.draftId, item.memberId, item.sourceApplicationId,
       item.memberNameAtGeneration, item.autoSemesterCourseId, item.autoDecision,
       item.autoReasonCode, item.finalSemesterCourseId, item.finalDecision,
-      item.finalReasonCode, item.updatedAt);
+      item.finalReasonCode, item.updatedAt, item.affiliation);
     if (replaceChildren(db, 'allocation_item_preference_attempts', 'allocation_draft_item_id', item.id,
       before?.autoReasonDetail.preferenceAttempts, item.autoReasonDetail.preferenceAttempts)) item.autoReasonDetail.preferenceAttempts.forEach((attempt, itemPosition) => attemptInsert.run(
       item.id, itemPosition, attempt.choiceIdAtGeneration, attempt.semesterCourseId,

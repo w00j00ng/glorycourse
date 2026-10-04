@@ -1,5 +1,5 @@
 {
-  "targetVersion": 1790336872,
+  "targetVersion": 1791072000,
   "migrations": [
     {
       "version": 1790294400,
@@ -25,6 +25,11 @@
       "version": 1790336872,
       "name": "1790336872_detach_finalization_receipts.sql",
       "checksum": "09405bd16280ee8005e04949ccdfb141e2422bc8e95e4c7ff1aa160053113589"
+    },
+    {
+      "version": 1791072000,
+      "name": "1791072000_add_student_affiliation.sql",
+      "checksum": "2d78897d8500c9bf4dbc6a06467849c4843927b5949f1852b09c620dc7c351c9"
     }
   ]
 }

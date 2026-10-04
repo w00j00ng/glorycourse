@@ -9,6 +9,7 @@ import './integration/recovery.test.mjs';
 import './integration/applications.test.mjs';
 import './integration/enrollments.test.mjs';
 import './integration/excel.test.mjs';
+import './integration/student-affiliation.test.mjs';
 import './integration/import-commit.test.mjs';
 import './integration/drafts.test.mjs';
 import './integration/finalization.test.mjs';

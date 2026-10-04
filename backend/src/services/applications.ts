@@ -15,12 +15,13 @@ type ApplicationData = ReturnType<Store['applicationData']>;
 export type ApplicationInput = {
   semesterName: string;
   memberName: string;
+  affiliation?: string | null;
   applicationOrder: number;
   choices: { courseName: string; preference: number }[];
 };
 
 export type ApplicationView = Pick<Application,
-  'id' | 'semesterId' | 'memberId' | 'applicationOrder' | 'applicationOrderStatus' | 'orderResolution' | 'revision'
+  'id' | 'semesterId' | 'memberId' | 'affiliation' | 'applicationOrder' | 'applicationOrderStatus' | 'orderResolution' | 'revision'
 > & {
   semesterName: string;
   memberName: string;
@@ -107,6 +108,7 @@ export class ApplicationService {
           id: this.dependencies.id(),
           semesterId: semester.id,
           memberId: member.id,
+          affiliation: clean.affiliation ?? null,
           applicationOrder: clean.applicationOrder,
           applicationOrderStatus: 'NORMAL',
           orderResolution: 'SOURCE_AGREED',
@@ -179,6 +181,7 @@ export class ApplicationService {
 
       current.semesterId = semester.id;
       current.memberId = member.id;
+      if (input.affiliation !== undefined) current.affiliation = clean.affiliation ?? null;
       current.applicationOrder = clean.applicationOrder;
       current.revision += 1;
       current.updatedAt = now;
@@ -501,6 +504,10 @@ const validateApplicationInput = (input: ApplicationInput): ApplicationInput => 
   if (!input || typeof input !== 'object') throw new ApplicationValidationError('신청 행이 올바르지 않습니다.');
   const semesterName = cleanName(input.semesterName, 'semesterName');
   const memberName = cleanName(input.memberName, 'memberName');
+  if (input.affiliation != null && (typeof input.affiliation !== 'string' || input.affiliation.trim().length > 200)) {
+    throw new ApplicationValidationError('학생 소속은 200자 이내로 입력하세요.');
+  }
+  const affiliation = input.affiliation?.trim() || null;
   requireSafeInteger(input.applicationOrder, 'applicationOrder');
   if (!Array.isArray(input.choices) || input.choices.length < 1 || input.choices.length > MAX_CHOICES_PER_APPLICATION) {
     throw new ApplicationValidationError(`희망 강좌는 1개 이상, 최대 ${MAX_CHOICES_PER_APPLICATION}개까지 입력할 수 있습니다.`);
@@ -515,7 +522,7 @@ const validateApplicationInput = (input: ApplicationInput): ApplicationInput => 
   });
   ensureUnique(cleanChoices.map(({ courseName }) => nameKey(courseName)), 'courseName');
   ensureUnique(cleanChoices.map(({ preference }) => preference), 'preference');
-  return { semesterName, memberName, applicationOrder: input.applicationOrder, choices: cleanChoices };
+  return { semesterName, memberName, affiliation, applicationOrder: input.applicationOrder, choices: cleanChoices };
 };
 
 const withRow = (error: unknown, index: number): Error => Object.assign(
@@ -615,6 +622,7 @@ const applicationView = (data: ApplicationData, application: Application): Appli
     memberId: application.memberId,
     semesterName: semester.name,
     memberName: member.name,
+    affiliation: application.affiliation,
     applicationOrder: application.applicationOrder,
     applicationOrderStatus: application.applicationOrderStatus,
     orderResolution: application.orderResolution,

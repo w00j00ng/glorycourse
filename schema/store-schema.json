@@ -129,11 +129,12 @@
     "application": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "semesterId", "memberId", "applicationOrder", "applicationOrderStatus", "orderResolution", "orderResolutionNote", "revision", "createdAt", "updatedAt"],
+      "required": ["id", "semesterId", "memberId", "affiliation", "applicationOrder", "applicationOrderStatus", "orderResolution", "orderResolutionNote", "revision", "createdAt", "updatedAt"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "semesterId": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
+        "affiliation": { "type": ["string", "null"], "maxLength": 200 },
         "applicationOrder": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] },
         "applicationOrderStatus": { "enum": ["NORMAL", "CONFLICT", "MISSING", "INVALID"] },
         "orderResolution": { "enum": ["SOURCE_AGREED", "ADMIN_CONFIRMED", "UNRESOLVED"] },
@@ -197,11 +198,12 @@
     "enrollment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "semesterCourseId", "memberId", "exceptionAcknowledgement", "revision", "createdAt", "updatedAt"],
+      "required": ["id", "semesterCourseId", "memberId", "affiliation", "exceptionAcknowledgement", "revision", "createdAt", "updatedAt"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "semesterCourseId": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
+        "affiliation": { "type": ["string", "null"], "maxLength": 200 },
         "exceptionAcknowledgement": { "oneOf": [{ "$ref": "#/$defs/acknowledgement" }, { "type": "null" }] },
         "revision": { "$ref": "#/$defs/safeInteger" },
         "createdAt": { "$ref": "#/$defs/timestamp" },
@@ -241,11 +243,12 @@
     "snapshotApplication": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "memberId", "memberName", "applicationOrder", "applicationOrderStatus"],
+      "required": ["id", "memberId", "memberName", "affiliation", "applicationOrder", "applicationOrderStatus"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
         "memberName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "affiliation": { "type": ["string", "null"], "maxLength": 200 },
         "applicationOrder": { "oneOf": [{ "$ref": "#/$defs/positiveSafeInteger" }, { "type": "null" }] },
         "applicationOrderStatus": { "enum": ["NORMAL", "CONFLICT", "MISSING", "INVALID"] }
       }
@@ -276,11 +279,12 @@
     "snapshotExistingEnrollment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "memberId", "memberName", "semesterCourseId"],
+      "required": ["id", "memberId", "memberName", "affiliation", "semesterCourseId"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
         "memberName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "affiliation": { "type": ["string", "null"], "maxLength": 200 },
         "semesterCourseId": { "$ref": "#/$defs/id" }
       }
     },
@@ -425,11 +429,12 @@
     "allocationDraftItem": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "draftId", "memberId", "sourceApplicationId", "memberNameAtGeneration", "autoSemesterCourseId", "autoDecision", "autoReasonCode", "autoReasonDetail", "finalSemesterCourseId", "finalDecision", "finalReasonCode", "finalReasonDetail", "updatedAt"],
+      "required": ["id", "draftId", "memberId", "affiliation", "sourceApplicationId", "memberNameAtGeneration", "autoSemesterCourseId", "autoDecision", "autoReasonCode", "autoReasonDetail", "finalSemesterCourseId", "finalDecision", "finalReasonCode", "finalReasonDetail", "updatedAt"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "draftId": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
+        "affiliation": { "type": ["string", "null"], "maxLength": 200 },
         "sourceApplicationId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
         "memberNameAtGeneration": { "type": "string", "minLength": 1, "maxLength": 200 },
         "autoSemesterCourseId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },

@@ -28,7 +28,7 @@ import {
  *   cell: (text: string) => HTMLElement,
  *   actionsCell: (...actions: [string, () => void | Promise<void>, string?][]) => HTMLElement,
  *   policyName: (id: string, version: string) => string,
- *   saveDraftItem: (item: DraftItem, semesterCourseId: string) => Promise<void>,
+ *   saveDraftItem: (item: DraftItem, semesterCourseId: string, affiliation: string) => Promise<void>,
  *   restoreDraftItem: (item: DraftItem) => Promise<void>,
  * }} dependencies
  */
@@ -158,9 +158,18 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       orderCell.className = 'draft-order';
       const applicationCell = cell(application?.choices ?? '신청 없음');
       applicationCell.className = 'choices';
+      const affiliationCell = cell(item.affiliation ?? '—');
+      const affiliation = document.createElement('input');
+      if (!readonly) {
+        affiliation.value = item.affiliation ?? '';
+        affiliation.maxLength = 200;
+        affiliation.setAttribute('aria-label', `${item.memberNameAtGeneration} 학생 소속`);
+        affiliationCell.replaceChildren(affiliation);
+      }
       row.append(
         orderCell,
         cell(item.memberNameAtGeneration),
+        affiliationCell,
         applicationCell,
         cell(item.autoDecision === 'SELECTED' ? courseName(item.autoSemesterCourseId) : item.autoDecision === 'NOT_EVALUATED' ? '자동 결과 없음' : '제외'),
         reasonCell(item),
@@ -169,7 +178,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       if (readonly) row.append(cell(''));
       else {
         /** @type {[string, () => Promise<void>][]} */
-        const actions = [['저장', () => saveDraftItem(item, finalSelect.value)]];
+        const actions = [['저장', () => saveDraftItem(item, finalSelect.value, affiliation.value)]];
         if (item.autoDecision !== 'NOT_EVALUATED') actions.push(['자동 복원', () => restoreDraftItem(item)]);
         row.append(actionsCell(...actions));
       }
@@ -196,6 +205,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       byId('draft-grouping').value = 'STUDENT';
       byId('draft-sort').value = 'ORDER_ASC';
       byId('draft-add-member').value = '';
+      byId('draft-add-affiliation').value = '';
     }
     byId('draft-dialog-title').textContent = `${context.semester.name} 배정초안`;
     byId('draft-dialog-meta').textContent = `${detail.draft.mode === 'MANUAL'

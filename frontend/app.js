@@ -304,7 +304,7 @@ const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseN
   state, byId, fillSelect, cell, actionsCell, policyName,
   renderPagination: (name) => renderPagination(name),
   fillDatalist: (id, items) => fillDatalist(id, items),
-  saveDraftItem: (item, courseId) => saveDraftItem(item, courseId),
+  saveDraftItem: (item, courseId, affiliation) => saveDraftItem(item, courseId, affiliation),
   restoreDraftItem: (item) => restoreDraftItem(item),
 });
 

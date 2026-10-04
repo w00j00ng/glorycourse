@@ -1,0 +1,35 @@
+{
+  "meta": { "storeEpoch": "epoch-affiliation", "storeRevision": 0 },
+  "semesters": [{ "id": "semester", "name": "Fall", "nameKey": "Fall", "order": 1, "allocationInputRevision": 0, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "members": [{ "id": "member", "name": "Alice", "nameKey": "Alice", "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "courses": [{ "id": "course", "name": "Art", "nameKey": "Art", "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "semesterCourses": [{ "id": "sc", "semesterId": "semester", "courseId": "course", "capacity": 3, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "applications": [{ "id": "application", "semesterId": "semester", "memberId": "member", "affiliation": "Application school", "applicationOrder": 1, "applicationOrderStatus": "NORMAL", "orderResolution": "ADMIN_CONFIRMED", "orderResolutionNote": null, "revision": 0, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "applicationChoices": [{ "id": "choice", "applicationId": "application", "semesterCourseId": "sc", "preference": 1, "sourceRefs": [], "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "enrollments": [{ "id": "enrollment", "semesterCourseId": "sc", "memberId": "member", "affiliation": "Enrollment school", "exceptionAcknowledgement": null, "revision": 0, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "allocationDrafts": [{
+    "id": "draft", "semesterId": "semester", "status": "DRAFT", "revision": 0, "mode": "AUTO",
+    "policyId": "policy", "policyVersion": "1", "engineVersion": "1.0.0",
+    "policySettings": { "preferenceMode": "NEW_FIRST", "fallbackMode": "MAX_CARDINALITY_PRIORITIZED" },
+    "randomSeed": "seed", "sourceRevision": 0, "inputFingerprint": "legacy-fingerprint",
+    "inputSnapshot": {
+      "semester": { "id": "semester", "name": "Fall", "order": 1 },
+      "semesterCourses": [{ "id": "sc", "courseId": "course", "courseName": "Art", "capacity": 3 }],
+      "applications": [{ "id": "application", "memberId": "member", "memberName": "Alice at generation", "affiliation": "Snapshot application school", "applicationOrder": 1, "applicationOrderStatus": "NORMAL" }],
+      "choices": [{ "id": "choice", "applicationId": "application", "semesterCourseId": "sc", "preference": 1 }],
+      "relevantPastEnrollments": [],
+      "existingEnrollments": [{ "id": "enrollment", "memberId": "member", "memberName": "Alice at generation", "affiliation": "Snapshot enrollment school", "semesterCourseId": "sc" }]
+    },
+    "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z",
+    "finalizedAt": null, "enrollmentReportDownloadedAt": null, "enrollmentReportStoreRevision": null, "finalization": null
+  }],
+  "allocationDraftItems": [{
+    "id": "item", "draftId": "draft", "memberId": "member", "affiliation": "Draft school",
+    "sourceApplicationId": "application", "memberNameAtGeneration": "Alice at generation",
+    "autoSemesterCourseId": null, "autoDecision": "NOT_EVALUATED", "autoReasonCode": "MANUAL_ONLY",
+    "autoReasonDetail": { "preferenceAttempts": [], "fallback": null },
+    "finalSemesterCourseId": null, "finalDecision": "REJECTED", "finalReasonCode": null, "finalReasonDetail": null,
+    "updatedAt": "2026-10-04T00:00:00.000Z"
+  }],
+  "importBatches": [], "finalizationReceipts": [], "restoreReceipts": []
+}

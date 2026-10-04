@@ -2,7 +2,7 @@ import { issueText } from './issue-view.js';
 
 /**
  * @typedef {{ code: string, severity: string, message?: string, subject?: { memberId?: string, courseId?: string } }} FinalizationIssue
- * @typedef {{ preparedActionToken: string, draftRevision: number, warningDigest: string, enrollments: unknown[], issues: FinalizationIssue[], courseSummary: { semesterCourseId: string, existingCount: number, addedCount: number, totalCount: number, capacity: number | null }[] }} FinalizationPreview
+ * @typedef {{ preparedActionToken: string, draftRevision: number, warningDigest: string, enrollments: { memberName: string, affiliation: string | null, courseName: string }[], issues: FinalizationIssue[], courseSummary: { semesterCourseId: string, existingCount: number, addedCount: number, totalCount: number, capacity: number | null }[] }} FinalizationPreview
  * @typedef {{ preview: FinalizationPreview, draftId: string, idempotencyKey: string, request: null | { preparedActionToken: string, expectedDraftRevision: number, acknowledgedWarningDigest: string, acknowledgementNote: string } }} FinalizationState
  * @typedef {{ draft: { id: string, revision: number }, studentResults: { memberId: string, memberNameAtGeneration: string }[] }} DraftDetail
  * @typedef {{ semesterCourses: { courseId: string, courseName: string }[] }} DraftContext
@@ -22,6 +22,15 @@ export const createFinalizationPage = ({ state, api, byId, run, draftCourseName,
     finalization = { preview, draftId: draft.draft.id, idempotencyKey: crypto.randomUUID(), request: null };
     byId('finalize-add-count').textContent = String(preview.enrollments.length);
     byId('finalize-issue-count').textContent = String(preview.issues.length);
+    byId('finalize-enrollments').replaceChildren(...preview.enrollments.map((enrollment) => {
+      const row = document.createElement('tr');
+      row.append(...[enrollment.memberName, enrollment.affiliation ?? '—', enrollment.courseName].map((value) => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        return cell;
+      }));
+      return row;
+    }));
     byId('finalize-courses').replaceChildren(...preview.courseSummary.map((course) => {
       const card = document.createElement('div');
       card.className = 'import-candidate';

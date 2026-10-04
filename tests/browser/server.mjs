@@ -20,7 +20,7 @@ process.on('message', async (message) => {
     if (message.type === 'complete-enrollment-template') {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(Buffer.from(message.bytes, 'base64'));
-      for (const row of message.rows) workbook.getWorksheet('수강이력').addRow(row);
+      for (const [semesterName, memberName, ...values] of message.rows) workbook.getWorksheet('수강이력').addRow([semesterName, memberName, null, ...values]);
       for (const row of message.courses ?? []) workbook.getWorksheet('개설강좌').addRow(row);
       process.send({ type: 'template-completed', bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
       return;
@@ -45,9 +45,10 @@ process.on('message', async (message) => {
       const capacity = workbook.getWorksheet('개설강좌').getCell('C2').value;
       const sheet = workbook.getWorksheet('수강신청');
       const headers = sheet.getRow(1).values.slice(1);
-      sheet.getCell('G1').value = '4순위 강좌';
-      sheet.getCell('H1').value = '5순위 강좌';
-      for (const row of message.rows ?? [['양식 학기', '양식 회원', 1, '창세기', null, null, '마태복음', '마가복음']]) sheet.addRow(row);
+      sheet.getCell('I1').value = '5순위 강좌';
+      const rows = message.rows?.map(([semesterName, memberName, ...values]) => [semesterName, memberName, null, ...values])
+        ?? [['양식 학기', '양식 회원', '양식 소속', 1, '창세기', null, null, '마태복음', '마가복음']];
+      for (const row of rows) sheet.addRow(row);
       process.send({ type: 'template-completed', semesterName, courseName, capacity, headers,
         bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
       return;
@@ -67,7 +68,7 @@ process.on('message', async (message) => {
         const applicationId = `application-${index}`;
         data.members.push({ id: memberId, name: `회원 ${index}`, nameKey: `회원 ${index}`,
           createdAt: timestamp, updatedAt: timestamp });
-        data.applications.push({ id: applicationId, semesterId: 'semester', memberId, applicationOrder: index + 1,
+        data.applications.push({ id: applicationId, semesterId: 'semester', memberId, affiliation: null, applicationOrder: index + 1,
           applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null,
           revision: 0, createdAt: timestamp, updatedAt: timestamp });
         data.applicationChoices.push({ id: `choice-${index}`, applicationId,

@@ -79,7 +79,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>회원명</th><th>학기</th><th>신청순서</th><th>희망 강좌</th><th>상태</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <thead><tr><th>회원명</th><th>학생 소속</th><th>학기</th><th>신청순서</th><th>희망 강좌</th><th>상태</th><th><span class="sr-only">작업</span></th></tr></thead>
             <tbody id="application-rows"></tbody>
           </table>
           <p id="application-empty" class="empty">등록된 신청이 없습니다.</p>
@@ -109,7 +109,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>학기</th><th>회원명</th><th>강좌</th><th>관리자 메모</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <thead><tr><th>학기</th><th>회원명</th><th>학생 소속</th><th>강좌</th><th>관리자 메모</th><th><span class="sr-only">작업</span></th></tr></thead>
             <tbody id="enrollment-rows"></tbody>
           </table>
           <p id="enrollment-empty" class="empty">등록된 수강이력이 없습니다.</p>
@@ -337,6 +337,7 @@
         <legend>회원 직접 배정</legend>
         <div class="form-grid">
           <label>회원명<input id="draft-add-member" list="draft-member-options" aria-describedby="draft-add-member-warning" maxlength="200" required placeholder="기존 회원 선택 또는 새 이름 입력"></label>
+          <label>학생 소속 (선택)<input id="draft-add-affiliation" maxlength="200"></label>
           <label>배정 강좌<select id="draft-add-course" required></select></label>
         </div>
         <p id="draft-add-member-warning" class="message error" role="alert" hidden><strong>배정 불가:</strong> 이 회원은 같은 학기에 수강이력이 있습니다. 수강이력에서 확인하세요.</p>
@@ -353,7 +354,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th class="draft-order">신청순서</th><th>회원</th><th>초안 생성 당시 신청</th><th>자동 결과</th><th>자동 사유</th><th>최종 결정</th><th><span class="sr-only">작업</span></th></tr></thead>
+          <thead><tr><th class="draft-order">신청순서</th><th>회원</th><th>학생 소속</th><th>초안 생성 당시 신청</th><th>자동 결과</th><th>자동 사유</th><th>최종 결정</th><th><span class="sr-only">작업</span></th></tr></thead>
           <tbody id="draft-item-rows"></tbody>
         </table>
         <p id="draft-item-empty" class="empty">검토할 학생이 없습니다.</p>
@@ -377,6 +378,10 @@
       </div>
       <h3>강좌별 확정 결과</h3>
       <div id="finalize-courses" class="import-candidates"></div>
+      <h3>이번 추가 학생</h3>
+      <div class="table-wrap">
+        <table><thead><tr><th>회원명</th><th>학생 소속</th><th>강좌</th></tr></thead><tbody id="finalize-enrollments"></tbody></table>
+      </div>
       <h3>경고와 오류</h3>
       <ul id="finalize-issues" class="warning-list"></ul>
       <label>관리자 메모 (선택)<textarea name="note" rows="3" maxlength="2000" placeholder="필요한 경우 확정 결과의 검토 내용을 기록하세요."></textarea></label>
@@ -394,6 +399,7 @@
     <div class="form-grid">
       <label>학기명<input name="semesterName" list="semester-options" required maxlength="200" autocomplete="off"></label>
       <label>회원명<input name="memberName" list="member-options" required maxlength="200" autocomplete="off"></label>
+      <label>학생 소속 (선택)<input name="affiliation" maxlength="200" autocomplete="off"></label>
       <label>신청순서<input name="applicationOrder" type="number" min="1" step="1" required></label>
     </div>
     <fieldset><legend>희망 강좌</legend><div class="choice-fields"></div><button class="secondary add-choice" type="button" data-button-help="이 회원의 희망 강좌와 순위를 추가로 입력합니다.">희망 추가</button></fieldset>
@@ -404,6 +410,7 @@
     <div class="form-grid">
       <label>학기명<input name="semesterName" list="semester-options" required maxlength="200" autocomplete="off"></label>
       <label>회원명<input name="memberName" list="member-options" required maxlength="200" autocomplete="off"></label>
+      <label>학생 소속 (선택)<input name="affiliation" maxlength="200" autocomplete="off"></label>
       <label>강좌명<select name="courseId"></select></label>
       <label class="new-course-name">새 강좌명<input name="newCourseName" maxlength="200" autocomplete="off"></label>
     </div>

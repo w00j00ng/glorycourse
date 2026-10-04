@@ -30,6 +30,7 @@ export type ImportIssue = {
 export type ApplicationCandidate = {
   semesterName: string;
   memberName: string;
+  affiliation: string | null;
   applicationOrder: number | null;
   applicationOrderStatus: ApplicationStatus;
   choices: Array<{
@@ -43,6 +44,7 @@ export type ApplicationCandidate = {
 export type EnrollmentCandidate = {
   semesterName: string;
   memberName: string;
+  affiliation: string | null;
   courseName: string;
   adminNote: string;
   sourceRef: { sheet: string; row: number };
@@ -60,6 +62,7 @@ export type ImportContextChange = {
 export type ImportPreview = {
   previewId: string;
   kind: ImportKind;
+  templateVersion: string;
   mode: ImportMode;
   fileHash: string;
   storeRevision: number;
@@ -120,11 +123,12 @@ export class ImportPreviewService {
       bytes: input.bytes,
       limits: this.#dependencies.limits,
     });
-    validateMetadata(workbook, input.kind);
+    const templateVersion = validateMetadata(workbook, input.kind);
     const rawRows = extractRawRows(workbook, input.kind);
     return this.#remember(buildPreview(
       this.#store.read(),
       input.kind,
+      templateVersion,
       rawRows,
       createHash('sha256').update(input.bytes).digest('hex'),
       this.#dependencies.id(),
@@ -143,7 +147,7 @@ export class ImportPreviewService {
       const batch: ImportBatch = {
         id: this.#dependencies.id(),
         kind: preview.kind,
-        templateVersion: TEMPLATE_VERSIONS[preview.kind],
+        templateVersion: preview.templateVersion,
         fileHash: preview.fileHash,
         importedAt: this.#dependencies.now().toISOString(),
         status: 'STAGED',
@@ -167,6 +171,7 @@ export class ImportPreviewService {
     return this.#remember(buildPreview(
       this.#store.read(),
       batch.kind,
+      batch.templateVersion,
       batch.rawRows,
       batch.fileHash,
       this.#dependencies.id(),
@@ -187,7 +192,7 @@ export class ImportPreviewService {
 
   async exportStagedOriginal(id: string): Promise<Buffer> {
     const batch = this.getStaged(id);
-    return exportRawRows(batch.kind, batch.rawRows);
+    return exportRawRows(batch.kind, batch.rawRows, batch.templateVersion);
   }
 
   #remember(preview: ImportPreview): ImportPreview {
@@ -202,6 +207,7 @@ export class ImportPreviewService {
 const buildPreview = (
   data: DatabaseState,
   kind: ImportKind,
+  templateVersion: string,
   rawRows: RawRow[],
   fileHash: string,
   previewId: string,
@@ -215,6 +221,7 @@ const buildPreview = (
   return {
     previewId,
     kind,
+    templateVersion,
     mode,
     fileHash,
     storeRevision: data.meta.storeRevision,
@@ -262,7 +269,8 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
     const qualityConflict = candidate.applicationOrderStatus !== 'NORMAL'
       || candidate.choices.some(({ preference }) => preference === null)
       || !candidate.semesterName
-      || !candidate.memberName;
+      || !candidate.memberName
+      || (candidate.affiliation?.length ?? 0) > 200;
     const existing = findApplication(data, candidate.semesterName, candidate.memberName);
     candidate.removedCourseNames = existing && mode === 'REPLACE_APPLICATION'
       ? removedCourseNames(data, existing, candidate)
@@ -286,6 +294,10 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
 const applicationCandidate = (first: RawRow, issues: ImportIssue[]): ApplicationCandidate => {
   const semesterName = clean(first.cells['학기명']);
   const memberName = clean(first.cells['회원명']);
+  const affiliation = clean(first.cells['학생 소속']) || null;
+  if (affiliation && affiliation.length > 200) issues.push(requiredRowIssue(
+    'AFFILIATION_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', first, '학생 소속',
+  ));
   if (!semesterName) issues.push(requiredRowIssue('SEMESTER_NAME_REQUIRED', 'Semester name is required', first, '학기명'));
   if (!memberName) issues.push(requiredRowIssue('MEMBER_NAME_REQUIRED', 'Member name is required', first, '회원명'));
   const parsedOrder = parsePositiveInteger(first.cells['신청순서']);
@@ -323,6 +335,7 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   return {
     semesterName,
     memberName,
+    affiliation,
     applicationOrder,
     applicationOrderStatus,
     choices,
@@ -338,13 +351,17 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   const candidates = sourceRows.map((row): EnrollmentCandidate => {
     const semesterName = clean(row.cells['학기명']);
     const memberName = clean(row.cells['회원명']);
+    const affiliation = clean(row.cells['학생 소속']) || null;
+    if (affiliation && affiliation.length > 200) issues.push(requiredRowIssue(
+      'AFFILIATION_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', row, '학생 소속',
+    ));
     const courseName = clean(row.cells['강좌명']);
     const adminNote = clean(row.cells['관리자 메모']);
     if (!semesterName) issues.push(requiredRowIssue('SEMESTER_NAME_REQUIRED', 'Semester name is required', row, '학기명'));
     if (!memberName) issues.push(requiredRowIssue('MEMBER_NAME_REQUIRED', 'Member name is required', row, '회원명'));
     if (!courseName) issues.push(requiredRowIssue('COURSE_NAME_REQUIRED', 'Course name is required', row, '강좌명'));
     if (adminNote.length > 2000) issues.push(requiredRowIssue('ENROLLMENT_NOTE_TOO_LONG', 'Administrator note must be at most 2000 characters', row, '관리자 메모'));
-    return { semesterName, memberName, courseName, adminNote, sourceRef: { sheet: row.sheet, row: row.row } };
+    return { semesterName, memberName, affiliation, courseName, adminNote, sourceRef: { sheet: row.sheet, row: row.row } };
   });
 
   const groups = new Map<string, EnrollmentCandidate[]>();
@@ -373,16 +390,22 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   let conflicts = 0;
   const pending: EnrollmentCandidate[] = [];
   for (const group of groups.values()) {
-    if (group.length > 1 || !group[0]!.semesterName || !group[0]!.memberName || !group[0]!.courseName) {
+    if (group.length > 1 || !group[0]!.semesterName || !group[0]!.memberName || !group[0]!.courseName || (group[0]!.affiliation?.length ?? 0) > 200) {
       conflicts += group.length;
       continue;
     }
-    const existingCourse = findEnrollmentCourse(data, group[0]!.semesterName, group[0]!.memberName);
-    if (existingCourse === null) {
+    const existing = findEnrollment(data, group[0]!.semesterName, group[0]!.memberName);
+    if (existing === null) {
       insertCandidates += 1;
       pending.push(group[0]!);
     }
-    else if (nameKey(existingCourse) === nameKey(group[0]!.courseName)) {
+    else if (nameKey(existing.courseName) === nameKey(group[0]!.courseName)) {
+      if (existing.affiliation !== group[0]!.affiliation) {
+        conflicts += 1;
+        issues.push(requiredRowIssue('ENROLLMENT_AFFILIATION_CONFLICT',
+          '기존 수강이력과 학생 소속이 다릅니다. 수강이력 화면에서 확인 후 수정하세요.', sourceRows.find(({ row }) => row === group[0]!.sourceRef.row)!, '학생 소속'));
+        continue;
+      }
       identicalRows += 1;
       continue;
     } else conflicts += 1;
@@ -531,12 +554,12 @@ const contextValue = (
   return semesterCourse ? semesterCourse.capacity as number | null : undefined;
 };
 
-const validateMetadata = (workbook: import('@excel.js/exceljs').Workbook, kind: ImportKind): void => {
+const validateMetadata = (workbook: import('@excel.js/exceljs').Workbook, kind: ImportKind): string => {
   const metadata = workbook.getWorksheet('메타');
   if (
     !metadata
     || metadata.getCell('A1').text !== 'templateVersion'
-    || metadata.getCell('B1').text !== TEMPLATE_VERSIONS[kind]
+    || !['2', TEMPLATE_VERSIONS[kind]].includes(metadata.getCell('B1').text)
     || metadata.getCell('A2').text !== 'kind'
     || metadata.getCell('B2').text !== kind
   ) throw new WorkbookValidationError([{
@@ -544,6 +567,7 @@ const validateMetadata = (workbook: import('@excel.js/exceljs').Workbook, kind: 
     message: 'Workbook metadata does not match the selected import kind',
     location: '메타!A1:B2',
   }]);
+  return metadata.getCell('B1').text;
 };
 
 const parsePositiveInteger = (raw: string | null | undefined): (
@@ -608,6 +632,7 @@ const applicationMatches = (
   if (
     application.applicationOrderStatus !== candidate.applicationOrderStatus
     || application.applicationOrder !== candidate.applicationOrder
+    || application.affiliation !== candidate.affiliation
   ) return false;
   const actual = data.applicationChoices
     .filter((choice) => choice.applicationId === application.id)
@@ -621,7 +646,7 @@ const applicationMatches = (
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 };
 
-const findEnrollmentCourse = (data: DatabaseState, semesterName: string, memberName: string): string | null => {
+const findEnrollment = (data: DatabaseState, semesterName: string, memberName: string): { courseName: string; affiliation: string | null } | null => {
   const semester = data.semesters.find((item) => item.nameKey === nameKey(semesterName));
   const member = data.members.find((item) => item.nameKey === nameKey(memberName));
   if (!semester || !member) return null;
@@ -633,7 +658,7 @@ const findEnrollmentCourse = (data: DatabaseState, semesterName: string, memberN
   if (!enrollment) return null;
   const semesterCourse = data.semesterCourses.find((item) => item.id === enrollment.semesterCourseId);
   const course = semesterCourse && data.courses.find((item) => item.id === semesterCourse.courseId);
-  return typeof course?.name === 'string' ? course.name : null;
+  return course ? { courseName: course.name, affiliation: enrollment.affiliation } : null;
 };
 
 const removedCourseNames = (

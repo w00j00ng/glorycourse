@@ -65,6 +65,8 @@ DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `
 
 적용 이력의 checksum 불일치, 누락 또는 실행 프로그램보다 새로운 DB 버전이면 시작을 거절한다. 마이그레이션에 실패하면 변경을 롤백하며, 임의로 이력 값을 고쳐서 우회하지 않는다. 지원하는 자동 다운그레이드는 없다.
 
+학생 소속 추가의 목표 DB 버전은 `1791072000`이며 manifest에는 6개 migration이 있다. [추가 SQL](../schema/migrations/1791072000_add_student_affiliation.sql)은 신청·초안 항목·이력과 신청/동일 학기 이력 스냅샷의 `affiliation` nullable 컬럼을 추가하고 기존 값은 null로 둔다. 회원 테이블에는 추가하지 않는다. 기록 간 복사·수정 API·fingerprint 호환 규칙은 [학생 소속 계약](contract-decisions.md#c-14-학생-소속의-시점별-보관)을 따른다.
+
 ## 화면과 업무 규칙 변경
 
 - 페이지별 도움말과 대시보드 업무 설명은 `frontend/help-content.js`의 `PAGE_HELP`를 공유한다. `PROGRESS_WORKFLOW`는 네 업무 페이지의 순서를 따른다.
@@ -74,7 +76,7 @@ DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `
 
 ## Excel 보관과 업데이트 안전 사본
 
-수강신청·수강이력 현황 Excel을 보관하고 각 화면의 Excel 업로드로 재등록한다. 신청 현황은 조회된 신청 학기의 순서와 전체 개설강좌·정원을 포함하며 미정은 공란이다. 이력 양식 버전 `2`는 학생별 선택 메모와 별도 개설강좌 시트의 정원을 보존한다. `미정`은 null 정원으로 읽으며 정원 충돌은 명시적 선택을 요구한다. 같은 이력은 기존 메모를 유지한다. 배정초안·시스템 기록은 Excel에 포함하지 않는다.
+수강신청·수강이력 현황 Excel을 보관하고 각 화면의 Excel 업로드로 재등록한다. 신청 현황은 조회된 신청 학기의 순서와 전체 개설강좌·정원을 포함하며 미정은 공란이다. 이력 양식 버전 `3`은 학생 소속·선택 메모와 별도 개설강좌 시트의 정원을 보존하며, 소속 열이 없는 버전 `2`도 읽는다. `미정`은 null 정원으로 읽으며 정원 충돌은 명시적 선택을 요구한다. 같은 이력은 기존 메모를 유지하며 소속이 다르면 충돌로 표시한다. 배정초안·시스템 기록은 Excel에 포함하지 않는다.
 
 수동 백업·복원 UI/API와 `services/recovery.ts`·`storage/backup.ts`는 제거했다. 역사적 DB 필드와 기존 파일을 유지하므로 이 기능 제거를 위한 migration은 필요하지 않다. SQL migration 전의 안전 사본은 `sqlite-snapshot.ts`를 통해 계속 생성·검증한다. 내부 `Store.restore()`와 어댑터의 복구 처리는 남아 있으며 사용자 복원 기능을 제공하지 않는다.
 
@@ -93,7 +95,7 @@ npm run test:workbook-scale
 
 - `verify`: migration manifest, OpenAPI, 타입, 기능·계약·실제 파일 저장, 강제 종료 복구와 실행기 검증. 패키지·부하·실제 GUI 검증은 별도다.
 - `typecheck`: 백엔드 TypeScript와 `tsconfig.frontend.json`에 열거한 화면·목록·학기/강좌·파일명·경고 표시 모듈의 JavaScript를 `checkJs`로 검사한다. 이 모듈들이 가져오는 도움말·대시보드 판단 모듈도 함께 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
-- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 메모 수정과 Excel 정원·메모 재등록, 강좌 편집값 보존 정렬과 수강이력 전체 정렬·페이지·Excel, 초안 최종 결정 저장·자동 복원·정원 현황과 확정, 대량 초안 페이지 처리를 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
+- `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 소속·메모 수정과 Excel 정원·소속·메모 재등록, 강좌 편집값 보존 정렬과 수강이력 전체 정렬·페이지·Excel, 초안 최종 결정 저장·자동 복원·정원 현황과 확정, 대량 초안 페이지 처리를 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
 - `test:coverage`: `verify`를 [c8](https://github.com/bcoe/c8)으로 실행해 `coverage/index.html`, `coverage/lcov.info`, `coverage/coverage-summary.json`과 요약을 생성한다. 백엔드 전체, 프런트엔드 JavaScript 전체, `launcher.mjs`와 `runtime-paths.mjs`가 대상이다. 별도로 실행하는 브라우저 테스트의 사용 줄은 이 수치에 합산되지 않아 `frontend/app.js`처럼 Node 테스트에서 실행하지 않는 파일은 0%로 포함된다. 빌드·검증 스크립트와 테스트 자체는 집계하지 않는다.
 - 기본 브랜치의 성공한 CI는 `coverage/pages/`의 정적 SVG 배지와 HTML 요약을 GitHub Pages에 배포한다. 저장소 설정의 **Pages → Build and deployment → Source**는 `GitHub Actions`로 한 번 지정해야 한다. CI는 README를 수정하거나 커밋하지 않으며 개인 토큰이나 외부 커버리지 서비스도 사용하지 않는다.
 - README 상단의 Backend·Frontend 배지는 `https://w00j00ng.github.io/glorycourse/coverage/` 아래의 고정 경로를 참조한다. 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다.
@@ -104,3 +106,5 @@ npm run test:workbook-scale
 - `test:desktop`: 로그인한 데스크톱에서 기본 브라우저를 실제로 열고 시험 페이지 요청까지 확인한다. 브라우저 탭 하나가 열리며 확인 후 닫아도 된다. GUI가 없는 CI의 `verify`에는 포함하지 않는다.
 
 테스트는 사용자 동작의 입력과 기대 결과를 명시하고 기능을 호출해 검증한다. 고객 PC의 보안 경고와 OS별 첫 실행은 자동 브라우저 테스트 통과와 별도로 [배포 점검](releasing.md)을 수행한다. 실데이터 검증을 기록할 때는 개인정보 없는 표본과 환경·자료 규모·결과를 사용하고, 공개 문서에 실제 명단이나 백업을 포함하지 않는다.
+
+학생 소속의 기능 검증은 `tests/integration/student-affiliation.test.mjs`에서 양식 4순위·소속, 기존 3~5순위 양식, 직접·일괄 입력, 재시작, 초안 복사·수정·확정, 소속 충돌과 수정 요청의 생략/null/공란을 확인한다. `migrations.test.mjs`·`sqlite.test.mjs`·`sqlite-incremental.test.mjs`는 기존 DB·스냅샷 보존과 저장 왕복을, `app-reload.test.mjs`는 저장 대기 중 새로 입력한 소속 보존을 검사한다. 이 기능 검사는 `npm run verify`에 포함된다.

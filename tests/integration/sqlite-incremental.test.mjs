@@ -39,6 +39,7 @@ const setup = async (t) => {
     });
     data.enrollments.push({
       id: 'enrollment', memberId: 'charlie', semesterCourseId: data.semesterCourses[1].id,
+      affiliation: null,
       exceptionAcknowledgement: null, revision: 0, createdAt: timestamp, updatedAt: timestamp,
     });
     data.importBatches.push({

@@ -12,6 +12,7 @@
     "id": "item-1",
     "draftId": "draft-1",
     "memberId": "member-1",
+    "affiliation": null,
     "sourceApplicationId": null,
     "memberNameAtGeneration": "홍길동",
     "autoSemesterCourseId": null,

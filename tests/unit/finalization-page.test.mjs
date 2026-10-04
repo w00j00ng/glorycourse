@@ -15,6 +15,7 @@ const setup = (api) => {
   const nodes = {
     'finalize-add-count': {}, 'finalize-issue-count': {},
     'finalize-courses': { replaceChildren() {} },
+    'finalize-enrollments': { children: [], replaceChildren(...children) { this.children = children; } },
     'finalize-issues': { replaceChildren() {} },
     'finalize-form': { reset() { note.value = ''; } },
     'finalize-draft': {},
@@ -31,14 +32,27 @@ const setup = (api) => {
     loadDrafts: async () => {}, loadEnrollments: async () => {},
   });
   const event = { preventDefault() {}, currentTarget: { elements: { note } } };
-  return { page, state, note, opened, closed, event };
+  return { page, state, note, opened, closed, event, nodes };
 };
 
 const withDocument = async (action) => {
   const previous = globalThis.document;
-  globalThis.document = { createElement: () => ({}) };
+  globalThis.document = { createElement: () => ({ children: [], append(...children) { this.children.push(...children); } }) };
   try { await action(); } finally { globalThis.document = previous; }
 };
+
+test('finalization review shows each proposed enrollment affiliation', async () => withDocument(async () => {
+  const { page, nodes } = setup(async () => ({ ...preview, enrollments: [
+    { memberId: 'member-1', memberName: '김가나', courseName: '창세기', affiliation: '청년부' },
+    { memberId: 'member-2', memberName: '박다라', courseName: '마태복음', affiliation: null },
+  ] }));
+
+  await page.previewFinalization();
+
+  assert.deepEqual(nodes['finalize-enrollments'].children.map((row) => row.children.map(({ textContent }) => textContent)), [
+    ['김가나', '청년부', '창세기'], ['박다라', '—', '마태복음'],
+  ]);
+}));
 
 test('a corrected finalization note creates a new request only after rejection', async () => withDocument(async () => {
   for (const code of ['UNPROCESSABLE', 'INTERNAL_ERROR', undefined]) {
