@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 
-import { TEMPLATE_VERSIONS } from '../excel/workbooks.ts';
-
 import {
   EnrollmentConflictError,
   applyBatchCandidate,
@@ -127,7 +125,7 @@ export class ImportCommitService {
           batches(data).push({
             id: batchId,
             kind: preview.kind,
-            templateVersion: TEMPLATE_VERSIONS[preview.kind],
+            templateVersion: preview.templateVersion,
             fileHash: preview.fileHash,
             importedAt: committedAt,
             status: 'APPLIED',
@@ -182,7 +180,7 @@ const applyApplications = (
       continue;
     }
     if (existing) {
-      if (orderDecision && choicesMatch(data, existing, candidate)) {
+      if (orderDecision && existing.affiliation === candidate.affiliation && choicesMatch(data, existing, candidate)) {
         existing.applicationOrder = confirmedOrder!;
         existing.applicationOrderStatus = 'NORMAL';
         existing.orderResolution = 'ADMIN_CONFIRMED';
@@ -223,9 +221,9 @@ const applyEnrollments = (
     if (!candidate.semesterName || !candidate.memberName || !candidate.courseName) {
       throw new ImportCommitConflictError('Enrollment names must be resolved before commit');
     }
-    const existingCourse = findEnrollmentCourse(data, candidate);
-    if (existingCourse !== null) {
-      if (nameKey(existingCourse) === nameKey(candidate.courseName)) {
+    const existing = findEnrollment(data, candidate);
+    if (existing !== null) {
+      if (nameKey(existing.courseName) === nameKey(candidate.courseName) && existing.affiliation === candidate.affiliation) {
         counts.skipped += 1;
         continue;
       }
@@ -275,6 +273,7 @@ const createApplication = (
     id: id(),
     semesterId: semester.id,
     memberId: member.id,
+    affiliation: candidate.affiliation,
     applicationOrder: candidate.applicationOrder,
     applicationOrderStatus: candidate.applicationOrderStatus,
     orderResolution: candidate.applicationOrderStatus === 'NORMAL'
@@ -299,6 +298,7 @@ const replaceApplication = (
   now: string,
   id: () => string,
 ): void => {
+  application.affiliation = candidate.affiliation;
   application.applicationOrder = candidate.applicationOrder;
   application.applicationOrderStatus = candidate.applicationOrderStatus;
   application.orderResolution = candidate.applicationOrderStatus === 'NORMAL'
@@ -423,6 +423,7 @@ const applicationMatches = (data: DatabaseState, application: Application, candi
   if (
     application.applicationOrder !== candidate.applicationOrder
     || application.applicationOrderStatus !== candidate.applicationOrderStatus
+    || application.affiliation !== candidate.affiliation
   ) return false;
   return choicesMatch(data, application, candidate);
 };
@@ -440,7 +441,7 @@ const choicesMatch = (data: DatabaseState, application: Application, candidate: 
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 };
 
-const findEnrollmentCourse = (data: DatabaseState, candidate: EnrollmentCandidate): string | null => {
+const findEnrollment = (data: DatabaseState, candidate: EnrollmentCandidate): { courseName: string; affiliation: string | null } | null => {
   const semester = semesters(data).find(({ nameKey: key }) => key === nameKey(candidate.semesterName));
   const member = members(data).find(({ nameKey: key }) => key === nameKey(candidate.memberName));
   if (!semester || !member) return null;
@@ -451,7 +452,7 @@ const findEnrollmentCourse = (data: DatabaseState, candidate: EnrollmentCandidat
   if (!enrollment) return null;
   const semesterCourse = semesterCourses(data).find(({ id }) => id === enrollment.semesterCourseId);
   const course = semesterCourse && courses(data).find(({ id }) => id === semesterCourse.courseId);
-  return course?.name ?? null;
+  return course ? { courseName: course.name, affiliation: enrollment.affiliation } : null;
 };
 
 const nameKey = (value: string): string => value.trim().normalize('NFC');

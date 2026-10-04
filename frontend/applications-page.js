@@ -27,6 +27,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
       const row = document.createElement('tr');
       row.append(
         cell(item.memberName),
+        cell(item.affiliation ?? '—'),
         cell(item.semesterName),
         cell(String(item.applicationOrder)),
         choicesCell(item.choices),
@@ -73,6 +74,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     const previous = container.lastElementChild;
     row.querySelector('[name="semesterName"]').value = item.semesterName ?? previous?.querySelector('[name="semesterName"]').value ?? '';
     row.querySelector('[name="memberName"]').value = item.memberName ?? '';
+    row.querySelector('[name="affiliation"]').value = item.affiliation ?? '';
     row.querySelector('[name="applicationOrder"]').value = item.applicationOrder ?? '';
     const choices = row.querySelector('.choice-fields');
     for (const choice of item.choices ?? [{}]) addChoice(choices, choice);
@@ -122,6 +124,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     const items = [...byId('application-entry-rows').children].map((entry) => ({
       semesterName: entry.querySelector('[name="semesterName"]').value,
       memberName: entry.querySelector('[name="memberName"]').value,
+      affiliation: entry.querySelector('[name="affiliation"]').value.trim() || null,
       applicationOrder: Number(entry.querySelector('[name="applicationOrder"]').value),
       choices: [...entry.querySelector('.choice-fields').children].map((row) => ({
         courseName: row.querySelector('[name="courseName"]').value,

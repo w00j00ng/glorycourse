@@ -100,6 +100,28 @@ test('requires idempotency keys on irreversible commits', () => {
   }
 });
 
+test('accepts optional student affiliation on each manual input and rejects invalid values', () => {
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const rootId = 'https://glorycourse.local/affiliation-openapi.json';
+  addFormats(ajv);
+  ajv.addSchema({ ...api, $id: rootId }, rootId);
+  const cases = [
+    { schema: 'CreateApplicationRequest', input: { semesterName: '봄', memberName: '홍길동', applicationOrder: 1, choices: [{ courseName: '기초', preference: 1 }] } },
+    { schema: 'EnrollmentPreviewRequest', input: { action: 'CREATE', semesterName: '봄', memberName: '홍길동', courseName: '기초' } },
+    { schema: 'AddManualDraftItemRequest', input: { expectedDraftRevision: 0, memberName: '홍길동', semesterCourseId: 'course-1' } },
+    { schema: 'UpdateDraftItemRequest', input: { expectedDraftRevision: 0, finalDecision: 'REJECTED', finalSemesterCourseId: null, finalReasonCode: null, finalReasonDetail: null } },
+  ];
+  for (const { schema, input } of cases) {
+    const validate = ajv.getSchema(`${rootId}#/components/schemas/${schema}`);
+    for (const { affiliation, expected } of [
+      { affiliation: '청년부', expected: true }, { affiliation: null, expected: true },
+      { affiliation: '', expected: true }, { affiliation: 42, expected: false },
+      { affiliation: '가'.repeat(201), expected: false },
+    ]) assert.equal(validate({ ...input, affiliation }), expected, `${schema}: ${JSON.stringify(validate.errors)}`);
+    assert.equal(validate(input), true);
+  }
+});
+
 test('describes manual member assignment inputs and validation issues', () => {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   addFormats(ajv);

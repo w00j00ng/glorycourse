@@ -1,5 +1,48 @@
 # 문서 검증 및 개정 기록
 
+## 2026-10-04 학생 소속과 기본 4순위 개정
+
+기준은 `feat/student-affiliation` 작업 브랜치의 변경사항이며, 기준 커밋은 `d1620bf`다. 기능·문서 개정 이후 PR·릴리즈 준비에서 앱·lockfile·OpenAPI 버전을 `0.2.2`로 맞췄다. 이 기록은 기능 구현·반복 검토와 그에 따른 문서 개정 결과이며 공개 Release·고객 PC의 배포 검증 결과가 아니다. 아래 2026-10-03 기록은 당시 근거와 수치를 보존한다.
+
+저장소의 README와 `docs/` Markdown 12개, OpenAPI 설명을 대조했다. 이번 기능과 관련된 현재 안내를 개정하고 의존성과 과거 측정값은 유지했다. 후속 리팩터링·조회 이관 계획에는 기록별 소속을 보존하는 조건을 추가했다.
+
+| 문서 | 이번 개정 내용 |
+| --- | --- |
+| [README](../README.md) | 기본 4순위·선택 5순위, 소속 선택 입력·시점별 보존과 현황 파일·재등록 안내 |
+| [사용 설명서](usage.md) | 소속 컬럼의 Excel 예시, 직접 입력·초안 수정·자동 복원 시 소속 유지·확정 검토, 신청 교체와 이력 소속 충돌·현황 다운로드 |
+| [문제 해결](troubleshooting.md) | 기본 양식의 열 이름·버전 2 호환, 소속 충돌 해결과 기존 초안·이력이 소급 갱신되지 않는 이유 |
+| [개발 환경](development.md) | 목표 DB 버전·nullable 컬럼·회원 테이블 제외, 소속 기능과 지연 응답의 회귀 검사 범위 |
+| [계약 결정 기록](contract-decisions.md#c-14-학생-소속의-시점별-보관) | 다섯 캐싱 컬럼, 독립된 기록 간 복사, 수정 시 생략/null/공란·자동 복원 시 소속 유지, fingerprint·revision·digest·Excel 충돌 |
+| [Excel 등록 검토 규칙](excel-import-review-design.md) | 신청·이력 버전 3, 소속 없는 버전 2, 원본 버전 기록과 빈 원본 파일 내보내기의 범위 |
+| [배포 관리자 안내](releasing.md) | 4순위·소속 전달·구양식·기존 DB·Excel 재등록 점검과 Release에 기록할 형식 변경 |
+| [저장소 전체 처리 점검](storage-full-operation-plan.md) | 기존 행·스냅샷을 보존하는 학생 소속 migration과 상세 계약 연결 |
+| [프로젝트 점검 기록](maintenance-review.md) | 기존 결과를 당시 기록으로 유지하고 이번 변경·검증 기록으로 연결 |
+| [저장·화면 분할 계획](refactoring-plan.md) | 후속 변경에서도 기록별 소속과 기존 null 스냅샷의 fingerprint를 보존하는 조건 |
+| [Store.read 사용처 제거 계획](store-read-removal-plan.md) | 조회 이관에서 각 기록의 소속을 회원·현재 신청 값으로 대체하지 않는 조건 |
+| [OpenAPI](../openapi/openapi.yaml) | 기본 4순위·현황 소속·버전 2 호환·소속 충돌·초안 생성/수정/자동 복원/확정의 소속 처리 설명 |
+
+### 구현 근거
+
+- [양식 구현](../backend/src/excel/workbooks.ts)의 기본 희망 열은 4개, 최대는 5개다. 신청·이력 기본 양식 버전은 모두 `3`이며 소속 없는 버전 `2`를 읽는다.
+- [migration](../schema/migrations/1791072000_add_student_affiliation.sql)과 [manifest](../schema/migrations/manifest.json)는 6개 이력·목표 DB 버전 `1791072000`을 선언한다. 이전 SQL과 checksum은 유지하며 다섯 업무·스냅샷 테이블에 nullable `affiliation`을 추가한다. 회원 테이블에는 추가하지 않는다.
+- [스냅샷](../backend/src/allocation/snapshot.ts)·[초안](../backend/src/services/drafts.ts)·[확정](../backend/src/services/finalization.ts)은 신청 소속을 초안에, 저장된 초안 소속을 이력에 복사한다. 원본 수정은 기존 기록을 덮어쓰지 않는다. null 소속의 기존 fingerprint도 유지한다.
+- [신청](../backend/src/services/applications.ts)·[이력](../backend/src/services/enrollments.ts)·초안 수정 API는 소속 생략 시 기존 값을 유지하고 명시적 null·공란으로 비운다. [OpenAPI](../openapi/openapi.yaml)의 nullable·200자 계약과 일치한다.
+- [가져오기 검토](../backend/src/services/import-preview.ts)·[반영](../backend/src/services/import-commit.ts)은 원본 `templateVersion`을 보관·반영 기록에 유지한다. 소속만 달라도 신청 충돌이며 기존 이력과 소속이 다르면 전체 반영을 막는다.
+
+### 검증 범위
+
+같은 작업 브랜치에서 문서 개정 직전 수행한 기능 구현·보완 검증은 Windows의 임시 합성 자료 기준이다. `npm run verify`의 기능·계약 253개, 강제 종료 복구 2개, 실행기 5개와 `npm run test:browser`의 Chromium 흐름 35개가 통과했다. 보완 후 독립 검토의 관련 테스트 59개도 통과했으며 추가 차단 사항은 발견되지 않았다.
+
+이번 문서 개정에서는 제품 코드·의존성·DB·버전을 추가 변경하지 않았다. 추가 대조에서 API 다운로드 설명과 자동 복원 시 소속 유지 안내를 보완하고 저장·조회 개선 계획도 갱신했다. Markdown 13개와 로컬 링크 117개, 표의 열 수, 생성된 오프라인 HTML 두 개의 링크·앵커·소속·4순위 안내를 확인했다. `npm run docs:html`·`npm run test:openapi`·`git diff --check`가 통과했으며 OpenAPI의 설명·요약을 제외한 요청·응답 구조는 수정 전과 같음을 비교했다. SQL 변경도 다시 확인하여 `npm run migrations:check`의 migration 6개와 실제 SQLite 저장·재시작을 포함한 통합 테스트 9개가 통과했다. 패키지·공개 Release·원격 CI·실제 고객 자료·GUI 첫 실행·성능·커버리지는 이번 문서 개정의 검증 범위에 포함하지 않는다.
+
+### v0.2.2 게시 전 확인
+
+릴리즈 준비에서 앱·lockfile·OpenAPI를 `0.2.2`로 맞추고 전체 검증을 다시 수행했다. `npm run verify`의 기능·계약 253개, 강제 종료 복구 2개, 실행기 5개와 Chromium 흐름 35개가 통과했다. `npm run package`·`npm run test:package`로 Windows x64 압축본의 파일 무결성·동봉 Node·실행기·기본 4순위와 소속 양식·소속의 Excel 재등록·재시작 보존을 확인했다. 압축본에는 새 소속 SQL migration도 포함된다.
+
+이 압축본은 커밋 전 로컬 검증용이며 `dirty: true`다. 고객 Release에 그대로 사용하지 않는다. PR 병합 후 공개할 `main` 커밋에 `v0.2.2` 태그를 붙이고 그 태그의 세 OS 패키지 CI와 사용자 PC 첫 실행을 확인한다. 이번 게시 준비에서는 태그·초안 Release·공개 Release를 생성하지 않는다.
+
+## 이전 검토: 2026-10-03
+
 검토일: 2026-10-03 (한국 시간). 기준은 작업 브랜치 `fix/npm-start-node-runtime`의 `b9db3c9`와 앱 버전 `0.2.0`이다. 기본 브랜치의 최근 구현 `09b64ef`를 포함하며, 이번 작업의 문서 수정은 해당 커밋 위에 적용했다. 공개 Release나 원격 브랜치의 최신 상태를 검증한 기록은 아니다.
 
 ## 분석 범위

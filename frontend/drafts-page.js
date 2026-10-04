@@ -105,13 +105,13 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, loadCatalog
     else await load();
   };
 
-  /** @param {DraftItem} item @param {string} semesterCourseId */
-  const saveDraftItem = async (item, semesterCourseId) => {
+  /** @param {DraftItem} item @param {string} semesterCourseId @param {string | null} [affiliation] */
+  const saveDraftItem = async (item, semesterCourseId, affiliation = item.affiliation) => {
     if (!state.draft) return;
     const { id, revision } = state.draft.draft;
     await run(() => api(`/allocation-drafts/${id}/items/${item.memberId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ expectedDraftRevision: revision, ...draftFinalSelection(item, semesterCourseId) }),
+      body: JSON.stringify({ expectedDraftRevision: revision, affiliation: affiliation?.trim() || null, ...draftFinalSelection(item, semesterCourseId) }),
     }), `${item.memberNameAtGeneration}님의 최종 결정을 저장했습니다.`);
     await refreshAfterItemChange(id);
   };
@@ -131,13 +131,17 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, loadCatalog
     if (!state.draft) return;
     const member = byId('draft-add-member');
     const course = byId('draft-add-course');
-    if (!member.reportValidity() || !course.reportValidity()) return;
+    const affiliation = byId('draft-add-affiliation');
+    if (!member.reportValidity() || !course.reportValidity() || !affiliation.reportValidity()) return;
     const memberName = member.value;
+    const affiliationValue = affiliation.value;
     const { id, revision } = state.draft.draft;
     await run(() => api(`/allocation-drafts/${id}/items`, {
-      method: 'POST', body: JSON.stringify({ expectedDraftRevision: revision, memberName, semesterCourseId: course.value }),
+      method: 'POST', body: JSON.stringify({ expectedDraftRevision: revision, memberName, affiliation: affiliationValue.trim() || null, semesterCourseId: course.value }),
     }), '회원을 수동 초안에 배정했습니다.');
-    if (state.draft?.draft.id === id && member.value === memberName) member.value = '';
+    if (state.draft?.draft.id === id && member.value === memberName && affiliation.value === affiliationValue) {
+      member.value = ''; affiliation.value = '';
+    }
     await Promise.all([refreshAfterItemChange(id), loadCatalogs()]);
   };
 

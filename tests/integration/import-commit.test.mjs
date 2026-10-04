@@ -44,6 +44,10 @@ const workbookWithRows = async (kind, rows, { includeCourseContext = true } = {}
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await createImportTemplate(kind));
   const sheet = workbook.getWorksheet(kind === 'APPLICATIONS' ? '수강신청' : '수강이력');
+  workbook.getWorksheet('메타').getCell('B1').value = '2';
+  sheet.getRow(1).values = kind === 'APPLICATIONS'
+    ? ['학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌']
+    : ['학기명', '회원명', '강좌명', '관리자 메모'];
   if (kind === 'APPLICATIONS') {
     if (rows.some((row) => row.length > 6)) sheet.getCell('G1').value = '4순위 강좌';
     if (rows.some((row) => row.length > 7)) sheet.getCell('H1').value = '5순위 강좌';
@@ -63,14 +67,14 @@ const applicationWorkbookWithContext = async ({ semesterRows, courseRows, applic
   await workbook.xlsx.load(await createImportTemplate('APPLICATIONS'));
   for (const row of semesterRows) workbook.getWorksheet('학기').addRow(row);
   for (const row of courseRows) workbook.getWorksheet('개설강좌').addRow(row);
-  for (const row of applicationRows) workbook.getWorksheet('수강신청').addRow(row);
+  for (const [semester, member, ...values] of applicationRows) workbook.getWorksheet('수강신청').addRow([semester, member, null, ...values]);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
 
 const enrollmentWorkbookWithContext = async (rows, courses = []) => {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await createImportTemplate('ENROLLMENTS'));
-  workbook.getWorksheet('수강이력').addRows(rows);
+  workbook.getWorksheet('수강이력').addRows(rows.map(([semester, member, ...values]) => [semester, member, null, ...values]));
   workbook.getWorksheet('개설강좌').addRows(courses);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
@@ -791,7 +795,7 @@ const storeWithPriorEnrollment = () => ({
     { id: 'new-advanced', semesterId: 'semester-new', courseId: 'course-advanced', capacity: 10, createdAt: now().toISOString(), updatedAt: now().toISOString() },
   ],
   enrollments: [{
-    id: 'enrollment-old', semesterCourseId: 'old-basic', memberId: 'member-1',
+    id: 'enrollment-old', semesterCourseId: 'old-basic', memberId: 'member-1', affiliation: null,
     exceptionAcknowledgement: null, revision: 0,
     createdAt: now().toISOString(), updatedAt: now().toISOString(),
   }],

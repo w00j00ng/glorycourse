@@ -88,6 +88,75 @@ test('an administrator uses aligned form controls and selects a page size with t
   await expect(pageSize).toHaveValue('20');
 });
 
+test('an administrator keeps student affiliations separate for each application, draft and enrollment', async ({ page, app }) => {
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#new-enrollment').click();
+  await page.locator('#enrollment-form [data-input-warnings-toggle]').check();
+  const history = page.locator('#enrollment-entry-rows > fieldset');
+  await history.locator('[name="semesterName"]').fill('지난 학기');
+  await history.locator('[name="memberName"]').fill('김가나');
+  await history.getByRole('textbox', { name: '학생 소속' }).fill('청소년부');
+  await history.locator('[name="newCourseName"]').fill('옛 강좌');
+  await page.locator('#enrollment-form [type="submit"]').click();
+  await expect(page.locator('#enrollment-rows')).toContainText('청소년부');
+
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await page.locator('#new-application').click();
+  await page.locator('#add-application-entry').click();
+  for (const [index, semesterName, affiliation] of [[0, '배정 학기', '청년부'], [1, '다음 학기', '대학부']]) {
+    const entry = page.locator('#application-entry-rows > fieldset').nth(index);
+    await entry.locator('[name="semesterName"]').fill(semesterName);
+    await entry.locator('[name="memberName"]').fill('김가나');
+    await entry.getByRole('textbox', { name: '학생 소속' }).fill(affiliation);
+    await entry.locator('[name="applicationOrder"]').fill('1');
+    await entry.locator('[name="courseName"]').fill('창세기');
+  }
+  await page.locator('#application-form [type="submit"]').click();
+  await page.locator('#application-semester-filter').selectOption('');
+  await expect(page.locator('#application-rows tr').filter({ hasText: '배정 학기' })).toContainText('청년부');
+  await expect(page.locator('#application-rows tr').filter({ hasText: '다음 학기' })).toContainText('대학부');
+
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  await page.locator('#new-draft').click();
+  await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: '배정 학기' });
+  await page.locator('#draft-create-form [name="mode"]').selectOption('MANUAL');
+  await page.locator('#draft-create-form [type="submit"]').click();
+  const draftStudent = page.locator('#draft-item-rows tr').filter({ hasText: '김가나' });
+  await expect(draftStudent.getByRole('textbox', { name: '김가나 학생 소속' })).toHaveValue('청년부');
+  await draftStudent.getByRole('textbox', { name: '김가나 학생 소속' }).fill('사역팀');
+  const finalCourse = draftStudent.getByRole('combobox', { name: '김가나 최종 배정' });
+  await finalCourse.focus();
+  await finalCourse.selectOption({ index: 1 });
+  await draftStudent.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(draftStudent.getByRole('textbox', { name: '김가나 학생 소속' })).toHaveValue('사역팀');
+  await page.locator('#draft-add-member').fill('박다라');
+  await page.locator('#draft-add-affiliation').fill('소그룹');
+  await page.locator('#draft-add-course').selectOption({ index: 1 });
+  await page.locator('#draft-add-item').click();
+  await expect(page.locator('#draft-item-rows tr')).toHaveCount(2);
+  await page.locator('#preview-finalization').click();
+  await expect(page.locator('#finalize-enrollments')).toContainText('사역팀');
+  await expect(page.locator('#finalize-enrollments')).toContainText('소그룹');
+  await page.locator('#finalize-draft').click();
+  await expect(page.locator('#finalize-dialog')).toBeHidden();
+
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#enrollment-semester-filter').selectOption('');
+  await expect(page.locator('#enrollment-rows tr').filter({ hasText: '지난 학기' })).toContainText('청소년부');
+  const finalizedStudent = page.locator('#enrollment-rows tr').filter({ hasText: '김가나' }).filter({ hasText: '배정 학기' });
+  await expect(finalizedStudent).toContainText('사역팀');
+  await finalizedStudent.getByRole('button', { name: '수정', exact: true }).click();
+  await expect(page.locator('#enrollment-entry-rows [name="affiliation"]')).toHaveValue('사역팀');
+  await page.locator('#enrollment-entry-rows [name="affiliation"]').fill('');
+  await page.locator('#enrollment-form [type="submit"]').click();
+  await expect(finalizedStudent.locator('td').nth(2)).toHaveText('—');
+
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await page.locator('#application-semester-filter').selectOption('');
+  await expect(page.locator('#application-rows tr').filter({ hasText: '배정 학기' })).toContainText('청년부');
+  await expect(page.locator('#application-rows tr').filter({ hasText: '다음 학기' })).toContainText('대학부');
+});
+
 test('an administrator toggles button help across pages and newly rendered controls', async ({ page, app }) => {
   const helpToggle = page.getByRole('checkbox', { name: '버튼 도움말 표시', exact: true });
   await expect(helpToggle).toBeChecked();
@@ -158,8 +227,8 @@ test('an administrator stores enrollment notes and capacities in Excel and impor
   const [template] = await Promise.all([page.waitForEvent('download'), page.locator('#enrollment-template').click()]);
   const templateBytes = await readFile(await template.path());
   const workbook = await app.inspectEnrollmentWorkbook(templateBytes);
-  expect(workbook.version).toBe('2');
-  expect(workbook.headers).toEqual(['학기명', '회원명', '강좌명', '관리자 메모']);
+  expect(workbook.version).toBe('3');
+  expect(workbook.headers).toEqual(['학기명', '회원명', '학생 소속', '강좌명', '관리자 메모']);
   const note = 'Excel에 보관한 메모\n<img src=x onerror=alert(1)>';
   const input = await app.completeEnrollmentTemplate(templateBytes, [['2028 가을', '홍길동', '창세기', note]], [['2028 가을', '창세기', 20]]);
   const upload = async (bytes) => {
@@ -181,7 +250,7 @@ test('an administrator stores enrollment notes and capacities in Excel and impor
   const saved = await readFile(await download.path());
   const exported = await app.inspectEnrollmentWorkbook(saved);
   expect(exported.courses).toEqual([['2028 가을', '창세기', '20']]);
-  expect(exported.enrollments).toEqual([['2028 가을', '홍길동', '창세기', note]]);
+  expect(exported.enrollments).toEqual([['2028 가을', '홍길동', null, '창세기', note]]);
   await page.locator('#enrollment-semester-filter').selectOption({ label: '2028 가을' });
   page.once('dialog', (dialog) => { void dialog.accept('2028 가을'); });
   await page.locator('#delete-semester-enrollments').click();
@@ -634,7 +703,7 @@ test('an administrator reviews a completed application template before importing
   ]);
   const completed = await app.completeApplicationTemplate(await readFile(await download.path()));
   expect([completed.semesterName, completed.courseName, completed.capacity]).toEqual(['양식 학기', '창세기', 2]);
-  expect(completed.headers).toEqual(['학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌']);
+  expect(completed.headers).toEqual(['학기명', '회원명', '학생 소속', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌']);
 
   await page.locator('#applications-view .import-open').click();
   await page.locator('#import-form [name="file"]').setInputFiles({
@@ -646,6 +715,7 @@ test('an administrator reviews a completed application template before importing
   await expect(page.locator('#import-source-count')).toHaveText('1');
   await expect(page.locator('#import-insert-count')).toHaveText('1');
   await expect(page.locator('#import-candidates')).toContainText('양식 회원');
+  await expect(page.locator('#import-candidates')).toContainText('학생 소속: 양식 소속');
   await expect(page.locator('#import-candidates')).toContainText('창세기');
   await expect(page.locator('#import-candidates')).toContainText('4순위 마태복음');
   await expect(page.locator('#import-candidates')).toContainText('5순위 마가복음');
@@ -655,6 +725,7 @@ test('an administrator reviews a completed application template before importing
   await page.locator('#import-dialog .close-dialog').first().click();
   await expect(page.locator('#application-rows tr')).toHaveCount(1);
   await expect(page.locator('#application-rows')).toContainText('양식 회원');
+  await expect(page.locator('#application-rows')).toContainText('양식 소속');
   await expect(page.locator('#application-rows')).toContainText('4순위 마태복음');
   await expect(page.locator('#application-rows')).toContainText('5순위 마가복음');
   await page.locator('#applications-view .import-open').click();

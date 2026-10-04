@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import ExcelJS from '@excel.js/exceljs';
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, '../..');
@@ -40,7 +41,7 @@ const api = async (path, options = {}, status = 200) => {
   return response.headers.get('content-type')?.includes('json') ? response.json() : Buffer.from(await response.arrayBuffer());
 };
 const post = (path, value, status = 200) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) }, status);
-const application = (memberName) => ({ semesterName: '2033 봄', memberName, applicationOrder: 1, choices: [{ courseName: '연기', preference: 1 }] });
+const application = (memberName) => ({ semesterName: '2033 봄', memberName, affiliation: '청년부', applicationOrder: 1, choices: [{ courseName: '연기', preference: 1 }] });
 
 try {
   await mkdir(unpacked);
@@ -59,6 +60,8 @@ try {
   const userGuide = await readFile(join(top, '사용설명서.html'), 'utf8');
   const troubleshooting = await readFile(join(top, '문제해결.html'), 'utf8');
   assert.match(userGuide, /한 학기 따라 하기/);
+  assert.match(userGuide, /학생 소속/);
+  assert.match(userGuide, /4순위/);
   assert.match(userGuide, /href="문제해결\.html"/);
   assert.match(troubleshooting, /브라우저가 열리지 않음/);
   assert.match(troubleshooting, /href="사용설명서\.html"/);
@@ -66,6 +69,7 @@ try {
   assert.equal(release.migrationManifestSha256, createHash('sha256').update(migrationManifest).digest('hex'));
   assert.equal(release.databaseVersion, String(JSON.parse(migrationManifest).targetVersion));
   assert.ok(Object.keys(manifest.files).some((name) => /(^|\/)schema\/migrations\/1790294400_init\.sql$/.test(name)));
+  assert.ok(Object.keys(manifest.files).some((name) => /(^|\/)schema\/migrations\/1791072000_add_student_affiliation\.sql$/.test(name)));
   assert.ok(Object.keys(manifest.files).every((name) => !/^migrations\//.test(name)));
   for (const [name, hash] of Object.entries(manifest.files)) {
     assert.equal(createHash('sha256').update(await readFile(join(top, name))).digest('hex'), hash, name);
@@ -82,6 +86,16 @@ try {
   assert.match(page, /프로그램 종료/);
   const savedApplication = await post('/applications', application('배포 보존 회원'), 201);
   const semesterId = savedApplication.semesterId;
+  assert.equal(savedApplication.affiliation, '청년부');
+  const templates = [
+    { path: `/applications/template?semesterId=${semesterId}`, sheet: '수강신청', expected: ['학기명', '회원명', '학생 소속', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌'] },
+    { path: '/enrollments/template', sheet: '수강이력', expected: ['학기명', '회원명', '학생 소속', '강좌명', '관리자 메모'] },
+  ];
+  for (const { path, sheet, expected } of templates) {
+    const template = new ExcelJS.Workbook();
+    await template.xlsx.load(await api(path));
+    assert.deepEqual(template.getWorksheet(sheet).getRow(1).values.slice(1), expected);
+  }
   await api(`/semesters/${semesterId}/context`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expectedRevision: 1, order: 1, semesterCourses: [{ courseName: '연기', capacity: 20 }] }),
@@ -95,7 +109,7 @@ try {
   const importPreview = await api('/imports/preview', { method: 'POST', body: form });
   assert.ok(importPreview);
   const review = await post('/enrollments/preview', {
-    action: 'CREATE', semesterName: '2033 봄', memberName: '배포 보존 회원', courseName: '연기',
+    action: 'CREATE', semesterName: '2033 봄', memberName: '배포 보존 회원', affiliation: '사역팀', courseName: '연기',
   });
   const enrollment = await post('/enrollments', {
     preparedActionToken: review.preparedActionToken, acknowledgedWarningDigest: review.warningDigest,
@@ -122,9 +136,9 @@ try {
         warningDigest: historyPreview.warningDigest, acknowledgementNote: '',
       })) }),
   });
-  assert.deepEqual((await api('/enrollments')).items.map(({ memberName, courseName, exceptionAcknowledgement }) => (
-    [memberName, courseName, exceptionAcknowledgement.note]
-  )), [['배포 보존 회원', '연기', 'Excel에 보관할 메모']]);
+  assert.deepEqual((await api('/enrollments')).items.map(({ memberName, affiliation, courseName, exceptionAcknowledgement }) => (
+    [memberName, affiliation, courseName, exceptionAcknowledgement.note]
+  )), [['배포 보존 회원', '사역팀', '연기', 'Excel에 보관할 메모']]);
   assert.equal((await api(`/semesters/${semesterId}/context`)).semesterCourses.find(({ id }) => id === enrollment.semesterCourseId).capacity, 20);
   await api('/backups', {}, 404);
   assert.deepEqual((await api('/applications')).items.map((item) => item.memberName), ['배포 보존 회원']);
@@ -138,7 +152,8 @@ try {
   await launch('start');
   await connect();
   assert.notEqual(running.instanceId, first);
-  assert.deepEqual((await api('/applications')).items.map((item) => item.memberName), ['배포 보존 회원']);
+  assert.deepEqual((await api('/applications')).items.map(({ memberName, affiliation }) => [memberName, affiliation]), [['배포 보존 회원', '청년부']]);
+  assert.equal((await api('/enrollments')).items[0].affiliation, '사역팀');
   assert.equal((await api('/enrollments')).items[0].exceptionAcknowledgement.note, 'Excel에 보관할 메모');
   await launch('stop');
   await assert.rejects(readFile(join(directory, '.glorycourse.lock')), { code: 'ENOENT' });

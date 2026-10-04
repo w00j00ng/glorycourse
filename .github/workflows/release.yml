@@ -77,7 +77,7 @@ jobs:
 
           공개 전 확인: 실제 Windows 11, macOS 15 Apple Silicon, Ubuntu 24.04 GNOME에서 다운로드 후 첫 실행과 종료를 확인하고 이 문단을 검증 결과로 교체하세요. macOS 서명·공증 전에는 시험 배포입니다. 자동 테스트 통과만으로 GUI 지원이 검증되지는 않습니다.
 
-          업데이트: 현재 자료 백업 → 프로그램 종료 → 새 폴더에 압축 해제 → 시작 → 기존 자료 확인.
+          업데이트: 신청·수강이력 현황 Excel 보관 → 프로그램 종료 → 새 폴더에 압축 해제 → 시작 → 기존 자료 확인.
           NOTES
           if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > draft-state.txt; then
             test "$(cat draft-state.txt)" = true || { echo 'Published release will not be modified'; exit 1; }

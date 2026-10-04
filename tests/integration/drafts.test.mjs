@@ -58,7 +58,7 @@ const fixture = () => ({
   applications: [stamped({
     id: 'application-1',
     semesterId: 'semester-1',
-    memberId: 'member-1',
+    memberId: 'member-1', affiliation: null,
     applicationOrder: 1,
     applicationOrderStatus: 'NORMAL',
     orderResolution: 'SOURCE_AGREED',
@@ -183,7 +183,7 @@ test('deletes an archived draft without deleting enrollments', async (t) => {
     draft.status = 'ARCHIVED';
     draft.revision = 1;
     data.enrollments.push(stamped({
-      id: 'enrollment-1', semesterCourseId: 'sc-a', memberId: 'member-2',
+      id: 'enrollment-1', semesterCourseId: 'sc-a', memberId: 'member-2', affiliation: null,
       exceptionAcknowledgement: null, revision: 0,
     }));
   });
@@ -259,7 +259,7 @@ test('builds an empty manual draft by existing and new member names, then finali
 
 test('rejects invalid manual member additions without partial changes and explains the problem', async (t) => {
   const data = fixture();
-  data.enrollments.push(stamped({ id: 'enrolled', semesterCourseId: 'sc-b', memberId: 'member-2', revision: 0, exceptionAcknowledgement: null }));
+  data.enrollments.push(stamped({ id: 'enrolled', semesterCourseId: 'sc-b', memberId: 'member-2', affiliation: null, revision: 0, exceptionAcknowledgement: null }));
   const { service, store } = await temporaryService(t, data);
   const manual = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
   const auto = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
@@ -296,7 +296,7 @@ test('keeps a previously saved member without an application available for draft
   const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   await store.write({}, (data) => {
     data.allocationDraftItems.push({
-      ...data.allocationDraftItems[0], id: 'legacy-item', memberId: 'member-2',
+      ...data.allocationDraftItems[0], id: 'legacy-item', memberId: 'member-2', affiliation: null,
       memberNameAtGeneration: '김영희', sourceApplicationId: null,
       autoDecision: 'NOT_EVALUATED', autoSemesterCourseId: null, autoReasonCode: 'MANUAL_ONLY',
       autoReasonDetail: { preferenceAttempts: [], fallback: null },
@@ -318,12 +318,12 @@ test('keeps a previously saved member without an application available for draft
 
 test('reports current semester enrollment members even when their history was registered after draft creation', async (t) => {
   const data = fixture();
-  data.enrollments.push(stamped({ id: 'existing-history', semesterCourseId: 'sc-b', memberId: 'member-2', revision: 0, exceptionAcknowledgement: null }));
+  data.enrollments.push(stamped({ id: 'existing-history', semesterCourseId: 'sc-b', memberId: 'member-2', affiliation: null, revision: 0, exceptionAcknowledgement: null }));
   const { service, store } = await temporaryService(t, data);
   const created = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
   assert.deepEqual(created.currentEnrolledMembers, [{ id: 'member-2', name: '김영희' }]);
   await store.write({}, (candidate) => {
-    candidate.enrollments.push(stamped({ id: 'later-history', semesterCourseId: 'sc-a', memberId: 'member-1', revision: 0, exceptionAcknowledgement: null }));
+    candidate.enrollments.push(stamped({ id: 'later-history', semesterCourseId: 'sc-a', memberId: 'member-1', affiliation: null, revision: 0, exceptionAcknowledgement: null }));
   });
   const detail = service.get(created.draft.id);
   assert.deepEqual(detail.currentEnrolledMembers, [{ id: 'member-1', name: '홍길동' }, { id: 'member-2', name: '김영희' }]);
@@ -354,14 +354,14 @@ test('uses a semantic fingerprint, preserves deleted-source evidence, and replay
     data.enrollments.push(stamped({
       id: 'unrelated-enrollment',
       semesterCourseId: 'sc-other',
-      memberId: 'member-2',
+      memberId: 'member-2', affiliation: null,
       exceptionAcknowledgement: null,
       revision: 0,
     }));
     data.enrollments.push(stamped({
       id: 'applicant-future-enrollment',
       semesterCourseId: 'sc-other',
-      memberId: 'member-1',
+      memberId: 'member-1', affiliation: null,
       exceptionAcknowledgement: null,
       revision: 0,
     }));
@@ -378,7 +378,7 @@ test('uses a semantic fingerprint, preserves deleted-source evidence, and replay
     data.enrollments.push(stamped({
       id: 'related-past-enrollment',
       semesterCourseId: 'sc-past',
-      memberId: 'member-1',
+      memberId: 'member-1', affiliation: null,
       exceptionAcknowledgement: null,
       revision: 0,
     }));

@@ -38,6 +38,57 @@ const withRowDocument = async (action) => {
   try { return await action(); } finally { globalThis.document = previousDocument; }
 };
 
+test('saving a draft course keeps its cached affiliation unless the administrator changes it', async () => {
+  const requests = [];
+  const state = { draft: { draft: { id: 'draft', revision: 3 } }, drafts: [], pagination: { draft: { total: 0 } } };
+  const page = createDraftsPage({
+    state, byId: () => ({ open: false, replaceChildren() {} }), run: (action) => action(),
+    api: async (_path, options) => { requests.push(JSON.parse(options.body)); },
+    loadPaged: async () => [],
+  });
+  const item = { memberId: 'member', memberNameAtGeneration: '김가나', affiliation: '신청 당시 소속',
+    autoDecision: 'SELECTED', autoSemesterCourseId: 'course-1' };
+
+  await page.saveDraftItem(item, 'course-2');
+  await page.saveDraftItem(item, 'course-2', '수정한 소속');
+  await page.saveDraftItem(item, 'course-2', '   ');
+
+  assert.deepEqual(requests.map(({ affiliation }) => affiliation), ['신청 당시 소속', '수정한 소속', null]);
+  assert.deepEqual(requests.map(({ finalSemesterCourseId }) => finalSemesterCourseId), ['course-2', 'course-2', 'course-2']);
+});
+
+test('manual draft addition preserves affiliation entered while saving the previous input', async () => {
+  const cases = [
+    { afterSubmit: '청년부', expectedAffiliation: '', expectedMember: '' },
+    { afterSubmit: '대학부', expectedAffiliation: '대학부', expectedMember: '홍길동' },
+  ];
+  for (const { afterSubmit, expectedAffiliation, expectedMember } of cases) {
+    const nodes = new Map([
+      ['draft-add-member', { value: '홍길동', reportValidity: () => true }],
+      ['draft-add-course', { value: 'course', reportValidity: () => true }],
+      ['draft-add-affiliation', { value: '청년부', reportValidity: () => true }],
+    ]);
+    const byId = (id) => {
+      if (!nodes.has(id)) nodes.set(id, { open: false, replaceChildren() {} });
+      return nodes.get(id);
+    };
+    let complete;
+    let request;
+    const page = createDraftsPage({
+      state: { draft: { draft: { id: 'draft', revision: 3 } }, drafts: [], pagination: { draft: { total: 0 } } },
+      byId, run: (action) => action(), loadPaged: async () => [], loadCatalogs: async () => {},
+      api: (_path, options) => { request = JSON.parse(options.body); return new Promise((resolve) => { complete = resolve; }); },
+    });
+    const saving = page.addManualDraftItem();
+    assert.equal(request.affiliation, '청년부');
+    byId('draft-add-affiliation').value = afterSubmit;
+    complete();
+    await saving;
+    assert.equal(byId('draft-add-affiliation').value, expectedAffiliation);
+    assert.equal(byId('draft-add-member').value, expectedMember);
+  }
+});
+
 test('reloads imported records using the catalog and filters shown to the user', async () => {
   const oldSemester = { id: 'old', name: 'Old semester', order: 1 };
   const newSemester = { id: 'new', name: 'New semester', order: 2 };

@@ -8,6 +8,7 @@
     "id": "application-1",
     "semesterId": "semester-1",
     "memberId": "member-1",
+    "affiliation": null,
     "applicationOrder": null,
     "applicationOrderStatus": "NORMAL",
     "orderResolution": "SOURCE_AGREED",

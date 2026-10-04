@@ -140,6 +140,7 @@ export const createApiRouter = (store: Store): ApiHandler => {
       return xlsx(await exportApplicationRows(items.flatMap((item) => item.choices.map((choice) => ({
         semesterName: item.semesterName,
         memberName: item.memberName,
+        affiliation: item.affiliation,
         applicationOrder: item.applicationOrder,
         courseName: choice.courseName,
         preference: choice.preference,
@@ -529,7 +530,7 @@ const enrollmentWorkbook = (
     })),
     ...items.map((item, index) => ({
       sheet: '수강이력', row: index + 2,
-      cells: { 학기명: item.semesterName, 회원명: item.memberName, 강좌명: item.courseName, '관리자 메모': item.exceptionAcknowledgement?.note ?? '' },
+      cells: { 학기명: item.semesterName, 회원명: item.memberName, '학생 소속': item.affiliation, 강좌명: item.courseName, '관리자 메모': item.exceptionAcknowledgement?.note ?? '' },
     })),
   ]);
 };

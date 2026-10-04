@@ -22,8 +22,9 @@ type PreviewInput = {
   semesterName: string;
   memberName: string;
   courseName: string;
+  affiliation?: string | null;
 };
-type CleanInput = PreviewInput & { semesterName: string; memberName: string; courseName: string };
+type CleanInput = PreviewInput & { semesterName: string; memberName: string; courseName: string; affiliation: string | null };
 export type EnrollmentIssue = {
   code: string;
   message: string;
@@ -42,11 +43,11 @@ type TokenPayload = {
   expiresAt: string;
   warningDigest: string;
 };
-type BatchInput = Pick<PreviewInput, 'semesterName' | 'memberName' | 'courseName'>;
+type BatchInput = Pick<PreviewInput, 'semesterName' | 'memberName' | 'courseName' | 'affiliation'>;
 type BatchTokenPayload = Omit<TokenPayload, 'input'> & { kind: 'BATCH_CREATE'; inputs: BatchInput[] };
 
 export type EnrollmentView = Pick<Enrollment,
-  'id' | 'semesterCourseId' | 'memberId' | 'exceptionAcknowledgement' | 'revision'
+  'id' | 'semesterCourseId' | 'memberId' | 'affiliation' | 'exceptionAcknowledgement' | 'revision'
 > & {
   semesterName: string;
   courseName: string;
@@ -130,6 +131,9 @@ export class EnrollmentService {
     const clean = validateInput(input);
     const data = this.store.enrollmentData();
     validateTarget(data, clean);
+    if (input.action === 'UPDATE' && input.affiliation === undefined) {
+      clean.affiliation = enrollments(data).find((item) => item.id === clean.enrollmentId)!.affiliation;
+    }
     const issues = enrollmentIssues(data, clean);
     const warningDigest = digestEnrollmentWarnings(issues);
     const expiresAt = new Date(
@@ -385,13 +389,17 @@ const validateInput = (input: PreviewInput): CleanInput => {
   const semesterName = cleanName(input.semesterName, 'semesterName');
   const memberName = cleanName(input.memberName, 'memberName');
   const courseName = cleanName(input.courseName, 'courseName');
+  if (input.affiliation != null && (typeof input.affiliation !== 'string' || input.affiliation.trim().length > 200)) {
+    throw new EnrollmentValidationError('학생 소속은 200자 이내로 입력하세요.');
+  }
+  const affiliation = input.affiliation?.trim() || null;
   if (input.action !== 'CREATE') {
     if (!input.enrollmentId) throw new EnrollmentValidationError('enrollmentId is required');
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision! < 0) {
       throw new EnrollmentValidationError('expectedRevision must be a non-negative safe integer');
     }
   }
-  return { ...input, semesterName, memberName, courseName };
+  return { ...input, semesterName, memberName, courseName, affiliation };
 };
 
 const validateTarget = (data: EnrollmentData, input: CleanInput): void => {
@@ -494,6 +502,7 @@ const applyEnrollmentChange = (
       id: id(),
       semesterCourseId: semesterCourse.id,
       memberId: member.id,
+      affiliation: input.affiliation,
       exceptionAcknowledgement: acknowledgement,
       revision: 0,
       createdAt: now,
@@ -507,6 +516,7 @@ const applyEnrollmentChange = (
   if (!current) throw new EnrollmentNotFoundError();
   current.semesterCourseId = semesterCourse.id;
   current.memberId = member.id;
+  current.affiliation = input.affiliation;
   current.exceptionAcknowledgement = acknowledgement;
   current.revision += 1;
   current.updatedAt = now;
@@ -526,6 +536,7 @@ const enrollmentView = (data: EnrollmentData, enrollment: Enrollment): Enrollmen
     semesterName: semester.name,
     courseName: course.name,
     memberName: member.name,
+    affiliation: enrollment.affiliation,
     exceptionAcknowledgement: enrollment.exceptionAcknowledgement,
     revision: enrollment.revision,
   };
@@ -594,7 +605,7 @@ const validateBatchInput = (inputs: BatchInput[]): BatchInput[] => {
     try {
       if (!input || typeof input !== 'object') throw new EnrollmentValidationError('이력 행이 올바르지 않습니다.');
       const clean = validateInput({ ...input, action: 'CREATE' });
-      return { semesterName: clean.semesterName, memberName: clean.memberName, courseName: clean.courseName };
+      return { semesterName: clean.semesterName, memberName: clean.memberName, courseName: clean.courseName, affiliation: clean.affiliation };
     } catch (error) {
       const message = `${index + 1}행: ${error instanceof Error ? error.message : '입력을 확인하세요.'}`;
       throw Object.assign(new EnrollmentValidationError(message), {
@@ -609,7 +620,7 @@ export const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], 
   const issues: EnrollmentIssue[] = [];
   const items: EnrollmentView[] = [];
   for (const [index, input] of inputs.entries()) {
-    const clean: CleanInput = { ...input, action: 'CREATE' };
+    const clean = validateInput({ ...input, action: 'CREATE' });
     const rowIssues = enrollmentIssues(data, clean).map((issue) => ({
       ...issue,
       detail: { rowNumber: index + 1 },
@@ -622,7 +633,7 @@ export const applyBatchCandidate = (data: EnrollmentData, inputs: BatchInput[], 
   if (!issues.some(({ severity }) => severity === 'ERROR')) {
     // Earlier semesters may appear later in the request; check retakes against the complete candidate.
     items.forEach((item, index) => {
-      const retake = enrollmentIssues(data, { ...inputs[index]!, action: 'UPDATE', enrollmentId: item.id })
+      const retake = enrollmentIssues(data, { ...inputs[index]!, affiliation: inputs[index]!.affiliation ?? null, action: 'UPDATE', enrollmentId: item.id })
         .find(({ code }) => code === 'RETAKE');
       if (retake && !issues.some(({ code, detail }) => code === 'RETAKE' && detail.rowNumber === index + 1)) {
         issues.push({ ...retake, detail: { rowNumber: index + 1 } });

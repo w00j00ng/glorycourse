@@ -702,7 +702,7 @@ test('creates and edits a draft, then replays finalization after the draft is re
   assert.equal(report.bytes.subarray(0, 2).toString('ascii'), 'PK');
   const reportWorkbook = new ExcelJS.Workbook();
   await reportWorkbook.xlsx.load(report.bytes);
-  assert.deepEqual(reportWorkbook.getWorksheet('수강이력').getRow(1).values.slice(1), ['학기명', '회원명', '강좌명', '관리자 메모']);
+  assert.deepEqual(reportWorkbook.getWorksheet('수강이력').getRow(1).values.slice(1), ['학기명', '회원명', '학생 소속', '강좌명', '관리자 메모']);
   assert.equal(reportWorkbook.getWorksheet('개설강좌').getCell('C2').text, '1');
   const currentReport = JSON.parse((await call(runtime.origin, reportStatusPath,
     { headers: { 'X-Glorycourse-Session': restartedSession.token } })).text);
@@ -922,7 +922,7 @@ test('sorts filtered enrollment history before pagination and exports the same o
   assert.equal(exported.status, 200);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(exported.bytes);
-  assert.deepEqual(workbook.getWorksheet('수강이력').getSheetValues().slice(2).map((row) => row.slice(1, 4)), [requests[3], requests[1]].map(key));
+  assert.deepEqual(workbook.getWorksheet('수강이력').getSheetValues().slice(2).map((row) => [row[1], row[2], row[4]]), [requests[3], requests[1]].map(key));
   for (const path of ['/enrollments', '/enrollments/export']) {
     const invalid = await call(runtime.origin, `/api/v1${path}?sort=UNKNOWN`, { headers });
     assert.equal(invalid.status, 400);
@@ -1019,12 +1019,12 @@ test('exports distinct course capacities and enrollment notes within the selecte
     assert.equal(response.status, 200);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(response.bytes);
-    assert.equal(workbook.getWorksheet('메타').getCell('B1').text, '2');
+    assert.equal(workbook.getWorksheet('메타').getCell('B1').text, '3');
     return workbook;
   };
   const all = await download();
-  assert.deepEqual(all.getWorksheet('수강이력').getRow(1).values.slice(1), ['학기명', '회원명', '강좌명', '관리자 메모']);
-  assert.equal(all.getWorksheet('수강이력').getCell('D2').text, note);
+  assert.deepEqual(all.getWorksheet('수강이력').getRow(1).values.slice(1), ['학기명', '회원명', '학생 소속', '강좌명', '관리자 메모']);
+  assert.equal(all.getWorksheet('수강이력').getCell('E2').text, note);
   const courses = all.getWorksheet('개설강좌');
   assert.deepEqual([2, 3, 4].map((row) => courses.getRow(row).values.slice(1)), [
     ['2028 가을', '창세기', '20'], ['2028 가을', '마가복음', '0'], ['2028 가을', '미정 강좌', '미정'],

@@ -33,6 +33,7 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     const previous = container.lastElementChild;
     row.querySelector('[name="semesterName"]').value = item.semesterName ?? previous?.querySelector('[name="semesterName"]').value ?? '';
     row.querySelector('[name="memberName"]').value = item.memberName ?? '';
+    row.querySelector('[name="affiliation"]').value = item.affiliation ?? '';
     configureEnrollmentCourse(row, item.courseName ?? (previous ? enrollmentCourseName(previous) : ''));
     const remove = row.querySelector('.remove-entry');
     remove.hidden = editing;
@@ -118,6 +119,7 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
       row.append(
         cell(item.semesterName),
         cell(item.memberName),
+        cell(item.affiliation ?? '—'),
         cell(item.courseName),
         noteCell(item.exceptionAcknowledgement),
         actionsCell(
@@ -160,6 +162,7 @@ export const createEnrollmentsPage = ({ state, byId, showMessage, api, run, down
     const items = [...byId('enrollment-entry-rows').children].map((entry) => ({
       semesterName: entry.querySelector('[name="semesterName"]').value,
       memberName: entry.querySelector('[name="memberName"]').value,
+      affiliation: entry.querySelector('[name="affiliation"]').value.trim() || null,
       courseName: enrollmentCourseName(entry),
     }));
     submit.disabled = true;

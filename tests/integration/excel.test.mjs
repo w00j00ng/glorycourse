@@ -46,6 +46,10 @@ const workbookWithRows = async (kind, rows) => {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await createImportTemplate(kind));
   const sheet = workbook.getWorksheet(kind === 'APPLICATIONS' ? '수강신청' : '수강이력');
+  workbook.getWorksheet('메타').getCell('B1').value = '2';
+  sheet.getRow(1).values = kind === 'APPLICATIONS'
+    ? ['학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌']
+    : ['학기명', '회원명', '강좌명', '관리자 메모'];
   if (kind === 'APPLICATIONS') {
     if (rows.some((row) => row.length > 6)) sheet.getCell('G1').value = '4순위 강좌';
     if (rows.some((row) => row.length > 7)) sheet.getCell('H1').value = '5순위 강좌';
@@ -67,9 +71,9 @@ test('creates name-based templates and exports formula-looking names as text', a
 
   assert.deepEqual(template.worksheets.map(({ name }) => name), ['메타', '학기', '개설강좌', '수강신청']);
   assert.deepEqual(template.getWorksheet('수강신청').getRow(1).values.slice(1), [
-    '학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌',
+    '학기명', '회원명', '학생 소속', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌',
   ]);
-  assert.equal(template.getWorksheet('메타').getCell('B1').text, '2');
+  assert.equal(template.getWorksheet('메타').getCell('B1').text, '3');
   assert.equal(template.getWorksheet('메타').getCell('B2').text, 'APPLICATIONS');
   assert.deepEqual(template.getWorksheet('학기').getRow(2).values.slice(1), ['2027 봄', 3]);
   assert.deepEqual(template.getWorksheet('개설강좌').getRow(2).values.slice(1), ['2027 봄', '발성', 12]);
@@ -87,7 +91,7 @@ test('creates name-based templates and exports formula-looking names as text', a
   }]));
   assert.equal(exported.getWorksheet('수강신청').getCell('B2').value, '=2+2');
   assert.equal(exported.getWorksheet('수강신청').getCell('B2').formula, undefined);
-  assert.equal(exported.getWorksheet('수강신청').getCell('D2').formula, undefined);
+  assert.equal(exported.getWorksheet('수강신청').getCell('E2').formula, undefined);
 });
 
 test('exports one row per semester and member with course columns in preference order', async () => {
@@ -109,12 +113,12 @@ test('exports one row per semester and member with course columns in preference 
   await workbook.xlsx.load(await exportApplicationRows(request, contexts));
   const sheet = workbook.getWorksheet('수강신청');
   const expected = [
-    ['2026 봄', '홍길동', 1, '기초', null, null, null, '심화'],
-    ['2026 봄', '김은혜', 2, '합창', null, null, null, null],
-    ['2026 가을', '홍길동', 1, null, null, '합창', null, null],
+    ['2026 봄', '홍길동', null, 1, '기초', null, null, null, '심화'],
+    ['2026 봄', '김은혜', null, 2, '합창', null, null, null, null],
+    ['2026 가을', '홍길동', null, 1, null, null, '합창', null, null],
   ];
   assert.equal(sheet.rowCount, 4);
-  assert.deepEqual(expected.map((_, index) => Array.from({ length: 8 }, (_, column) => (
+  assert.deepEqual(expected.map((_, index) => Array.from({ length: 9 }, (_, column) => (
     sheet.getRow(index + 2).getCell(column + 1).value
   ))), expected);
   assert.deepEqual(workbook.getWorksheet('학기').getSheetValues().slice(2).map((row) => row.slice(1)), [
@@ -381,12 +385,33 @@ test('stages only raw rows, survives restart, and re-previews an original export
   assert.equal(restarted.getStaged(staged.id).rawRows[0].cells['신청순서'], '0015');
   const currentPreview = restarted.repreviewStaged(staged.id);
   assert.equal(currentPreview.applications[0].applicationOrder, 15);
+  assert.equal(currentPreview.templateVersion, '2');
 
   const originalExport = await restarted.exportStagedOriginal(staged.id);
   const roundTrip = await restarted.preview({
     filename: 'original-export.xlsx', bytes: originalExport, kind: 'APPLICATIONS',
   });
   assert.deepEqual(roundTrip.rawRows, preview.rawRows);
+  assert.equal(roundTrip.templateVersion, '2');
+});
+
+test('staging an empty legacy workbook preserves its version and legacy headers on original export', async () => {
+  const cases = [
+    { kind: 'APPLICATIONS', sheet: '수강신청', headers: ['학기명', '회원명', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌'] },
+    { kind: 'ENROLLMENTS', sheet: '수강이력', headers: ['학기명', '회원명', '강좌명', '관리자 메모'] },
+  ];
+  for (const { kind, sheet, headers } of cases) {
+    const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+    const service = serviceFor(store);
+    const bytes = await workbookWithRows(kind, []);
+    const preview = await service.preview({ filename: '기존 빈 양식.xlsx', bytes, kind });
+    const staged = await service.stage(preview.previewId);
+    assert.equal(staged.templateVersion, '2');
+    const exported = new ExcelJS.Workbook();
+    await exported.xlsx.load(await service.exportStagedOriginal(staged.id));
+    assert.equal(exported.getWorksheet('메타').getCell('B1').text, '2');
+    assert.deepEqual(exported.getWorksheet(sheet).getRow(1).values.slice(1), headers);
+  }
 });
 
 test('reports two enrollment rows for one member and semester as a blocking conflict', async () => {

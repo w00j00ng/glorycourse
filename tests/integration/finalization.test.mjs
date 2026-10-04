@@ -82,7 +82,7 @@ test('requires the exact warning digest and rejects a changed preview without pa
     id: 'sc-past', semesterId: 'semester-0', courseId: 'course-a', capacity: 1,
   }));
   data.enrollments.push(stamped({
-    id: 'past-enrollment', semesterCourseId: 'sc-past', memberId: 'member-1',
+    id: 'past-enrollment', semesterCourseId: 'sc-past', memberId: 'member-1', affiliation: null,
     exceptionAcknowledgement: null, revision: 0,
   }));
   const store = await Store.open(new MemoryAdapter(data), data);
@@ -309,7 +309,7 @@ const fixture = () => ({
     stamped({ id: 'sc-b', semesterId: 'semester-1', courseId: 'course-b', capacity: 1 }),
   ],
   applications: [stamped({
-    id: 'application-1', semesterId: 'semester-1', memberId: 'member-1', applicationOrder: 1,
+    id: 'application-1', semesterId: 'semester-1', memberId: 'member-1', affiliation: null, applicationOrder: 1,
     applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null, revision: 0,
   })],
   applicationChoices: [stamped({
