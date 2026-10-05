@@ -10,7 +10,7 @@ type Application = {
   id: string;
   semesterId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   applicationOrder: number | null;
   applicationOrderStatus: 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
 };
@@ -20,7 +20,7 @@ type Choice = {
   semesterCourseId: string;
   preference: number | null;
 };
-type Enrollment = { id: string; semesterCourseId: string; memberId: string; affiliation: string | null };
+type Enrollment = { id: string; semesterCourseId: string; memberId: string; ministry: string | null };
 
 export type FingerprintPolicy = {
   policyId: string;
@@ -70,7 +70,7 @@ export const buildAllocationSnapshot = (
       id: item.id,
       memberId: item.memberId,
       memberName: requireById(members, item.memberId, 'Member').name,
-      affiliation: item.affiliation,
+      ministry: item.ministry,
       applicationOrder: item.applicationOrder,
       applicationOrderStatus: item.applicationOrderStatus,
     })).sort(byId),
@@ -107,7 +107,7 @@ export const buildAllocationSnapshot = (
         id: item.id,
         memberId: item.memberId,
         memberName: requireMap(memberById, item.memberId, 'Member').name,
-        affiliation: item.affiliation,
+        ministry: item.ministry,
         semesterCourseId: item.semesterCourseId,
       }];
     }).sort(byId),
@@ -137,7 +137,7 @@ export const allocationInputChanges = (
   return changes;
 };
 
-// Null affiliations are omitted below to retain fingerprints from pre-affiliation drafts.
+// Keep the v0.2.2 hash serialization keys and omit null ministries so existing draft fingerprints stay valid.
 const semanticInput = (snapshot: AllocationSnapshot, policy: FingerprintPolicy) => ({
   semester: semesterInput(snapshot),
   semesterCourses: courseInput(snapshot),
@@ -166,7 +166,7 @@ const applicationInput = (snapshot: AllocationSnapshot) => ({
     memberId: item.memberId,
     applicationOrder: item.applicationOrder,
     applicationOrderStatus: item.applicationOrderStatus,
-    affiliation: item.affiliation ?? undefined,
+    affiliation: item.ministry ?? undefined,
   })).sort(byId),
   choices: snapshot.choices.map((item) => ({
     id: item.id,
@@ -186,7 +186,7 @@ const existingInput = ({ existingEnrollments }: AllocationSnapshot) => existingE
   id: item.id,
   memberId: item.memberId,
   semesterCourseId: item.semesterCourseId,
-  affiliation: item.affiliation ?? undefined,
+  affiliation: item.ministry ?? undefined,
 })).sort(byId);
 
 const requireById = <T extends { id: string }>(items: T[], id: string, label: string): T => {

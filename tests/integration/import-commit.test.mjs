@@ -795,7 +795,7 @@ const storeWithPriorEnrollment = () => ({
     { id: 'new-advanced', semesterId: 'semester-new', courseId: 'course-advanced', capacity: 10, createdAt: now().toISOString(), updatedAt: now().toISOString() },
   ],
   enrollments: [{
-    id: 'enrollment-old', semesterCourseId: 'old-basic', memberId: 'member-1', affiliation: null,
+    id: 'enrollment-old', semesterCourseId: 'old-basic', memberId: 'member-1', ministry: null,
     exceptionAcknowledgement: null, revision: 0,
     createdAt: now().toISOString(), updatedAt: now().toISOString(),
   }],

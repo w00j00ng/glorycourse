@@ -14,4 +14,6 @@
 
 학생 소속 migration `1791072000`은 신청·초안 항목·이력과 두 종류의 배정 스냅샷에 nullable 컬럼만 추가한다. 기존 행은 소속 null로 유지하며 스냅샷이나 전체 테이블을 재작성하지 않는다. 기존 null 소속의 fingerprint는 유지되고 회원 자료에서 소속을 관리하지 않는다. 상세 컬럼과 수정 범위는 [학생 소속 계약](contract-decisions.md#c-14-학생-소속의-시점별-보관)에 있다.
 
+명칭 변경 migration `1791158400`은 이 다섯 컬럼을 `ministry`로 바꾸며 테이블의 기존 행·스냅샷을 다시 삽입하지 않는다. 기존 문자열·null 값과 fingerprint를 보존하고 공개한 migration 이력은 변경하지 않는다.
+
 내부 검증 기준: 후보의 회원 한 명만 달라질 때 다른 행에 삭제 방지 트리거를 걸어도 성공하고, 재시작 후 자료가 일치해야 한다. 이전 상태가 없는 덮어쓰기 시도는 자료를 바꾸지 않아야 한다. 기존 `tests/integration/sqlite-incremental.test.mjs`·`store.test.mjs`·`recovery.test.mjs`·`migrations.test.mjs`로 변경 행 저장·실패 복구·안전 사본을 확인한다. 현재 시험 결과는 [문서 검증 및 개정 기록](documentation-review.md)에 기록한다.

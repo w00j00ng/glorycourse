@@ -304,7 +304,7 @@ const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseN
   state, byId, fillSelect, cell, actionsCell, policyName,
   renderPagination: (name) => renderPagination(name),
   fillDatalist: (id, items) => fillDatalist(id, items),
-  saveDraftItem: (item, courseId, affiliation) => saveDraftItem(item, courseId, affiliation),
+  saveDraftItem: (item, courseId, ministry) => saveDraftItem(item, courseId, ministry),
   restoreDraftItem: (item) => restoreDraftItem(item),
 });
 
@@ -513,6 +513,7 @@ try {
   const session = await api('/session', { method: 'POST' });
   state.token = session.token;
   const runtime = await api('/runtime');
+  byId('app-version').textContent = `v${runtime.version}`;
   byId('data-directory').textContent = runtime.dataDirectory;
   byId('data-directory').title = `Glorycourse ${runtime.version}`;
   setStatus('저장됨');

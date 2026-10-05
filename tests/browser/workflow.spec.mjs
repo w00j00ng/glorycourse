@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test as base, expect } from '@playwright/test';
 
 const serverScript = fileURLToPath(new URL('./server.mjs', import.meta.url));
+const { version } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
 const test = base.extend({
   app: async ({ page }, use) => {
@@ -67,6 +68,22 @@ const test = base.extend({
   },
 });
 
+test('an administrator sees the running app version across pages, screen sizes and reloads', async ({ page, app }) => {
+  const expectedVersion = `v${version}`;
+  const displayedVersion = page.locator('.topbar #app-version');
+  for (const width of [1280, 560]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const name of ['홈', '학기·강좌 관리', '수강신청', '배정초안', '수강이력']) {
+      await page.getByRole('button', { name, exact: true }).click();
+      await expect(displayedVersion).toHaveText(expectedVersion);
+      await expect(displayedVersion).toBeInViewport();
+    }
+  }
+  await page.reload();
+  await expect(displayedVersion).toHaveText(expectedVersion);
+  await expect(displayedVersion).toBeInViewport();
+});
+
 test('an administrator uses aligned form controls and selects a page size with the keyboard', async ({ page, app }) => {
   await page.getByRole('button', { name: '수강신청', exact: true }).click();
   const fields = ['#application-semester-filter', '#application-member-search', '#application-course-filter', '#application-sort'];
@@ -88,7 +105,7 @@ test('an administrator uses aligned form controls and selects a page size with t
   await expect(pageSize).toHaveValue('20');
 });
 
-test('an administrator keeps student affiliations separate for each application, draft and enrollment', async ({ page, app }) => {
+test('an administrator keeps student ministries separate for each application, draft and enrollment', async ({ page, app }) => {
   await page.getByRole('button', { name: '수강이력', exact: true }).click();
   await page.locator('#new-enrollment').click();
   await page.locator('#enrollment-form [data-input-warnings-toggle]').check();
@@ -103,11 +120,11 @@ test('an administrator keeps student affiliations separate for each application,
   await page.getByRole('button', { name: '수강신청', exact: true }).click();
   await page.locator('#new-application').click();
   await page.locator('#add-application-entry').click();
-  for (const [index, semesterName, affiliation] of [[0, '배정 학기', '청년부'], [1, '다음 학기', '대학부']]) {
+  for (const [index, semesterName, ministry] of [[0, '배정 학기', '청년부'], [1, '다음 학기', '대학부']]) {
     const entry = page.locator('#application-entry-rows > fieldset').nth(index);
     await entry.locator('[name="semesterName"]').fill(semesterName);
     await entry.locator('[name="memberName"]').fill('김가나');
-    await entry.getByRole('textbox', { name: '학생 소속' }).fill(affiliation);
+    await entry.getByRole('textbox', { name: '학생 소속' }).fill(ministry);
     await entry.locator('[name="applicationOrder"]').fill('1');
     await entry.locator('[name="courseName"]').fill('창세기');
   }
@@ -130,7 +147,7 @@ test('an administrator keeps student affiliations separate for each application,
   await draftStudent.getByRole('button', { name: '저장', exact: true }).click();
   await expect(draftStudent.getByRole('textbox', { name: '김가나 학생 소속' })).toHaveValue('사역팀');
   await page.locator('#draft-add-member').fill('박다라');
-  await page.locator('#draft-add-affiliation').fill('소그룹');
+  await page.locator('#draft-add-ministry').fill('소그룹');
   await page.locator('#draft-add-course').selectOption({ index: 1 });
   await page.locator('#draft-add-item').click();
   await expect(page.locator('#draft-item-rows tr')).toHaveCount(2);
@@ -146,8 +163,8 @@ test('an administrator keeps student affiliations separate for each application,
   const finalizedStudent = page.locator('#enrollment-rows tr').filter({ hasText: '김가나' }).filter({ hasText: '배정 학기' });
   await expect(finalizedStudent).toContainText('사역팀');
   await finalizedStudent.getByRole('button', { name: '수정', exact: true }).click();
-  await expect(page.locator('#enrollment-entry-rows [name="affiliation"]')).toHaveValue('사역팀');
-  await page.locator('#enrollment-entry-rows [name="affiliation"]').fill('');
+  await expect(page.locator('#enrollment-entry-rows [name="ministry"]')).toHaveValue('사역팀');
+  await page.locator('#enrollment-entry-rows [name="ministry"]').fill('');
   await page.locator('#enrollment-form [type="submit"]').click();
   await expect(finalizedStudent.locator('td').nth(2)).toHaveText('—');
 

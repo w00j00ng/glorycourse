@@ -46,7 +46,7 @@ export type CreateDraftInput = {
 
 export type DraftItemInput = {
   expectedDraftRevision: number;
-  affiliation?: string | null;
+  ministry?: string | null;
   finalDecision: Decision;
   finalSemesterCourseId: string | null;
   finalReasonCode: string | null;
@@ -56,7 +56,7 @@ export type DraftItemInput = {
 export type AddManualDraftItemInput = {
   expectedDraftRevision: number;
   memberName: string;
-  affiliation?: string | null;
+  ministry?: string | null;
   semesterCourseId: string;
 };
 
@@ -179,14 +179,14 @@ export class DraftService {
       const autoItems = mode === 'AUTO'
         ? allocate(snapshot, policySettings, randomSeed).items
         : manualItems(snapshot);
-      const affiliations = new Map(snapshot.applications.map(({ id, affiliation }) => [id, affiliation]));
+      const ministries = new Map(snapshot.applications.map(({ id, ministry }) => [id, ministry]));
       drafts(data).push(draft);
       draftItems(data).push(...autoItems.map((item) => persistedItem(
         item,
         draft.id,
         this.dependencies.id(),
         now,
-        affiliations.get(item.sourceApplicationId ?? '') ?? null,
+        ministries.get(item.sourceApplicationId ?? '') ?? null,
       )));
       return draft.id;
     });
@@ -303,7 +303,7 @@ export class DraftService {
     if (typeof input.semesterCourseId !== 'string' || !input.semesterCourseId) {
       throw new DraftValidationError('배정할 개설 강좌를 선택하세요.');
     }
-    if (input.affiliation != null && (typeof input.affiliation !== 'string' || input.affiliation.trim().length > 200)) {
+    if (input.ministry != null && (typeof input.ministry !== 'string' || input.ministry.trim().length > 200)) {
       throw new DraftValidationError('학생 소속은 200자 이내로 입력하세요.');
     }
     await this.store.write({}, (data) => {
@@ -323,7 +323,7 @@ export class DraftService {
       }
       draftItems(data).push({
         id: this.dependencies.id(), draftId, memberId: member.id, memberNameAtGeneration: member.name,
-        affiliation: input.affiliation?.trim() || null,
+        ministry: input.ministry?.trim() || null,
         sourceApplicationId: null, autoDecision: 'NOT_EVALUATED', autoSemesterCourseId: null,
         autoReasonCode: 'MANUAL_ONLY', autoReasonDetail: { preferenceAttempts: [], fallback: null },
         finalDecision: 'SELECTED', finalSemesterCourseId: input.semesterCourseId,
@@ -353,7 +353,7 @@ const persistedItem = (
   draftId: string,
   id: string,
   now: string,
-  affiliation: string | null,
+  ministry: string | null,
 ): DraftItemRecord => {
   const manual = item.autoReasonCode === 'MANUAL_ONLY';
   return {
@@ -362,7 +362,7 @@ const persistedItem = (
     memberId: item.memberId,
     sourceApplicationId: item.sourceApplicationId,
     memberNameAtGeneration: item.memberNameAtGeneration,
-    affiliation,
+    ministry,
     autoSemesterCourseId: item.autoSemesterCourseId,
     autoDecision: manual ? 'NOT_EVALUATED' : item.autoDecision,
     autoReasonCode: item.autoReasonCode,
@@ -391,7 +391,7 @@ const validateCreateInput = (input: CreateDraftInput): void => {
 
 const validateItemInput = (input: DraftItemInput): void => {
   requireRevision(input.expectedDraftRevision);
-  if (input.affiliation != null && (typeof input.affiliation !== 'string' || input.affiliation.trim().length > 200)) {
+  if (input.ministry != null && (typeof input.ministry !== 'string' || input.ministry.trim().length > 200)) {
     throw new DraftValidationError('학생 소속은 200자 이내로 입력하세요.');
   }
   if (!['SELECTED', 'REJECTED'].includes(input.finalDecision)) {
@@ -444,7 +444,7 @@ const editableDraft = (data: DatabaseState, id: string, expectedRevision: number
 };
 
 const applyFinal = (item: DraftItemRecord, input: DraftItemInput, now: string): void => {
-  if (input.affiliation !== undefined) item.affiliation = input.affiliation?.trim() || null;
+  if (input.ministry !== undefined) item.ministry = input.ministry?.trim() || null;
   item.finalDecision = input.finalDecision;
   item.finalSemesterCourseId = input.finalSemesterCourseId;
   item.finalReasonCode = input.finalReasonCode;

@@ -21,7 +21,7 @@ export type ApplicationRecord = Timestamped & {
   id: string;
   semesterId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   applicationOrder: number | null;
   applicationOrderStatus: 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
   orderResolution: 'SOURCE_AGREED' | 'ADMIN_CONFIRMED' | 'UNRESOLVED';
@@ -39,7 +39,7 @@ export type EnrollmentRecord = Timestamped & {
   id: string;
   semesterCourseId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   exceptionAcknowledgement: null | { warningDigest: string; note: string; acknowledgedAt: string };
   revision: number;
 };
@@ -105,7 +105,7 @@ export type AllocationDraftItemRecord = {
   id: string;
   draftId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   sourceApplicationId: string | null;
   memberNameAtGeneration: string;
   autoSemesterCourseId: string | null;

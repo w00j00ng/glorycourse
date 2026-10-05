@@ -25,8 +25,8 @@ export const DEFAULT_WORKBOOK_LIMITS: WorkbookLimits = {
 };
 
 const DEFAULT_APPLICATION_CHOICES = 4;
-const applicationHeaders = (choiceCount = DEFAULT_APPLICATION_CHOICES, affiliation = true): string[] => [
-  '학기명', '회원명', ...(affiliation ? ['학생 소속'] : []), '신청순서',
+const applicationHeaders = (choiceCount = DEFAULT_APPLICATION_CHOICES, ministry = true): string[] => [
+  '학기명', '회원명', ...(ministry ? ['학생 소속'] : []), '신청순서',
   ...Array.from({ length: choiceCount }, (_, index) => `${index + 1}순위 강좌`),
 ];
 
@@ -100,7 +100,7 @@ export const createImportTemplate = async (
 export const exportApplicationRows = async (rows: Array<{
   semesterName: string;
   memberName: string;
-  affiliation?: string | null;
+  ministry?: string | null;
   applicationOrder: number | null;
   courseName: string;
   preference: number | null;
@@ -116,7 +116,7 @@ export const exportApplicationRows = async (rows: Array<{
   let choiceColumns = DEFAULT_APPLICATION_CHOICES;
   for (const row of rows) {
     const key = JSON.stringify([row.semesterName, row.memberName]);
-    const values = applications.get(key) ?? [row.semesterName, row.memberName, row.affiliation ?? null, row.applicationOrder, ...Array<string | null>(MAX_CHOICES_PER_APPLICATION).fill(null)];
+    const values = applications.get(key) ?? [row.semesterName, row.memberName, row.ministry ?? null, row.applicationOrder, ...Array<string | null>(MAX_CHOICES_PER_APPLICATION).fill(null)];
     if (row.preference === null || !Number.isInteger(row.preference)
       || row.preference < 1 || row.preference > MAX_CHOICES_PER_APPLICATION || values[row.preference + 3] !== null) {
       throw new WorkbookExportValidationError({
@@ -138,32 +138,32 @@ export const exportApplicationRows = async (rows: Array<{
 export const exportRawRows = async (kind: ImportKind, rows: RawRow[], templateVersion?: string): Promise<Buffer> => {
   const recordSheet = kind === 'APPLICATIONS' ? '수강신청' : '수강이력';
   const recordRows = rows.filter(({ sheet }) => sheet === recordSheet);
-  const affiliation = recordRows.length === 0 ? templateVersion !== '2' : recordRows.some(({ cells }) => '학생 소속' in cells);
-  let choiceColumns = affiliation ? DEFAULT_APPLICATION_CHOICES : 3;
+  const ministry = recordRows.length === 0 ? templateVersion !== '2' : recordRows.some(({ cells }) => '학생 소속' in cells);
+  let choiceColumns = ministry ? DEFAULT_APPLICATION_CHOICES : 3;
   for (const raw of rows) {
     if (kind !== 'APPLICATIONS' || raw.sheet !== '수강신청') continue;
     const headers = Object.keys(raw.cells);
-    const affiliation = '학생 소속' in raw.cells;
-    const count = headers.length - (affiliation ? 4 : 3);
+    const ministry = '학생 소속' in raw.cells;
+    const count = headers.length - (ministry ? 4 : 3);
     if (count < 3 || count > MAX_CHOICES_PER_APPLICATION
-      || applicationHeaders(count, affiliation).some((header) => !(header in raw.cells))) {
+      || applicationHeaders(count, ministry).some((header) => !(header in raw.cells))) {
       throw new WorkbookValidationError([{ code: 'INVALID_HEADERS', message: 'Use the current application template', location: '수강신청!1' }]);
     }
     choiceColumns = Math.max(choiceColumns, count);
   }
   const workbook = new ExcelJS.Workbook();
   await loadWorkbook(workbook, await createImportTemplate(kind));
-  workbook.getWorksheet('메타')!.getCell('B1').value = templateVersion ?? (affiliation ? TEMPLATE_VERSIONS[kind] : '2');
+  workbook.getWorksheet('메타')!.getCell('B1').value = templateVersion ?? (ministry ? TEMPLATE_VERSIONS[kind] : '2');
   if (kind === 'APPLICATIONS') {
     const sheet = workbook.getWorksheet('수강신청')!;
-    sheet.getRow(1).values = applicationHeaders(choiceColumns, affiliation);
-    sheet.columns.forEach((column, index) => { column.width = index === (affiliation ? 3 : 2) ? 12 : 24; });
-  } else if (!affiliation) {
+    sheet.getRow(1).values = applicationHeaders(choiceColumns, ministry);
+    sheet.columns.forEach((column, index) => { column.width = index === (ministry ? 3 : 2) ? 12 : 24; });
+  } else if (!ministry) {
     workbook.getWorksheet('수강이력')!.getRow(1).values = SHEET_HEADERS['수강이력'].filter((header) => header !== '학생 소속');
   }
   for (const raw of rows) {
-    const headers = raw.sheet === '수강신청' ? applicationHeaders(choiceColumns, affiliation)
-      : raw.sheet === '수강이력' && !affiliation ? SHEET_HEADERS['수강이력'].filter((header) => header !== '학생 소속')
+    const headers = raw.sheet === '수강신청' ? applicationHeaders(choiceColumns, ministry)
+      : raw.sheet === '수강이력' && !ministry ? SHEET_HEADERS['수강이력'].filter((header) => header !== '학생 소속')
         : headersFor(raw.sheet);
     const sheet = workbook.getWorksheet(raw.sheet);
     if (!sheet || !headers) continue;
@@ -274,8 +274,8 @@ export const extractRawRows = (workbook: ExcelJS.Workbook, kind: ImportKind): Ra
       }
       continue;
     }
-    const affiliation = sheet.getRow(1).getCell(3).text.trim() === '학생 소속';
-    const choiceCount = sheet.actualColumnCount - (affiliation ? 4 : 3);
+    const ministry = sheet.getRow(1).getCell(3).text.trim() === '학생 소속';
+    const choiceCount = sheet.actualColumnCount - (ministry ? 4 : 3);
     if (sheetName === '수강신청' && choiceCount > MAX_CHOICES_PER_APPLICATION) {
       throw new WorkbookValidationError([{
         code: 'APPLICATION_CHOICE_LIMIT',
@@ -284,8 +284,8 @@ export const extractRawRows = (workbook: ExcelJS.Workbook, kind: ImportKind): Ra
       }]);
     }
     const headers = sheetName === '수강신청'
-      ? applicationHeaders(Math.max(3, choiceCount), affiliation)
-      : sheetName === '수강이력' && !affiliation
+      ? applicationHeaders(Math.max(3, choiceCount), ministry)
+      : sheetName === '수강이력' && !ministry
         ? SHEET_HEADERS['수강이력'].filter((header) => header !== '학생 소속')
         : headersFor(sheetName)!;
     const actualHeaders = headers.map((_, index) => sheet.getRow(1).getCell(index + 1).text.trim());

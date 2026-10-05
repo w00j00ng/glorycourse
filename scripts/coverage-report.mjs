@@ -40,13 +40,24 @@ const summary = [
   '| --- | ---: | ---: | ---: | ---: |',
   ...rows,
   '',
-  ...warnings.flatMap((warning) => [`> ⚠️ ${warning}`, '']),
 ].join('\n');
-await writeFile('coverage/SUMMARY.md', summary);
+const runSummary = [summary, ...warnings.flatMap((warning) => [`> ⚠️ ${warning}`, ''])].join('\n');
+await writeFile('coverage/SUMMARY.md', runSummary);
 for (const warning of warnings) console.log(`::warning title=Coverage below 80 percent::${warning.replaceAll('%', '%25')}`);
 
 const pageDirectory = 'coverage/pages/coverage';
+const readmeDirectory = 'docs/coverage-report';
 await mkdir(pageDirectory, { recursive: true });
+await mkdir(readmeDirectory, { recursive: true });
+await writeFile(`${readmeDirectory}/README.md`, [
+  '# 테스트 커버리지',
+  '',
+  '`npm run test:coverage`로 생성한 이 브랜치의 측정값입니다. 소스·테스트 변경 후 다시 실행하고 이 디렉터리의 배지·요약을 함께 반영하세요. 생성 파일은 직접 편집하지 않습니다.',
+  '',
+  'Node 테스트 기준이며 별도 브라우저 테스트의 실행 줄은 합산하지 않습니다. 최신 CI 측정값과 파일별 결과는 해당 Coverage 실행의 `coverage-report` artifact에서 확인하세요.',
+  '',
+  summary,
+].join('\n'));
 for (const { name, values } of areas) {
   const percent = values.lines.pct.toFixed(2);
   const color = values.lines.pct >= 80 ? '#4c1' : '#fe7d37';
@@ -60,6 +71,7 @@ for (const { name, values } of areas) {
 </svg>
 `;
   await writeFile(`${pageDirectory}/${name.toLowerCase()}.svg`, badge);
+  await writeFile(`${readmeDirectory}/${name.toLowerCase()}.svg`, badge);
 }
 
 const htmlRows = [...areas, { name: '전체 (실행기 포함)', values: report.total }].map(({ name, values }) => (
@@ -73,4 +85,4 @@ const html = `<!doctype html>
 `;
 await writeFile(`${pageDirectory}/index.html`, html);
 await writeFile('coverage/pages/index.html', '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=coverage/"><a href="coverage/">커버리지 보고서 열기</a>\n');
-console.log(summary);
+console.log(runSummary);

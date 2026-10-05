@@ -43,7 +43,7 @@ type DraftItem = {
   id: string;
   draftId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   sourceApplicationId: string | null;
   finalDecision: 'SELECTED' | 'REJECTED';
   finalSemesterCourseId: string | null;
@@ -52,7 +52,7 @@ type EnrollmentRecord = {
   id: string;
   semesterCourseId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   exceptionAcknowledgement: { warningDigest: string; note: string; acknowledgedAt: string } | null;
   revision: number;
   createdAt: string;
@@ -68,7 +68,7 @@ type Candidate = {
 type SelectedItem = {
   draftItemId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   semesterCourseId: string;
   sourceApplicationId: string | null;
 };
@@ -101,7 +101,7 @@ type PreviewEnrollment = {
   semesterName: string;
   courseName: string;
   memberName: string;
-  affiliation: string | null;
+  ministry: string | null;
   exceptionAcknowledgement: null;
   revision: 0;
 };
@@ -410,7 +410,7 @@ const evaluate = (
       id: candidate.id,
       semesterCourseId: item.semesterCourseId,
       memberId: item.memberId,
-      affiliation: item.affiliation,
+      ministry: item.ministry,
       exceptionAcknowledgement: null,
       revision: 0,
       createdAt: '',
@@ -424,7 +424,7 @@ const evaluate = (
       semesterName: semester.name,
       courseName: course.name,
       memberName: member.name,
-      affiliation: record.affiliation,
+      ministry: record.ministry,
       exceptionAcknowledgement: null,
       revision: 0,
     });
@@ -510,7 +510,7 @@ const selectedItems = (data: DatabaseState, draftId: string): SelectedItem[] => 
     .map((item) => ({
       draftItemId: item.id,
       memberId: item.memberId,
-      affiliation: item.affiliation,
+      ministry: item.ministry,
       semesterCourseId: item.finalSemesterCourseId!,
       sourceApplicationId: item.sourceApplicationId,
     }))

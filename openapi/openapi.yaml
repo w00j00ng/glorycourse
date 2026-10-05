@@ -740,7 +740,7 @@ paths:
       tags: [Imports]
       operationId: previewImport
       summary: xlsx를 파싱하고 반영 후보를 계산한다. DB는 변경하지 않는다.
-      description: 신청·이력 버전 3과 소속 열이 없는 버전 2를 지원하며 버전 2의 소속은 null로 읽는다. 소속만 다른 신청도 충돌로 검토한다. 같은 학기·회원·강좌의 기존 이력과 소속이 다르면 ENROLLMENT_AFFILIATION_CONFLICT 오류로 전체 반영을 막는다.
+      description: 신청·이력 버전 3과 소속 열이 없는 버전 2를 지원하며 버전 2의 소속은 null로 읽는다. 소속만 다른 신청도 충돌로 검토한다. 같은 학기·회원·강좌의 기존 이력과 소속이 다르면 ENROLLMENT_MINISTRY_CONFLICT 오류로 전체 반영을 막는다.
       requestBody:
         required: true
         content:
@@ -1587,8 +1587,8 @@ components:
                 type: string
                 minLength: 1
                 maxLength: 200
-              affiliation:
-                $ref: '#/components/schemas/Affiliation'
+              ministry:
+                $ref: '#/components/schemas/Ministry'
               courseName:
                 type: string
                 minLength: 1
@@ -1611,7 +1611,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Enrollment'
-    Affiliation:
+    Ministry:
       type: [string, 'null']
       maxLength: 200
       description: 회원 자료에 저장하지 않고 해당 신청·초안·이력 시점의 값을 독립적으로 보관하는 학생 소속. 선택 입력이며 빈 값은 null로 저장한다. 수정 요청에서 생략하면 기존 값을 유지하고 명시적 null·공란은 비운다.
@@ -1620,8 +1620,8 @@ components:
       additionalProperties: false
       required: [semesterName, memberName, applicationOrder, choices]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         semesterName:
           type: string
           minLength: 1
@@ -1665,10 +1665,10 @@ components:
     Application:
       type: object
       additionalProperties: false
-      required: [id, semesterId, memberId, semesterName, memberName, applicationOrder, applicationOrderStatus, orderResolution, revision, choices, affiliation]
+      required: [id, semesterId, memberId, semesterName, memberName, applicationOrder, applicationOrderStatus, orderResolution, revision, choices, ministry]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         id:
           $ref: '#/components/schemas/Id'
         semesterId:
@@ -1713,10 +1713,10 @@ components:
     Enrollment:
       type: object
       additionalProperties: false
-      required: [id, semesterCourseId, memberId, semesterName, courseName, memberName, exceptionAcknowledgement, revision, affiliation]
+      required: [id, semesterCourseId, memberId, semesterName, courseName, memberName, exceptionAcknowledgement, revision, ministry]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         id:
           $ref: '#/components/schemas/Id'
         semesterCourseId:
@@ -1758,8 +1758,8 @@ components:
       additionalProperties: false
       required: [action, semesterName, memberName, courseName]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         action:
           enum: [CREATE, UPDATE, DELETE]
         enrollmentId:
@@ -2205,10 +2205,10 @@ components:
     AllocationDraftItem:
       type: object
       additionalProperties: false
-      required: [id, memberId, memberNameAtGeneration, autoDecision, autoSemesterCourseId, autoReasonCode, autoReasonDetail, finalDecision, finalSemesterCourseId, finalReasonCode, finalReasonDetail, affiliation]
+      required: [id, memberId, memberNameAtGeneration, autoDecision, autoSemesterCourseId, autoReasonCode, autoReasonDetail, finalDecision, finalSemesterCourseId, finalReasonCode, finalReasonDetail, ministry]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         id:
           $ref: '#/components/schemas/Id'
         memberId:
@@ -2258,12 +2258,12 @@ components:
               type: array
               items:
                 type: object
-                required: [id, applicationOrder, affiliation]
+                required: [id, applicationOrder, ministry]
                 properties:
                   id:
                     $ref: '#/components/schemas/Id'
-                  affiliation:
-                    $ref: '#/components/schemas/Affiliation'
+                  ministry:
+                    $ref: '#/components/schemas/Ministry'
                   applicationOrder:
                     oneOf:
                       - type: integer
@@ -2333,8 +2333,8 @@ components:
       additionalProperties: false
       required: [expectedDraftRevision, memberName, semesterCourseId]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         expectedDraftRevision:
           $ref: '#/components/schemas/SafeInteger'
         memberName:
@@ -2348,8 +2348,8 @@ components:
       additionalProperties: false
       required: [expectedDraftRevision, finalDecision, finalSemesterCourseId, finalReasonCode, finalReasonDetail]
       properties:
-        affiliation:
-          $ref: '#/components/schemas/Affiliation'
+        ministry:
+          $ref: '#/components/schemas/Ministry'
         expectedDraftRevision:
           $ref: '#/components/schemas/SafeInteger'
         finalDecision:

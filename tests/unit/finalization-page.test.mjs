@@ -41,10 +41,10 @@ const withDocument = async (action) => {
   try { await action(); } finally { globalThis.document = previous; }
 };
 
-test('finalization review shows each proposed enrollment affiliation', async () => withDocument(async () => {
+test('finalization review shows each proposed enrollment ministry', async () => withDocument(async () => {
   const { page, nodes } = setup(async () => ({ ...preview, enrollments: [
-    { memberId: 'member-1', memberName: '김가나', courseName: '창세기', affiliation: '청년부' },
-    { memberId: 'member-2', memberName: '박다라', courseName: '마태복음', affiliation: null },
+    { memberId: 'member-1', memberName: '김가나', courseName: '창세기', ministry: '청년부' },
+    { memberId: 'member-2', memberName: '박다라', courseName: '마태복음', ministry: null },
   ] }));
 
   await page.previewFinalization();

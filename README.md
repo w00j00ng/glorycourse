@@ -1,6 +1,6 @@
 # Glorycourse 수강 관리
 
-[![Backend coverage](https://w00j00ng.github.io/glorycourse/coverage/backend.svg)](https://w00j00ng.github.io/glorycourse/coverage/) [![Frontend coverage](https://w00j00ng.github.io/glorycourse/coverage/frontend.svg)](https://w00j00ng.github.io/glorycourse/coverage/)
+[![Backend coverage](docs/coverage-report/backend.svg)](docs/coverage-report/README.md) [![Frontend coverage](docs/coverage-report/frontend.svg)](docs/coverage-report/README.md)
 
 교회에서 학기별 강좌, 수강신청, 배정 결과와 수강이력을 관리하는 프로그램입니다. 자료는 **현재 PC에 저장**됩니다. 별도 서버나 개발 도구를 설치하지 않아도 됩니다. 처음이라면 아래 **다운로드 → 처음 시작하기 → 프로그램 사용 방법** 순서로 읽으세요.
 
@@ -101,7 +101,7 @@ Excel에는 배정초안과 시스템 기록이 포함되지 않습니다. 학�
 
 시작 파일을 다시 실행해 보세요. 종료 중이라는 안내가 나오면 잠시 기다렸다가 실행하세요. 증상별 순서는 [문제 해결](docs/troubleshooting.md)에 있습니다. 해결되지 않으면 [문의 등록](https://github.com/w00j00ng/glorycourse/issues)에 운영체제, 배포 버전, 화면의 오류 문구를 적어 주세요.
 
-배포 폴더의 `release.json`에 버전이 있고(Mac은 앱 패키지 안 `Contents/Resources/app`), 자료 폴더의 `launcher.log`에 실행 기록이 있습니다. 문의에는 학생 명단, 백업 파일, 개인정보를 첨부하지 마세요.
+화면 왼쪽 위 로고 아래의 **v0.x.x**에서 실행 중인 프로그램 버전을 확인할 수 있습니다. 배포 폴더의 `release.json`에도 버전이 있고(Mac은 앱 패키지 안 `Contents/Resources/app`), 자료 폴더의 `launcher.log`에 실행 기록이 있습니다. 문의에는 학생 명단, 백업 파일, 개인정보를 첨부하지 마세요.
 
 ## 문서 안내
 
@@ -118,4 +118,6 @@ Excel에는 배정초안과 시스템 기록이 포함되지 않습니다. 학�
 
 모노레포의 백엔드와 프런트엔드를 따로 집계합니다. 배지는 줄 커버리지를 표시하며, 미실행 파일도 0%로 포함합니다.
 
-기본 브랜치의 성공한 [Coverage CI](https://github.com/w00j00ng/glorycourse/actions/workflows/coverage.yml)가 [현재 커버리지 보고서](https://w00j00ng.github.io/glorycourse/coverage/)와 배지를 갱신합니다. 파일별 결과는 해당 실행의 `coverage-report`에서 확인할 수 있습니다.
+상단 배지는 현재 보고 있는 브랜치에 보관한 [커버리지 측정 요약](docs/coverage-report/README.md)을 표시합니다. 소스·테스트 변경 후 `npm run test:coverage`를 실행하고 생성된 배지·요약도 함께 반영합니다.
+
+브랜치·PR별 최신 [Coverage CI](https://github.com/w00j00ng/glorycourse/actions/workflows/coverage.yml) 측정값과 파일별 결과는 해당 실행의 `coverage-report`에서 확인할 수 있습니다. [GitHub Pages 보고서](https://w00j00ng.github.io/glorycourse/coverage/)는 기본 브랜치의 성공한 CI 결과입니다.

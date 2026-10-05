@@ -13,18 +13,18 @@ import { allocationFingerprint, allocationInputChanges, buildAllocationSnapshot 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const member = { id: 'member-1', name: '이관 회원', nameKey: '이관 회원', createdAt: '2026-09-23T00:00:00.000Z', updatedAt: '2026-09-23T00:00:00.000Z' };
 
-test('reopens independent student affiliations and preserves the draft generation snapshot', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-affiliation-'));
+test('reopens independent student ministries and preserves the draft generation snapshot', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-ministry-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  const initial = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-affiliation.json', import.meta.url), 'utf8'));
+  const initial = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
   const store = await openStore(file, initial);
   assert.deepEqual((await openStore(file, empty)).read(), initial);
 
   await store.write({}, (data) => {
-    data.applications[0].affiliation = 'Changed application school';
-    data.enrollments[0].affiliation = null;
-    data.allocationDraftItems[0].affiliation = null;
+    data.applications[0].ministry = 'Changed application school';
+    data.enrollments[0].ministry = null;
+    data.allocationDraftItems[0].ministry = null;
   });
   const reopened = (await openStore(file, empty)).read();
   assert.deepEqual(reopened, store.read());
@@ -32,33 +32,33 @@ test('reopens independent student affiliations and preserves the draft generatio
   assert.deepEqual(reopened.members, initial.members);
 });
 
-test('detects application and current enrollment affiliation edits after draft generation', async () => {
-  const data = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-affiliation.json', import.meta.url), 'utf8'));
+test('detects application and current enrollment ministry edits after draft generation', async () => {
+  const data = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
   const policy = { policyId: 'policy', policyVersion: '1', settings: data.allocationDrafts[0].policySettings };
   const before = buildAllocationSnapshot(data, 'semester');
-  assert.equal(before.applications[0].affiliation, 'Application school');
-  assert.equal(before.existingEnrollments[0].affiliation, 'Enrollment school');
+  assert.equal(before.applications[0].ministry, 'Application school');
+  assert.equal(before.existingEnrollments[0].ministry, 'Enrollment school');
   for (const [records, expectedCode] of [
     ['applications', 'APPLICATIONS_CHANGED'], ['enrollments', 'EXISTING_ENROLLMENTS_CHANGED'],
   ]) {
     const changed = structuredClone(data);
-    changed[records][0].affiliation = 'Changed school';
+    changed[records][0].ministry = 'Changed school';
     const after = buildAllocationSnapshot(changed, 'semester');
     assert.notEqual(allocationFingerprint(after, policy), allocationFingerprint(before, policy));
     assert.deepEqual(allocationInputChanges(before, after), [{ code: expectedCode }]);
   }
 });
 
-test('retains pre-affiliation fingerprints when an existing draft gains null affiliation fields', async () => {
-  const data = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-affiliation.json', import.meta.url), 'utf8'));
+test('retains pre-ministry fingerprints when an existing draft gains null ministry fields', async () => {
+  const data = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
   const snapshot = data.allocationDrafts[0].inputSnapshot;
-  snapshot.applications[0].affiliation = null;
-  snapshot.existingEnrollments[0].affiliation = null;
+  snapshot.applications[0].ministry = null;
+  snapshot.existingEnrollments[0].ministry = null;
   const policy = { policyId: 'policy', policyVersion: '1', settings: data.allocationDrafts[0].policySettings };
   assert.equal(allocationFingerprint(snapshot, policy), '6b65ce664098c29d9b92b03a3a6723c60c6ce7226190bc72505de1885a977981');
   const legacy = structuredClone(snapshot);
-  delete legacy.applications[0].affiliation;
-  delete legacy.existingEnrollments[0].affiliation;
+  delete legacy.applications[0].ministry;
+  delete legacy.existingEnrollments[0].ministry;
   assert.deepEqual(allocationInputChanges(legacy, snapshot), []);
 });
 
@@ -96,7 +96,7 @@ test('stores business data in explicit relational columns without JSON documents
     }
     assert.deepEqual(
       db.prepare('PRAGMA table_info(enrollments)').all().map(({ name }) => name),
-      ['id', 'position', 'semester_course_id', 'member_id', 'revision', 'created_at', 'updated_at', 'affiliation'],
+      ['id', 'position', 'semester_course_id', 'member_id', 'revision', 'created_at', 'updated_at', 'ministry'],
     );
     assert.ok(db.prepare('PRAGMA foreign_key_list(semester_courses)').all().some(({ table }) => table === 'semesters'));
   } finally { db.close(); }

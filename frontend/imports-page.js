@@ -7,9 +7,9 @@ import { issueText } from './issue-view.js';
  *   sourceRowCount: number, insertCandidates: number, identicalRows: number, conflicts: number, expiresAt: string,
  *   issues: { code: string, severity: 'ERROR' | 'WARNING' | 'INFO', message: string,
  *     blockingStages: string[], source?: { sheet?: string, row?: number, column?: string } }[],
- *   applications: { semesterName: string, memberName: string, affiliation: string | null, applicationOrder: number | null,
+ *   applications: { semesterName: string, memberName: string, ministry: string | null, applicationOrder: number | null,
  *     applicationOrderStatus: string, choices: { courseName: string, preference: number | null }[] }[],
- *   enrollments: { semesterName: string, memberName: string, affiliation: string | null, courseName: string }[],
+ *   enrollments: { semesterName: string, memberName: string, ministry: string | null, courseName: string }[],
  *   contextChanges: { entity: string, status: string, semesterName: string, courseName?: string,
  *     field: string, fileValue: number | null }[],
  * }} ImportPreview
@@ -60,7 +60,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       const title = document.createElement('strong');
       title.textContent = `${candidate.semesterName || '학기 미정'} · ${candidate.memberName || '회원 미정'}`;
       const detail = document.createElement('small');
-      detail.textContent = `학생 소속: ${candidate.affiliation ?? '—'} · ` + ('choices' in candidate
+      detail.textContent = `학생 소속: ${candidate.ministry ?? '—'} · ` + ('choices' in candidate
         ? `신청순서 ${candidate.applicationOrder ?? '미정'} · ${candidate.choices.map(({ courseName, preference }) => `${preference ?? '?'}순위 ${courseName || '강좌 미정'}`).join(', ')}`
         : candidate.courseName || '강좌 미정');
       card.title = `${title.textContent} · ${detail.textContent}`;

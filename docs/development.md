@@ -18,6 +18,7 @@
 | `backend/src/storage/queries/` | 업무 자료를 명시 컬럼과 자식 테이블로 읽고 쓰는 SQL 구현 |
 | `frontend/` | 화면, 메뉴, 도움말, 대시보드 판단과 다운로드 파일명 |
 | `schema/migrations/` | Unix timestamp SQL, manifest와 DB 변경 이력 |
+| `schema/migration_target/schema.sql` | 모든 migration을 적용한 현재 SQLite 전체 DDL |
 | `schema/store-schema.json` | 메모리 내 관계형 상태의 검증 계약 |
 | `openapi/openapi.yaml` | API 계약과 입력 한도 |
 | `tests/` | 사용자 관점 기능·계약·저장·운영 테스트 |
@@ -56,16 +57,20 @@ npm start
 
 DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.sql`과 `schema_migrations`로 관리한다. 업무 자료는 JSON 문서가 아니라 명시 컬럼과 자식 테이블에 저장한다. 실행 전에 이력을 확인하고, 미적용 SQL이 있으면 `update-backups/`에 SQLite 백업을 만든 뒤 한 트랜잭션으로 적용한다. `npm run migrations:manifest`로 manifest를 갱신하고 `npm run migrations:check`로 검증한다. 미배포 개발용 `db.json` 및 이력 테이블이 없는 SQLite DB는 자동 이전하지 않는다.
 
+전체 테이블·인덱스와 제약은 [migration target](../schema/migration_target/schema.sql)에서 확인한다. `npm run migrations:manifest`는 SQL을 메모리 SQLite에 순서대로 적용하고 최종 DDL도 함께 생성한다. `npm run migrations:check`는 manifest와 target이 SQL 이력과 일치하는지 검사하며 `verify`·패키징에도 포함된다. target은 빈 DB의 구조를 확인하기 위한 생성 파일이며 자료·적용 이력 행을 포함하지 않는다. 직접 편집하지 않고 migration을 추가한 뒤 다시 생성한다. 서버의 기존 DB 업데이트는 계속 `schema/migrations/`를 사용한다.
+
+`store-schema.json`은 SQL DDL의 대체 파일이 아니라 메모리 후보 자료의 검증 계약이다. `validate-store.ts`가 실행 시 읽어 전체 자료·변경 행·migration 후 자료를 검증하므로 유지한다. 실제 SQLite 구조는 migration과 target으로 확인한다.
+
 일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성은 빈 테이블에 삽입한다. `Store.read()`는 전체 복제 없이 깊이 동결된 스냅샷을 반환하며, 임시 변경이 필요한 미리보기는 별도 copy-on-write 후보를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색은 자료량에 비례할 수 있다.
 
 1. 기존 최대 버전보다 큰 Unix 초 timestamp로 새 `.sql` 파일을 추가한다. 이미 배포한 파일의 이름·내용은 수정하거나 삭제하지 않는다.
 2. SQL은 UTF-8 BOM 없이 LF 줄바꿈으로 작성한다. 트랜잭션은 실행기가 관리하므로 `BEGIN`·`COMMIT`이나 `schema_migrations` 직접 변경문을 넣지 않는다.
 3. `store.ts`, `store-schema.json`, `storage/queries/`와 필요한 API 계약을 함께 갱신한다. 반복 값은 자식 테이블, 단일 값은 개별 컬럼으로 저장한다.
-4. `npm run migrations:manifest` 후 새 DB 생성·기존 DB 업그레이드·업데이트 안전 사본을 검증하고 `npm run verify`를 실행한다.
+4. `npm run migrations:manifest`로 manifest와 target을 함께 갱신한 뒤 새 DB 생성·기존 DB 업그레이드·업데이트 안전 사본을 검증하고 `npm run verify`를 실행한다.
 
 적용 이력의 checksum 불일치, 누락 또는 실행 프로그램보다 새로운 DB 버전이면 시작을 거절한다. 마이그레이션에 실패하면 변경을 롤백하며, 임의로 이력 값을 고쳐서 우회하지 않는다. 지원하는 자동 다운그레이드는 없다.
 
-학생 소속 추가의 목표 DB 버전은 `1791072000`이며 manifest에는 6개 migration이 있다. [추가 SQL](../schema/migrations/1791072000_add_student_affiliation.sql)은 신청·초안 항목·이력과 신청/동일 학기 이력 스냅샷의 `affiliation` nullable 컬럼을 추가하고 기존 값은 null로 둔다. 회원 테이블에는 추가하지 않는다. 기록 간 복사·수정 API·fingerprint 호환 규칙은 [학생 소속 계약](contract-decisions.md#c-14-학생-소속의-시점별-보관)을 따른다.
+현재 목표 DB 버전은 `1791158400`이며 manifest에는 7개 migration이 있다. [명칭 변경 SQL](../schema/migrations/1791158400_rename_student_ministry.sql)은 신청·초안 항목·이력과 신청/동일 학기 이력 스냅샷의 소속 컬럼을 `ministry`로 바꾸고 기존 문자열·null 값을 유지한다. 이전 소속 추가 SQL과 checksum은 보존하며 회원 테이블에는 추가하지 않는다. 기록 간 복사·수정 API·fingerprint 호환 규칙은 [학생 소속 계약](contract-decisions.md#c-14-학생-소속의-시점별-보관)을 따른다.
 
 ## 화면과 업무 규칙 변경
 
@@ -97,8 +102,9 @@ npm run test:workbook-scale
 - `typecheck`: 백엔드 TypeScript와 `tsconfig.frontend.json`에 열거한 화면·목록·학기/강좌·파일명·경고 표시 모듈의 JavaScript를 `checkJs`로 검사한다. 이 모듈들이 가져오는 도움말·대시보드 판단 모듈도 함께 검사한다. 공통 초기화와 이벤트를 연결하는 `frontend/app.js`는 아직 타입 검사 대상이 아니다.
 - `test:browser`: 별도 임시 자료 폴더에서 실제 Chromium을 열어 신청 양식 다운로드·Excel 반영, 과거 수강이력 일괄 등록, 소속·메모 수정과 Excel 정원·소속·메모 재등록, 강좌 편집값 보존 정렬과 수강이력 전체 정렬·페이지·Excel, 초안 최종 결정 저장·자동 복원·정원 현황과 확정, 대량 초안 페이지 처리를 검증한다. 최초 실행 전 `npx playwright install chromium --only-shell`로 브라우저를 설치한다. CI도 같은 테스트를 별도 작업으로 실행한다.
 - `test:coverage`: `verify`를 [c8](https://github.com/bcoe/c8)으로 실행해 `coverage/index.html`, `coverage/lcov.info`, `coverage/coverage-summary.json`과 요약을 생성한다. 백엔드 전체, 프런트엔드 JavaScript 전체, `launcher.mjs`와 `runtime-paths.mjs`가 대상이다. 별도로 실행하는 브라우저 테스트의 사용 줄은 이 수치에 합산되지 않아 `frontend/app.js`처럼 Node 테스트에서 실행하지 않는 파일은 0%로 포함된다. 빌드·검증 스크립트와 테스트 자체는 집계하지 않는다.
+- README 상단의 Backend·Frontend 배지와 링크는 `docs/coverage-report/`의 SVG·Markdown을 상대 경로로 참조한다. GitHub가 [현재 브랜치의 상대 이미지·링크로 해석](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes#relative-links-and-image-paths-in-markdown-files)하므로 브랜치를 바꾸면 해당 브랜치에 보관한 측정값이 표시된다. `test:coverage`가 이 생성 파일도 갱신하며 소스·테스트 변경과 함께 반영해야 한다. 생성 파일은 직접 편집하지 않는다.
+- 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다. README는 브랜치에 보관한 측정 결과이며, 브랜치·PR별 최신 CI 결과는 해당 실행의 요약과 `coverage-report` artifact에서 확인한다.
 - 기본 브랜치의 성공한 CI는 `coverage/pages/`의 정적 SVG 배지와 HTML 요약을 GitHub Pages에 배포한다. 저장소 설정의 **Pages → Build and deployment → Source**는 `GitHub Actions`로 한 번 지정해야 한다. CI는 README를 수정하거나 커밋하지 않으며 개인 토큰이나 외부 커버리지 서비스도 사용하지 않는다.
-- README 상단의 Backend·Frontend 배지는 `https://w00j00ng.github.io/glorycourse/coverage/` 아래의 고정 경로를 참조한다. 배지는 `backend/src/`와 `frontend/`별 줄 커버리지를 표시하며, 파일별 실행 줄 수를 합산한다. 80% 이상은 초록색, 미만은 주황색이다.
 - PR에서는 Backend·Frontend 각각의 줄 커버리지가 80% 미만이면 해당 영역과 수치를 GitHub Actions 경고 annotation과 실행 요약에 표시한다. 80% 이상이면 경고하지 않으며, 커버리지 미달 자체는 테스트 실패나 병합 차단으로 처리하지 않는다.
 - `test:scale`: 10,000명·1,000강좌와 대체 배정 부하 검증
 - `test:storage-scale`: 회원 1천·1만 명의 신청·이력·Excel 원본·초안이 섞인 자료에서 회원 한 건 수정의 시간과 SQLite 변경 건수를 측정하고 재시작 후 자료 일치도 검사한다. 전체 교체 저장 경로는 제거했다. 시간은 환경에 따라 달라지며 변경 건수 회귀를 중점적으로 확인한다.
@@ -107,4 +113,4 @@ npm run test:workbook-scale
 
 테스트는 사용자 동작의 입력과 기대 결과를 명시하고 기능을 호출해 검증한다. 고객 PC의 보안 경고와 OS별 첫 실행은 자동 브라우저 테스트 통과와 별도로 [배포 점검](releasing.md)을 수행한다. 실데이터 검증을 기록할 때는 개인정보 없는 표본과 환경·자료 규모·결과를 사용하고, 공개 문서에 실제 명단이나 백업을 포함하지 않는다.
 
-학생 소속의 기능 검증은 `tests/integration/student-affiliation.test.mjs`에서 양식 4순위·소속, 기존 3~5순위 양식, 직접·일괄 입력, 재시작, 초안 복사·수정·확정, 소속 충돌과 수정 요청의 생략/null/공란을 확인한다. `migrations.test.mjs`·`sqlite.test.mjs`·`sqlite-incremental.test.mjs`는 기존 DB·스냅샷 보존과 저장 왕복을, `app-reload.test.mjs`는 저장 대기 중 새로 입력한 소속 보존을 검사한다. 이 기능 검사는 `npm run verify`에 포함된다.
+학생 소속의 기능 검증은 `tests/integration/student-ministry.test.mjs`에서 양식 4순위·소속, 기존 3~5순위 양식, 직접·일괄 입력, 재시작, 초안 복사·수정·확정, 소속 충돌과 수정 요청의 생략/null/공란을 확인한다. `migrations.test.mjs`는 v0.2.2 DB의 문자열·null 소속과 스냅샷을 ministry로 이전하고 기존 fingerprint·migration 이력을 유지하는지 확인한다. `sqlite.test.mjs`·`sqlite-incremental.test.mjs`는 저장 왕복을, `app-reload.test.mjs`는 저장 대기 중 새로 입력한 소속 보존을 검사한다. 이 기능 검사는 `npm run verify`에 포함된다.

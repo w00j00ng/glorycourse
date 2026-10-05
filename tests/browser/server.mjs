@@ -1,11 +1,14 @@
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import ExcelJS from '@excel.js/exceljs';
 
 import { startLocalServer } from '../../backend/src/server.ts';
 
 const timestamp = '2026-09-26T00:00:00.000Z';
+const { version } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 const server = await startLocalServer({
   dataDirectory: process.argv[2], staticDirectory: resolve(import.meta.dirname, '../../frontend'),
+  version,
 });
 process.send({ type: 'ready', origin: server.origin });
 process.on('message', async (message) => {
@@ -68,7 +71,7 @@ process.on('message', async (message) => {
         const applicationId = `application-${index}`;
         data.members.push({ id: memberId, name: `회원 ${index}`, nameKey: `회원 ${index}`,
           createdAt: timestamp, updatedAt: timestamp });
-        data.applications.push({ id: applicationId, semesterId: 'semester', memberId, affiliation: null, applicationOrder: index + 1,
+        data.applications.push({ id: applicationId, semesterId: 'semester', memberId, ministry: null, applicationOrder: index + 1,
           applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null,
           revision: 0, createdAt: timestamp, updatedAt: timestamp });
         data.applicationChoices.push({ id: `choice-${index}`, applicationId,

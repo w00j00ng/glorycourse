@@ -1,5 +1,41 @@
 # 문서 검증 및 개정 기록
 
+## 2026-10-05 브랜치별 README 커버리지
+
+README의 고정 Pages 배지를 같은 브랜치의 `docs/coverage-report/` SVG·Markdown 상대 경로로 바꿨다. 기존 `npm run test:coverage`가 이 세 생성 파일도 갱신한다. README·개발 환경 안내에서 브랜치에 보관한 측정값, 해당 브랜치·PR의 최신 CI artifact, 기본 브랜치의 Pages 보고서를 구분했다. CI의 저장소 쓰기 권한이나 자동 커밋은 추가하지 않았다.
+
+실제 생성기 입력·기대 결과로 배지·요약 생성, 잘못된 측정값 거절, 영역별 합산과 80% 경계, PR 경고 분리, 재측정 시 기존 값 갱신을 확인했다. `npm run test:coverage`에서 migration·target·OpenAPI·타입 검사와 기능·계약 256개, 강제 종료 복구 2개, 실행기 5개가 통과했다. Windows 로컬 측정은 Backend 줄 94.31%(7,189/7,622), Frontend 줄 48.92%(1,389/2,839)이며 배지·요약·실제 보고서 값의 일치와 생성 파일의 Git 제외 여부를 확인했다. 독립 검토에서도 주요 수정 사항은 없었다. 별도 브라우저 실행 줄은 이 수치에 합산하지 않는다. 원격 CI·공개 Release의 측정값은 아니다.
+
+## 2026-10-05 전체 migration target과 저장 검증 계약
+
+현재 7개 migration을 적용한 36개 테이블의 전체 DDL을 [migration target](../schema/migration_target/schema.sql)으로 추가했다. 기존 manifest 생성기는 메모리 SQLite에서 최종 구조를 추출하고 manifest·target을 함께 생성·검사한다. 기존 SQL과 런타임 migration 실행기는 변경하지 않았다.
+
+`store-schema.json`은 `validate-store.ts`가 실행 시 직접 읽으며 Store의 후보·변경 행과 migration 결과 검증에 사용한다. 불필요한 파일이 아니므로 유지하고 개발·계약·배포 문서에 SQL 구조와 JSON 검증 계약의 역할을 설명했다. target은 구조 확인용이며 자료나 migration 적용 이력 행을 포함하지 않는다.
+
+정상 migration DB와 target SQL로 만든 빈 DB의 전체 CREATE 객체가 일치하고 소속 fixture가 저장·조회되는 검사를 추가했다. `npm run verify`에서 기능·계약 255개, 강제 종료 복구 2개, 실행기 5개와 manifest·target·OpenAPI·타입 검사가 통과했다. `--check`의 파일 비변경과 오래된 target 거절을 확인하고 원본을 복구했다. 독립 검토에서도 주요 수정 사항은 없었다. Windows 로컬 패키징·배포본 검사를 통과했으며 압축본의 target SQL이 저장소 파일과 동일함을 확인했다. 공개 Release·원격 CI·Mac/Linux 배포본·고객 자료는 검증하지 않았다.
+
+ankentrip·kklogistics-fix·airian의 로컬 up/down SQL, migration Task와 `golang-migrate` 구성을 참고했다. up/down 및 `version`·`dirty` 두 컬럼 전환은 타당성 분석 범위이며 아직 구현하지 않았다. 전환 시 기존 5컬럼 이력과 초기 SQL의 호환 처리, dirty의 영속화 시점, 적용 이력 checksum 검증 축소와 되돌릴 수 없는 자료 변경을 별도로 다뤄야 한다.
+
+## 2026-10-05 화면 버전 표시
+
+공통 상단의 Glorycourse 로고 아래에 실행 중인 프로그램 버전을 `v0.x.x` 형식으로 표시한다. 기존 `/runtime` 응답을 사용하며 실제 실행 버전은 `package.json`에서 읽는다. README와 사용 설명서에 확인 위치를 추가했다.
+
+브라우저 전체 36개가 통과했다. 새 검사는 모든 업무 화면, 1280·560px 너비, 새로고침에서 버전 표시를 확인한다. backend/frontend 타입 검사와 독립 검토를 통과했고, Windows 로컬 패키징·배포본 검사에서 `/runtime.version`과 동봉 `package.json.version`의 일치를 확인했다. 이 결과는 로컬 작업 브랜치 기준이며 공개 Release의 변경을 의미하지 않는다.
+
+## 2026-10-05 ministry 명칭 변경
+
+최신화한 `main`의 `b469825`에서 `refactor/student-ministry` 브랜치를 생성했다. 현재 DB·API·저장 스키마·화면 내부 명칭·Excel DTO·검사에서 학생 소속을 `ministry`로 통일했다. 한국어 화면과 Excel의 `학생 소속`, 양식 버전·입력 규칙은 유지한다.
+
+DB 목표 버전은 `1791158400`이며 [명칭 변경 migration](../schema/migrations/1791158400_rename_student_ministry.sql)을 추가했다. 공개한 여섯 migration의 이름·내용·checksum을 유지한다. fingerprint의 기존 직렬화 키는 해시 호환 형식으로만 남겨 기존 초안이 명칭 변경으로 stale 처리되지 않게 한다.
+
+계약·개발·배포·저장 및 조회 이관 계획을 개정했다. 아래 날짜별 기록은 당시 명칭·DB 버전·검증 결과를 보존한다. v0.2.2는 이미 공개했으므로 이 변경을 배포할 때는 새 앱 버전과 태그를 사용해야 한다.
+
+명칭 변경의 기능·migration 검사 19개와 `npm run verify`의 기능·계약 254개, 강제 종료 복구 2개, 실행기 5개가 통과했다. OpenAPI·backend/frontend 타입과 migration 7개를 확인했다. 독립 검토의 관련 검사 32개도 통과했으며 주요 수정 사항은 없었다.
+
+브라우저 첫 전체 실행은 34개 통과·기존 일괄 삭제 확인창 시간 초과 1개였다. 해당 검사의 단독 재실행과 전체 재실행에서 각각 1개·35개가 통과했으며 삭제 관련 제품 코드를 추가 수정하지 않았다. Windows 로컬 `npm run package`·`npm run test:package`는 파일 무결성·새 SQL 포함·동봉 Node·실행·중복 실행·ministry API와 Excel·재시작 자료 보존·종료를 통과했다. 이 압축본은 수정 중인 로컬 검증용으로 공개 Release에 사용하지 않는다.
+
+`npm run docs:html`과 Markdown 18개·로컬 파일 링크 112개, `git diff --check`를 확인했다. 원격 CI·새 태그·공개 Release·Mac/Linux 배포본·고객 자료는 이번 작업의 검증 범위에 포함하지 않는다.
+
 ## 2026-10-04 학생 소속과 기본 4순위 개정
 
 기준은 `feat/student-affiliation` 작업 브랜치의 변경사항이며, 기준 커밋은 `d1620bf`다. 기능·문서 개정 이후 PR·릴리즈 준비에서 앱·lockfile·OpenAPI 버전을 `0.2.2`로 맞췄다. 이 기록은 기능 구현·반복 검토와 그에 따른 문서 개정 결과이며 공개 Release·고객 PC의 배포 검증 결과가 아니다. 아래 2026-10-03 기록은 당시 근거와 수치를 보존한다.

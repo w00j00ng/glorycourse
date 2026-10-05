@@ -19,6 +19,8 @@ npm run test:package
 
 `dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations` 전체 이력과 manifest, 저장 스키마, 실행기, production 의존성, Node 및 라이선스를 포함한다. Markdown은 `scripts/package.mjs`의 목록에 따라 README와 사용·문제 해결·개발·배포·계약·의존성 문서 6개를 동봉한다. 개발자의 자료 폴더, 테스트, OpenAPI와 나머지 점검·계획 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다.
 
+`schema/migration_target/schema.sql`도 동봉한다. 패키징 전 manifest 검사에서 현재 SQL 이력의 최종 DDL과 일치하는지 확인한다. 생성 명령은 `npm run migrations:manifest`이며 target을 직접 편집하지 않는다. 이 SQL은 전체 구조 확인용이고 기존 고객 자료의 업데이트는 개별 migration으로 처리한다. `store-schema.json`은 런타임 메모리 자료 검증에 필요하므로 배포에 포함한다.
+
 고객용 `사용설명서.html`과 `문제해결.html`은 배포 시 `docs/usage.md`와 `docs/troubleshooting.md`에서 생성해 압축 파일의 `Glorycourse` 폴더 바로 아래에 넣는다. 두 HTML 파일은 인터넷 연결이나 별도 프로그램 없이 기본 브라우저로 열 수 있다. 문구를 바꿀 때 생성된 HTML을 직접 수정하지 말고 Markdown 원본을 수정한다.
 
 압축본 검증은 개발 폴더 밖의 한글·공백 경로에 추출하고 시스템 Node 검색 경로를 제거한 상태에서 실제 Windows/Linux 실행 파일을 호출한다. Mac CI는 앱 안의 동봉 Node와 실행기를 검증하며 Finder 실행은 별도 수동 검사다. 신청 등록, xlsx 생성/가져오기 미리보기, 수강이력 Excel의 정원·소속·메모 재등록, 중복 실행, 종료, 재시작 후 자료 보존을 확인한다.
@@ -54,6 +56,7 @@ npm run test:package
 - [ ] 수강이력 현황 Excel의 별도 개설강좌 정원과 학생별 소속·메모를 확인하고 재업로드 후 유지되는지 확인한다. 기존 이력과 소속이 다르면 반영이 차단되고 수정 안내가 표시된다. 수동 백업·복원 메뉴는 표시되지 않아야 한다.
 - [ ] 이전 배포본의 시험 DB를 새 버전으로 열어 자료 유지·미적용 migration·재시작을 확인한다. 더 새로운 DB를 구버전 프로그램으로 여는 경우 안전하게 거절한다.
 - [ ] 학생 소속 migration `1791072000` 적용 후 기존 기록의 소속이 null이고, 기존 초안의 snapshot·fingerprint와 업무 자료가 보존된다. 회원 테이블에는 소속 컬럼이 추가되지 않는다.
+- [ ] 명칭 변경 migration `1791158400` 적용 후 다섯 테이블의 `ministry`에 기존 문자열·null 값이 유지된다. v0.2.2 초안은 명칭 변경만으로 stale 처리되지 않으며 API·화면·Excel·재시작에서도 소속을 확인한다.
 - [ ] 한글 파일명과 시각이 포함된 신청·이력 양식 및 현황 파일을 실제로 열어 내용을 확인한다.
 - [ ] 결과에 OS·앱 버전·커밋·검증 날짜를 기록하고, 미검증 항목을 Release 본문에 명시한다.
 
@@ -65,9 +68,11 @@ npm run test:package
 
 Release 본문에는 주요 변경, 지원·시험 대상 OS, DB·Excel 형식 변경 여부와 자료 보관 후 업데이트 순서를 적는다. README와 `docs/usage.md`는 현재 소스 설명이므로 배포 전 기능이 함께 보일 수 있다. 해당 Release 태그의 문서 링크도 제공하면 고객이 설치한 버전에 맞는 안내를 읽을 수 있다.
 
-학생 소속 기능을 포함한 Release에는 DB 목표 버전 `1791072000`, 기본 신청 4순위·선택 5순위, 신청·이력 Excel 버전 3과 소속 없는 버전 2 호환을 명시한다. 기존 소속은 공란으로 시작하며 신청·초안·이력마다 따로 저장한다. 기능 브랜치의 검증 결과는 해당 Release의 패키지·OS 검증을 대신하지 않는다.
+현재 명칭 변경을 포함한 Release에는 DB 목표 버전 `1791158400`, 소속 필드명 `ministry`, 기본 신청 4순위·선택 5순위, 신청·이력 Excel 버전 3과 소속 없는 버전 2 호환을 명시한다. 소속 추가 이전 DB는 공란으로 시작하고 v0.2.2 DB의 기존 소속은 그대로 유지하며 신청·초안·이력마다 따로 저장한다. 기능 브랜치의 검증 결과는 해당 Release의 패키지·OS 검증을 대신하지 않는다.
 
-### v0.2.2 변경사항과 공개 준비
+`v0.2.2`는 이미 공개한 버전이므로 명칭 변경 배포에는 새로운 앱 버전과 태그를 사용한다. 이번 작업에서는 버전 번호·태그를 변경하지 않는다. 공개 전 package·lockfile·OpenAPI와 새 태그를 맞춘다.
+
+### v0.2.2 변경사항과 당시 공개 준비
 
 `package.json`·lockfile·OpenAPI의 앱 버전은 `0.2.2`다. PR 병합과 해당 커밋의 CI 확인 후 `v0.2.2` 태그를 붙인다. 태그 push는 초안 Release 생성을 시작하므로 PR 게시 단계에서는 태그를 만들지 않는다.
 

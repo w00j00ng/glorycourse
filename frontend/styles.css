@@ -22,6 +22,7 @@ button { cursor: pointer; }
 .topbar h1 { font-family: Georgia, "Noto Serif KR", serif; font-size: 28px; }
 .brand { color: inherit; text-decoration: none; border-radius: 6px; }
 .brand:focus-visible { outline: 3px solid #a7d8c6; outline-offset: 5px; }
+.app-version { display: block; color: #b8cec6; font-size: 12px; line-height: 1.5; }
 .eyebrow { margin: 0 0 4px; color: #83b9a6; font-size: 11px; font-weight: 800; letter-spacing: .16em; }
 .runtime { display: flex; align-items: center; gap: 12px; max-width: 76vw; }
 .runtime div { display: grid; gap: 2px; text-align: right; min-width: 0; }

@@ -22,7 +22,7 @@ export type AllocationSnapshot = {
     id: string;
     memberId: string;
     memberName: string;
-    affiliation: string | null;
+    ministry: string | null;
     applicationOrder: number | null;
     applicationOrderStatus: 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
   }>;
@@ -43,7 +43,7 @@ export type AllocationSnapshot = {
     id: string;
     memberId: string;
     memberName: string;
-    affiliation: string | null;
+    ministry: string | null;
     semesterCourseId: string;
   }>;
 };
