@@ -1,9 +1,12 @@
 import './contract/openapi.test.mjs';
 import './contract/store-schema.test.mjs';
+import './contract/store-schema-drift.test.mjs';
+import './contract/migration-manifest.test.mjs';
 import './integration/store.test.mjs';
 import './integration/sqlite.test.mjs';
 import './integration/sqlite-incremental.test.mjs';
 import './integration/migrations.test.mjs';
+import './integration/migration-state.test.mjs';
 import './integration/bulk-registration.test.mjs';
 import './integration/recovery.test.mjs';
 import './integration/applications.test.mjs';

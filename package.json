@@ -25,7 +25,9 @@
     "test:package": "node tests/operational/package-smoke.mjs",
     "migrations:manifest": "node scripts/migrations-manifest.mjs",
     "migrations:check": "node scripts/migrations-manifest.mjs --check",
-    "verify": "npm run migrations:check && npm run test:openapi && npm run typecheck && npm test && npm run test:crash && npm run test:launcher"
+    "schema:check": "node scripts/store-schema-check.mjs",
+    "migrations:down": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/migrations-down.mjs",
+    "verify": "npm run migrations:check && npm run schema:check && npm run test:openapi && npm run typecheck && npm test && npm run test:crash && npm run test:launcher"
   },
   "c8": {
     "all": true,

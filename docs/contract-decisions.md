@@ -14,6 +14,12 @@
 
 현재 물리 구조의 전체 DDL은 [migration target](../schema/migration_target/schema.sql)으로 제공한다. SQL 이력을 빈 메모리 SQLite에 적용해 생성하며 manifest 생성·검사와 함께 갱신·검증한다. target에는 업무 자료와 적용 이력 행이 없으며 서버가 기존 DB를 업데이트하는 입력으로 사용하지 않는다. JSON 스키마는 실행 중 후보·변경 행과 migration 결과를 검사하는 데 필요하므로 별도로 유지한다.
 
+SQL은 버전별 up/down 쌍이고 `schema_migrations`는 현재 상태 한 행의 `version`·`dirty`만 저장한다. 기동은 알려진 정상 버전에서 최신 up만 수행한다. 같은 버전은 DDL을 생략하고 dirty·미지 버전·더 새로운 DB·잘못된 상태 행은 거절한다. 안전 사본 후 목적 버전·dirty를 먼저 커밋하고 전체 DDL 묶음과 정상 상태 확정을 별도 트랜잭션으로 처리한다. 실패하면 업무 변경은 롤백되고 dirty는 남으며, dirty 버전을 적용 완료로 해석하지 않는다. 기존 5컬럼 이력은 고정된 `legacy-manifest.json`의 연속 버전·파일명·checksum을 검증하고 백업한 뒤 변환한다. 변환 후 과거 checksum은 DB에 저장하지 않는다.
+
+down은 서버 종료 후 명시적 CLI로 수행하며 자동 실행하지 않는다. 삭제된 소속·영수증·확정 초안 자료의 유실을 허용한다. down 0은 업무 테이블을 제거하되 상태의 0·false 한 행을 유지한다. down 후에도 두 컬럼이므로 구버전 5컬럼 실행기로 복귀할 때는 전환 전 안전 사본이 필요하다. 실행·복구 절차는 [개발 환경](development.md#db-스키마-변경)에 있다.
+
+`store-schema.json`은 수기로 관리한다. `schema:check`가 실제 `DatabaseState`의 필드·필수 여부·타입·nullable·enum/const·배열·중첩 구조와 비교하며 검증·패키징에서 불일치를 차단한다. 참조·union·구조 상속 옆에 붙은 구조 제약, 객체 `allOf`의 무조건부 구조 제약 및 지원하지 않는 `anyOf`·`not`은 무시하지 않고 거절한다. 선언 없는 필수 필드, 정규화한 선택지가 겹치는 `oneOf`, `enum`·`const` 조합과 `prefixItems`·일반 `items`의 혼합 배열도 거절한다. 업무 범위·조건부 제약·추가 속성 규칙은 이 비교에 포함하지 않고 Ajv 및 기능 검사로 유지한다. SQL과 논리 상태의 대응은 실제 저장 왕복·migration 자료 보존으로 확인한다.
+
 일반 명령은 직전 자료와 다른 행 및 변경된 자식 자료만 저장한다. 수정되지 않은 가져오기 원본과 배정 스냅샷을 다시 기록하지 않는다. 트랜잭션을 시작한 뒤 DB의 epoch·revision이 직전 자료와 같은지 확인한다. 초기 생성은 빈 테이블에 삽입하고, 내부 `Store.restore()`도 현재 상태와 후보의 차이만 반영한다. 이전 상태 없이 채워진 DB를 덮어쓰는 전체 교체 경로는 없다. UNIQUE 값 교환에 사용하는 임시 값은 트랜잭션 안에서만 존재하고 커밋 시 FK·고유성 제약을 만족해야 한다.
 
 `inputSnapshot`은 대상 학기, 개설 강좌, 신청, 희망, 관련 과거 이력, 동일 학기 기존 이력만 담는다. `sourceApplicationId`와 생성 당시 choice ID는 역사적 식별값이며 live FK가 아니다. 현재 final 회원·강좌와 업무 테이블 참조만 live 검증 대상이다.
@@ -153,7 +159,7 @@
 | `allocation_draft_items` | 신청에서 복사하거나 수동 추가·수정한 초안 항목의 소속 |
 | `enrollments` | 확정한 초안 항목에서 복사하거나 직접·Excel 입력한 이력의 소속 |
 
-[소속 추가 migration](../schema/migrations/1791072000_add_student_affiliation.sql)은 위 다섯 테이블에 nullable 컬럼을 추가한다. [명칭 변경 migration](../schema/migrations/1791158400_rename_student_ministry.sql)은 기존 컬럼을 `ministry`로 바꾸며 저장된 값·null·스냅샷을 유지한다. 현재 DB 목표 버전은 `1791158400`이며, 이미 공개한 migration의 이름·내용·checksum은 변경하지 않는다.
+[소속 추가 up](../schema/migrations/1791072000_add_student_affiliation.up.sql)은 위 다섯 테이블에 nullable 컬럼을 추가한다. [명칭 변경 up](../schema/migrations/1791158400_rename_student_ministry.up.sql)은 기존 컬럼을 `ministry`로 바꾸며 저장된 값·null·스냅샷을 유지한다. 현재 DB 목표 버전은 `1791158400`이다. up/down 전환에서 기존 파일명을 바꾸되 소속 관련 up의 내용·checksum은 보존하며, 원래 파일명·checksum은 고정된 기존 metadata와 업데이트 전 안전 사본에 남긴다.
 
 fingerprint 직렬화는 v0.2.2의 내부 키 `affiliation`을 유지하고 null 값을 생략한다. 이 키는 해시 호환 형식이며 저장·API 필드명은 `ministry`다. 명칭 변경만으로 기존 초안을 stale 처리하지 않으며 실제 소속 변경은 계속 감지한다.
 

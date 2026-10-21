@@ -3,6 +3,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import ExcelJS from '@excel.js/exceljs';
@@ -57,6 +58,9 @@ try {
   for (const name of ['usage', 'troubleshooting', 'development', 'releasing', 'contract-decisions', 'dependencies']) {
     assert.ok((await readFile(join(top, 'docs', `${name}.md`), 'utf8')).trim(), `README link: docs/${name}.md`);
   }
+  for (const name of ['README.md', 'backend.svg', 'frontend.svg']) {
+    assert.ok((await readFile(join(top, 'docs/coverage-report', name), 'utf8')).trim(), `README coverage link: ${name}`);
+  }
   const userGuide = await readFile(join(top, '사용설명서.html'), 'utf8');
   const troubleshooting = await readFile(join(top, '문제해결.html'), 'utf8');
   assert.match(userGuide, /한 학기 따라 하기/);
@@ -68,8 +72,11 @@ try {
   const migrationManifest = await readFile(join(app, 'schema/migrations/manifest.json'));
   assert.equal(release.migrationManifestSha256, createHash('sha256').update(migrationManifest).digest('hex'));
   assert.equal(release.databaseVersion, String(JSON.parse(migrationManifest).targetVersion));
-  assert.ok(Object.keys(manifest.files).some((name) => /(^|\/)schema\/migrations\/1790294400_init\.sql$/.test(name)));
-  assert.ok(Object.keys(manifest.files).some((name) => /(^|\/)schema\/migrations\/1791158400_rename_student_ministry\.sql$/.test(name)));
+  for (const entry of JSON.parse(migrationManifest).migrations) {
+    for (const name of [entry.name, entry.down.name]) assert.ok(Object.keys(manifest.files).some((file) => file.endsWith(`schema/migrations/${name}`)));
+  }
+  assert.ok(Object.keys(manifest.files).some((name) => name.endsWith('schema/migrations/legacy-manifest.json')));
+  assert.ok(Object.keys(manifest.files).some((name) => name.endsWith('scripts/migrations-down.mjs')));
   assert.ok(Object.keys(manifest.files).some((name) => /(^|\/)schema\/migration_target\/schema\.sql$/.test(name)));
   assert.ok(Object.keys(manifest.files).every((name) => !/^migrations\//.test(name)));
   for (const [name, hash] of Object.entries(manifest.files)) {
@@ -160,7 +167,21 @@ try {
   await launch('stop');
   await assert.rejects(readFile(join(directory, '.glorycourse.lock')), { code: 'ENOENT' });
   await launch('stop');
-  console.log(`PASS ${target.name}: archive integrity, bundled runtime, start twice, save, xlsx preservation, UI shutdown API, restart, stop file`);
+  const database = join(directory, 'db.sqlite');
+  await exec(node, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning',
+    join(app, 'scripts/migrations-down.mjs'), database, '1791072000'], { env, timeout: 40_000 });
+  const down = new DatabaseSync(database, { readOnly: true });
+  try {
+    assert.deepEqual(down.prepare('PRAGMA table_info(schema_migrations)').all().map(({ name }) => name), ['version', 'dirty']);
+    assert.deepEqual({ ...down.prepare('SELECT version, dirty FROM schema_migrations').get() }, { version: 1791072000, dirty: 0 });
+    assert.equal(down.prepare('SELECT affiliation FROM applications').get().affiliation, '청년부');
+  } finally { down.close(); }
+  await launch('start');
+  await connect();
+  assert.equal((await api('/applications')).items[0].ministry, '청년부');
+  assert.equal((await api('/enrollments')).items[0].ministry, '사역팀');
+  await launch('stop');
+  console.log(`PASS ${target.name}: archive integrity, bundled runtime, start twice, save, xlsx preservation, UI shutdown API, restart, stop file, explicit down and startup up`);
 } finally {
   try { await launch('stop'); } catch { /* Preserve failing test output; never kill unrelated processes. */ }
   await rm(scratch, { recursive: true, force: true });

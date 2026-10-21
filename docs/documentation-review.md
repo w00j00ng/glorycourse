@@ -1,5 +1,23 @@
 # 문서 검증 및 개정 기록
 
+## 2026-10-05 반복 검토와 검증 누락 보완
+
+이전 검토에서 발견한 생성기·런타임의 기존 metadata 검사 불일치를 수정했다. 대응 SQL이 없는 여분 이력, 초기 checksum의 잘못된 형식, null 항목과 배열이 아닌 목록을 모두 거절한다. 실제 생성기와 런타임을 호출하는 11개 입력·기대 결과로 정상 이력, 새 up/down 쌍 추가 및 오류 거절을 확인하고, 실패 시 manifest·target·DB 파일이 그대로인지 검사한다.
+
+JSON 구조 검사에서 `$ref`·`oneOf` 옆의 타입 제약과 객체 `allOf`의 구조 제약이 누락되던 문제를 수정했다. 독립 검토를 반복하면서 선언 없는 `required`, 중복·부분 중첩 `oneOf`, `enum`·`const` 동시 지정 및 `prefixItems`·일반 `items`의 혼합도 재현해 보완했다. 기존 검사와 함께 24개 입력·기대 결과로 오류 거절과 정상 설명 속성·겹치지 않는 union·배열·고정 tuple의 허용을 확인한다. 지원하지 않는 구조 조합은 거절하며 업무 범위·조건부 규칙·추가 속성 정책의 대조까지 제공하지 않는다. 개발·계약·배포 문서에 이 범위와 회귀 검사를 반영했다.
+
+독립 검토 3회를 거쳐 마지막 검토에서 해당 범위의 미해결 문제는 발견되지 않았다. 최종 `npm run test:coverage`에서 migration 7쌍·target·Store 구조·OpenAPI·타입 검사와 기능·계약 268개, 강제 종료 복구 3개, 실행기 5개가 통과했다. Backend 줄 커버리지는 94.49%(7,255/7,678), Frontend는 48.92%(1,389/2,839)이며 브랜치의 배지·요약을 갱신했다. Windows 패키징과 압축본의 무결성·동봉 Node·기동·저장·Excel·종료·재시작·명시적 down 후 자동 up 검사도 통과했다. Markdown 14개의 로컬 링크 119개와 `git diff --check`를 확인했다. 이번 보완의 검증은 로컬 결과이며 원격 CI·새 Release·Mac/Linux 패키지·고객 실자료 검증을 포함하지 않는다. 아래 기록은 각 작업 당시의 결과다.
+
+## 2026-10-05 up/down·두 컬럼 상태와 저장 계약 불일치 검사
+
+기존 ministry·화면 버전·전체 target·브랜치별 커버리지 작업을 `760bc42`로 커밋한 뒤 migration 전환을 구현했다. 7개 SQL을 up/down 쌍으로 구성하고 `schema_migrations`를 `version`·`dirty` 두 컬럼의 현재 상태 한 행으로 바꿨다. 기존 5컬럼 이력은 고정된 원래 파일명·checksum·연속 버전과 검증하고 안전 사본을 만든 뒤 변환한다. 원래 초기 SQL은 호환 fixture에 보존하며 나머지 up의 내용·checksum은 유지한다. 두 컬럼 전환 후에는 DB 자체의 과거 checksum 대조를 제공하지 않는다.
+
+기동은 알려진 정상 버전에서 최신 up만 수행한다. 최신 정상 상태는 DDL을 생략하고 dirty·미지 버전·미래 버전·잘못된 상태 행은 거절한다. DDL 묶음 전에 목적 버전·dirty를 별도 커밋하므로 SQL 실패·강제 종료 후 업무 변경은 롤백되고 실패 상태는 영속화된다. 명시적인 down은 같은 서버 잠금과 안전 사본을 사용하며 삭제 자료의 유실을 허용한다. down 0은 업무 테이블을 모두 제거하고 0·false 상태를 남긴다. down 후에도 두 컬럼이므로 이전 5컬럼 실행기로 복귀하려면 전환 전 안전 사본이 필요하다.
+
+`store-schema.json`은 자동 생성하지 않고 수기 논리 계약으로 유지한다. 새 `schema:check`는 실제 TypeScript Store 계약과 필드·필수 여부·원시 타입·nullable·enum/const·배열·중첩 구조를 대조하며 `verify`와 패키징에 포함된다. 업무 범위·조건부 제약·추가 속성 규칙은 Ajv·기능 테스트로 확인하고 SQL 대응은 실제 자료 저장 왕복으로 검증한다. manifest와 전체 target은 계속 자동 생성한다. down 역검사는 객체·컬럼 목록과 FK 위반 여부를 확인하며 제약 정의 전체나 자료 복원을 보장하지 않는다.
+
+독립 검토에서 문자열 dirty의 clean 오판과 enum/const 선언 타입의 누락을 재현해 회귀 테스트와 함께 수정했다. 재검토에서 추가 중대 문제는 없었다. `npm run test:coverage`에서 migration 쌍·target·Store 구조·OpenAPI·타입 검사와 기능·계약 266개, 강제 종료 복구 3개, 실행기 5개가 통과했다. 현재 브랜치의 Backend 줄 커버리지는 94.51%(7,256/7,677), Frontend는 48.92%(1,389/2,839)이며 배지·요약을 갱신했다. Chromium 사용자 흐름 36개와 Windows 패키징·압축본 검사가 통과했다. 동봉 Node로 down 후 재기동 up을 수행하고 소속 보존을 확인했으며 모든 up/down·기존 metadata·target·README 배지·요약을 동봉했다. Markdown 14개의 로컬 링크 119개와 `git diff --check`도 확인했다. 원격 CI·새 Release·Mac/Linux 패키지·고객 실자료는 이번 검증 범위에 포함하지 않는다. 아래 기록은 각 작업 당시의 결과다.
+
 ## 2026-10-05 브랜치별 README 커버리지
 
 README의 고정 Pages 배지를 같은 브랜치의 `docs/coverage-report/` SVG·Markdown 상대 경로로 바꿨다. 기존 `npm run test:coverage`가 이 세 생성 파일도 갱신한다. README·개발 환경 안내에서 브랜치에 보관한 측정값, 해당 브랜치·PR의 최신 CI artifact, 기본 브랜치의 Pages 보고서를 구분했다. CI의 저장소 쓰기 권한이나 자동 커밋은 추가하지 않았다.
@@ -26,7 +44,7 @@ ankentrip·kklogistics-fix·airian의 로컬 up/down SQL, migration Task와 `gol
 
 최신화한 `main`의 `b469825`에서 `refactor/student-ministry` 브랜치를 생성했다. 현재 DB·API·저장 스키마·화면 내부 명칭·Excel DTO·검사에서 학생 소속을 `ministry`로 통일했다. 한국어 화면과 Excel의 `학생 소속`, 양식 버전·입력 규칙은 유지한다.
 
-DB 목표 버전은 `1791158400`이며 [명칭 변경 migration](../schema/migrations/1791158400_rename_student_ministry.sql)을 추가했다. 공개한 여섯 migration의 이름·내용·checksum을 유지한다. fingerprint의 기존 직렬화 키는 해시 호환 형식으로만 남겨 기존 초안이 명칭 변경으로 stale 처리되지 않게 한다.
+DB 목표 버전은 `1791158400`이며 [명칭 변경 migration](../schema/migrations/1791158400_rename_student_ministry.up.sql)을 추가했다. 공개한 여섯 migration의 이름·내용·checksum을 유지한다. fingerprint의 기존 직렬화 키는 해시 호환 형식으로만 남겨 기존 초안이 명칭 변경으로 stale 처리되지 않게 한다.
 
 계약·개발·배포·저장 및 조회 이관 계획을 개정했다. 아래 날짜별 기록은 당시 명칭·DB 버전·검증 결과를 보존한다. v0.2.2는 이미 공개했으므로 이 변경을 배포할 때는 새 앱 버전과 태그를 사용해야 한다.
 
@@ -60,7 +78,7 @@ DB 목표 버전은 `1791158400`이며 [명칭 변경 migration](../schema/migra
 ### 구현 근거
 
 - [양식 구현](../backend/src/excel/workbooks.ts)의 기본 희망 열은 4개, 최대는 5개다. 신청·이력 기본 양식 버전은 모두 `3`이며 소속 없는 버전 `2`를 읽는다.
-- [migration](../schema/migrations/1791072000_add_student_affiliation.sql)과 [manifest](../schema/migrations/manifest.json)는 6개 이력·목표 DB 버전 `1791072000`을 선언한다. 이전 SQL과 checksum은 유지하며 다섯 업무·스냅샷 테이블에 nullable `affiliation`을 추가한다. 회원 테이블에는 추가하지 않는다.
+- [migration](../schema/migrations/1791072000_add_student_affiliation.up.sql)과 [manifest](../schema/migrations/manifest.json)는 6개 이력·목표 DB 버전 `1791072000`을 선언한다. 이전 SQL과 checksum은 유지하며 다섯 업무·스냅샷 테이블에 nullable `affiliation`을 추가한다. 회원 테이블에는 추가하지 않는다.
 - [스냅샷](../backend/src/allocation/snapshot.ts)·[초안](../backend/src/services/drafts.ts)·[확정](../backend/src/services/finalization.ts)은 신청 소속을 초안에, 저장된 초안 소속을 이력에 복사한다. 원본 수정은 기존 기록을 덮어쓰지 않는다. null 소속의 기존 fingerprint도 유지한다.
 - [신청](../backend/src/services/applications.ts)·[이력](../backend/src/services/enrollments.ts)·초안 수정 API는 소속 생략 시 기존 값을 유지하고 명시적 null·공란으로 비운다. [OpenAPI](../openapi/openapi.yaml)의 nullable·200자 계약과 일치한다.
 - [가져오기 검토](../backend/src/services/import-preview.ts)·[반영](../backend/src/services/import-commit.ts)은 원본 `templateVersion`을 보관·반영 기록에 유지한다. 소속만 달라도 신청 충돌이며 기존 이력과 소속이 다르면 전체 반영을 막는다.

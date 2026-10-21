@@ -17,13 +17,25 @@ npm run test:package
 
 `scripts/release-config.json`이 동봉 Node 버전, OS/아키텍처, 공식 배포 파일 SHA-256 및 최종 파일명을 정한다. 현재 Node는 개발 의존성·`.nvmrc`·CI와 같은 `22.23.3`이다. CI의 `npm ci --ignore-scripts`는 프로젝트 Node 바이너리 설치를 생략하므로 먼저 `setup-node`로 해당 버전을 준비한다. Node를 올릴 때 [공식 배포 검증 안내](https://github.com/nodejs/node#verifying-binaries)에 따라 검증값을 갱신하고 세 OS를 다시 확인한다. 패키징은 해당 OS/아키텍처에서 수행한다.
 
-`dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations` 전체 이력과 manifest, 저장 스키마, 실행기, production 의존성, Node 및 라이선스를 포함한다. Markdown은 `scripts/package.mjs`의 목록에 따라 README와 사용·문제 해결·개발·배포·계약·의존성 문서 6개를 동봉한다. 개발자의 자료 폴더, 테스트, OpenAPI와 나머지 점검·계획 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다.
+`dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations`의 모든 up/down 쌍·manifest·고정된 `legacy-manifest.json`, 저장 스키마, 실행기와 명시적 down 스크립트, production 의존성, Node 및 라이선스를 포함한다. Markdown은 `scripts/package.mjs`의 목록에 따라 README와 사용·문제 해결·개발·배포·계약·의존성 문서 6개, README 배지·측정 요약을 동봉한다. 개발자의 자료 폴더, 테스트, OpenAPI와 나머지 점검·계획 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다. 이 빌드 표시와 DB 상태의 `dirty`는 별개다.
 
-`schema/migration_target/schema.sql`도 동봉한다. 패키징 전 manifest 검사에서 현재 SQL 이력의 최종 DDL과 일치하는지 확인한다. 생성 명령은 `npm run migrations:manifest`이며 target을 직접 편집하지 않는다. 이 SQL은 전체 구조 확인용이고 기존 고객 자료의 업데이트는 개별 migration으로 처리한다. `store-schema.json`은 런타임 메모리 자료 검증에 필요하므로 배포에 포함한다.
+`schema/migration_target/schema.sql`도 동봉한다. 패키징 전 manifest 검사에서 현재 SQL 이력의 최종 DDL과 일치하는지 확인하고, 기존 metadata 전체를 런타임과 같은 기준으로 검사해 여분 항목·잘못된 checksum을 거절한다. 생성 명령은 `npm run migrations:manifest`이며 target을 직접 편집하지 않는다. 이 SQL은 전체 구조 확인용이고 기존 고객 자료의 업데이트는 개별 migration으로 처리한다. `store-schema.json`은 수기 런타임 검증 계약이므로 배포에 포함한다. 패키징 전 `schema:check`로 실제 Store 타입과 필드·타입·nullable·enum/const·중첩 구조의 일치를 검사하며, 지원하지 않는 구조 키워드 조합도 거절한다. 업무 조건·범위와 SQL 저장 대응은 Ajv·실제 자료 테스트로 확인한다. 개발용 생성·검사 도구와 TypeScript는 배포 의존성에 포함하지 않는다.
 
 고객용 `사용설명서.html`과 `문제해결.html`은 배포 시 `docs/usage.md`와 `docs/troubleshooting.md`에서 생성해 압축 파일의 `Glorycourse` 폴더 바로 아래에 넣는다. 두 HTML 파일은 인터넷 연결이나 별도 프로그램 없이 기본 브라우저로 열 수 있다. 문구를 바꿀 때 생성된 HTML을 직접 수정하지 말고 Markdown 원본을 수정한다.
 
 압축본 검증은 개발 폴더 밖의 한글·공백 경로에 추출하고 시스템 Node 검색 경로를 제거한 상태에서 실제 Windows/Linux 실행 파일을 호출한다. Mac CI는 앱 안의 동봉 Node와 실행기를 검증하며 Finder 실행은 별도 수동 검사다. 신청 등록, xlsx 생성/가져오기 미리보기, 수강이력 Excel의 정원·소속·메모 재등록, 중복 실행, 종료, 재시작 후 자료 보존을 확인한다.
+
+## DB 상태와 지원용 down
+
+백엔드는 `schema_migrations`의 두 컬럼 한 행을 읽어 목표보다 낮은 알려진 정상 버전에 up을 적용하고 같은 버전은 DDL을 생략한다. dirty·미지 버전·더 새로운 버전은 기동을 차단하며 자동 down은 수행하지 않는다. 기존 5컬럼 이력은 원래 metadata와 먼저 대조하고 안전 사본을 만든 뒤 변환한다. 변경 목적 버전·dirty를 DDL보다 먼저 영속화하므로 실패·강제 종료 후 업무 자료가 롤백돼도 실패 상태가 남는다. 복구는 서버 종료와 전환 전 안전 사본 검증을 거쳐 수행하며 dirty 값을 임의로 고쳐 재시도하지 않는다.
+
+개발 환경에서는 `npm run migrations:down -- <db.sqlite> <목표 버전 또는 0>`을 사용한다. 배포본에서는 서버를 종료한 뒤 앱 폴더에서 동봉 Node를 호출한다. Windows 예시는 다음과 같다. Mac의 앱 폴더는 `Glorycourse.app/Contents/Resources/app`, Mac/Linux의 Node 경로는 `./runtime/node`다.
+
+```powershell
+./runtime/node.exe --experimental-strip-types --disable-warning=ExperimentalWarning scripts/migrations-down.mjs "C:/시험자료/db.sqlite" 1791072000
+```
+
+CLI는 서버와 같은 자료 폴더 잠금을 잡고, 정상이며 알려진 현재 이하 목표만 허용한다. 변경 전 안전 사본을 만들고 필요한 down을 내림차순으로 적용한다. 소속 삭제·영수증 삭제와 이미 삭제된 확정 초안 자료의 유실을 허용하며 down 0은 모든 업무 테이블을 제거한다. 다음 최신 앱 기동은 다시 up을 적용하되 삭제한 값을 복원하지 않는다. 상태 테이블은 계속 두 컬럼이므로 5컬럼 이력을 요구하는 기존 v0.2.2 등의 실행기로 돌아가려면 그 버전과 호환되는 전환 전 안전 사본을 사용해야 한다. 새로운 두 컬럼 실행기끼리 되돌릴 때도 해당 버전의 down·자료 손실과 안전 사본을 먼저 확인한다.
 
 ## GitHub에서 준비하기
 
@@ -57,6 +69,8 @@ npm run test:package
 - [ ] 이전 배포본의 시험 DB를 새 버전으로 열어 자료 유지·미적용 migration·재시작을 확인한다. 더 새로운 DB를 구버전 프로그램으로 여는 경우 안전하게 거절한다.
 - [ ] 학생 소속 migration `1791072000` 적용 후 기존 기록의 소속이 null이고, 기존 초안의 snapshot·fingerprint와 업무 자료가 보존된다. 회원 테이블에는 소속 컬럼이 추가되지 않는다.
 - [ ] 명칭 변경 migration `1791158400` 적용 후 다섯 테이블의 `ministry`에 기존 문자열·null 값이 유지된다. v0.2.2 초안은 명칭 변경만으로 stale 처리되지 않으며 API·화면·Excel·재시작에서도 소속을 확인한다.
+- [ ] 기존 5컬럼 이력이 검증·백업 후 두 컬럼 한 행으로 변환되고 정상 재시작은 DDL을 생략한다. dirty·미지 버전·미래 버전과 잘못된 상태 행은 자료를 변경하지 않고 기동을 거절한다.
+- [ ] 가상 자료에서 DDL 실패·강제 종료 후 업무 변경 롤백과 dirty 영속화를 확인한다. 별도 시험 DB에서 명시적 down/up·자료 유실·변경 전 사본·실행 중 서버 거절을 확인한다.
 - [ ] 한글 파일명과 시각이 포함된 신청·이력 양식 및 현황 파일을 실제로 열어 내용을 확인한다.
 - [ ] 결과에 OS·앱 버전·커밋·검증 날짜를 기록하고, 미검증 항목을 Release 본문에 명시한다.
 
@@ -68,7 +82,7 @@ npm run test:package
 
 Release 본문에는 주요 변경, 지원·시험 대상 OS, DB·Excel 형식 변경 여부와 자료 보관 후 업데이트 순서를 적는다. README와 `docs/usage.md`는 현재 소스 설명이므로 배포 전 기능이 함께 보일 수 있다. 해당 Release 태그의 문서 링크도 제공하면 고객이 설치한 버전에 맞는 안내를 읽을 수 있다.
 
-현재 명칭 변경을 포함한 Release에는 DB 목표 버전 `1791158400`, 소속 필드명 `ministry`, 기본 신청 4순위·선택 5순위, 신청·이력 Excel 버전 3과 소속 없는 버전 2 호환을 명시한다. 소속 추가 이전 DB는 공란으로 시작하고 v0.2.2 DB의 기존 소속은 그대로 유지하며 신청·초안·이력마다 따로 저장한다. 기능 브랜치의 검증 결과는 해당 Release의 패키지·OS 검증을 대신하지 않는다.
+현재 명칭 변경과 migration 전환을 포함한 Release에는 DB 목표 버전 `1791158400`, 소속 필드명 `ministry`, 기본 신청 4순위·선택 5순위, 신청·이력 Excel 버전 3과 소속 없는 버전 2 호환을 명시한다. 소속 추가 이전 DB는 공란으로 시작하고 v0.2.2 DB의 기존 소속은 그대로 유지하며 신청·초안·이력마다 따로 저장한다. SQL의 up/down 쌍·기존 이력의 두 컬럼 변환·dirty 시 기동 차단과 전환 전 안전 사본을 이용한 구버전 복귀 절차도 기록한다. 기능 브랜치의 검증 결과는 해당 Release의 패키지·OS 검증을 대신하지 않는다.
 
 `v0.2.2`는 이미 공개한 버전이므로 명칭 변경 배포에는 새로운 앱 버전과 태그를 사용한다. 이번 작업에서는 버전 번호·태그를 변경하지 않는다. 공개 전 package·lockfile·OpenAPI와 새 태그를 맞춘다.
 
@@ -96,4 +110,4 @@ DB 목표 버전은 `1791072000`이다. 새 버전으로 DB가 갱신된 뒤 구
 - API·저장·완료 조건: [계약 결정 기록](contract-decisions.md), OpenAPI, schema를 확인한다.
 - 저장소의 점검·계획 문서는 작성 당시 결과와 현재 구현 상태를 구분한다. 삭제된 기능·모듈이나 과거 테스트 수·성능 수치를 현재 지원·검증 결과로 안내하지 않는다.
 - 런타임·패키지: [직접 의존성](dependencies.md), lockfile, release config와 동봉 라이선스를 확인한다.
-- 커버리지 수치는 문서에 직접 기록하지 않는다. 기본 브랜치 CI가 배포하는 GitHub Pages 배지와 보고서 링크를 유지한다.
+- 커버리지 수치는 안내 문서에 직접 기록하지 않는다. `npm run test:coverage`로 현재 브랜치의 `docs/coverage-report/` 배지·요약을 갱신하고 README의 상대 링크를 유지한다. 최신 CI 측정값은 해당 실행의 요약·artifact에서 확인한다.

@@ -399,7 +399,7 @@ export class Store {
 export const openStore = async (
   file: string,
   defaultData: DatabaseState,
-  options: { backupDirectory?: string; appVersion?: string; onProgress?: (message: string) => void } = {},
+  options: { backupDirectory?: string; onProgress?: (message: string) => void } = {},
 ): Promise<Store> => {
   await migrateDatabase(file, defaultData, options);
   return Store.open(new SQLiteAdapter(file), defaultData);

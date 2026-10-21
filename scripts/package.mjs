@@ -13,6 +13,7 @@ const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${pkg.version}`) throw new Error('Tag and package version differ');
 const run = (command, args, options = {}) => execFileSync(command, args, { stdio: 'inherit', ...options });
 run(process.execPath, [join(root, 'scripts/migrations-manifest.mjs'), '--check']);
+run(process.execPath, [join(root, 'scripts/store-schema-check.mjs')]);
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const migrationManifest = await readFile(join(root, 'schema/migrations/manifest.json'));
 const targetDatabaseVersion = String(JSON.parse(migrationManifest.toString('utf8')).targetVersion);
@@ -22,13 +23,13 @@ const staging = await mkdtemp(join(dist, 'build-'));
 const top = join(staging, 'Glorycourse');
 const app = process.platform === 'darwin' ? join(top, 'Glorycourse.app/Contents/Resources/app') : top;
 await mkdir(app, { recursive: true });
-const documents = ['README.md', 'docs/usage.md', 'docs/troubleshooting.md', 'docs/development.md', 'docs/releasing.md', 'docs/contract-decisions.md', 'docs/dependencies.md'];
+const documents = ['README.md', 'docs/usage.md', 'docs/troubleshooting.md', 'docs/development.md', 'docs/releasing.md', 'docs/contract-decisions.md', 'docs/dependencies.md', 'docs/coverage-report'];
 // Explicit contents keep local data, credentials, work documents, and tests out of the product.
 for (const name of ['backend/src', 'frontend', 'schema', 'package.json', 'package-lock.json', ...documents]) {
   await cp(join(root, name), join(app, name), { recursive: true });
 }
 await mkdir(join(app, 'scripts'), { recursive: true });
-for (const name of ['launcher.mjs', 'runtime-paths.mjs']) await cp(join(root, 'scripts', name), join(app, 'scripts', name));
+for (const name of ['launcher.mjs', 'runtime-paths.mjs', 'migrations-down.mjs']) await cp(join(root, 'scripts', name), join(app, 'scripts', name));
 if (!process.env.npm_execpath) throw new Error('Run with npm run package');
 run(process.execPath, [process.env.npm_execpath, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: app });
 

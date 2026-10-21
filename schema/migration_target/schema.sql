@@ -526,16 +526,8 @@ CREATE TABLE restore_receipts (
 ) STRICT;
 
 CREATE TABLE schema_migrations (
-  -- 컬럼: version - Unix timestamp 형식의 마이그레이션 버전.
-  version INTEGER PRIMARY KEY NOT NULL CHECK (version BETWEEN 1000000000 AND 9999999999),
-  -- 컬럼: name - 적용한 마이그레이션 SQL 파일 이름.
-  name TEXT NOT NULL,
-  -- 컬럼: checksum - 마이그레이션 SQL의 SHA-256 체크섬.
-  checksum TEXT NOT NULL CHECK (length(checksum) = 64 AND checksum NOT GLOB '*[^0-9a-f]*'),
-  -- 컬럼: applied_at - 마이그레이션 적용 시각.
-  applied_at TEXT NOT NULL,
-  -- 컬럼: app_version - 마이그레이션을 적용한 프로그램 버전.
-  app_version TEXT NOT NULL
+  version INTEGER PRIMARY KEY NOT NULL CHECK (version = 0 OR version BETWEEN 1000000000 AND 9999999999),
+  dirty INTEGER NOT NULL CHECK (dirty IN (0, 1))
 ) STRICT;
 
 CREATE TABLE semester_courses (

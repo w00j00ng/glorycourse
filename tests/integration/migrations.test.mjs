@@ -12,26 +12,43 @@ import { openStore } from '../../backend/src/storage/store.ts';
 import { DraftService } from '../../backend/src/services/drafts.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
-const initName = '1790294400_init.sql';
-const init = resolve(`schema/migrations/${initName}`);
-const baseNames = (await readdir(resolve('schema/migrations'))).filter((name) => name.endsWith('.sql')).sort();
+const initName = '1790294400_init.up.sql';
+const init = resolve('tests/fixtures/migrations/1790294400_init.sql');
+const baseNames = (await readdir(resolve('schema/migrations'))).filter((name) => name.endsWith('.up.sql')).sort();
 const nextVersion = Number(baseNames.at(-1).slice(0, 10)) + 86_400;
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const history = (file) => {
   const db = new DatabaseSync(file, { readOnly: true });
-  try { return db.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all(); }
+  try {
+    const columns = db.prepare('PRAGMA table_info(schema_migrations)').all().map(({ name }) => name);
+    return db.prepare(`SELECT ${columns.includes('dirty') ? 'version, dirty' : 'version, name, checksum'} FROM schema_migrations ORDER BY version`).all().map((row) => ({ ...row }));
+  }
   finally { db.close(); }
 };
 const manifest = async (directory, names) => {
   const migrations = [];
-  for (const name of names) migrations.push({ version: Number(name.slice(0, 10)), name, checksum: hash(await readFile(join(directory, name))) });
+  for (const name of names) {
+    const downName = name.replace('.up.sql', '.down.sql');
+    let downBytes;
+    try { downBytes = await readFile(join(directory, downName)); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      downBytes = Buffer.from('-- Test-only up case; down is not exercised.\n');
+      await writeFile(join(directory, downName), downBytes);
+    }
+    migrations.push({ version: Number(name.slice(0, 10)), name, checksum: hash(await readFile(join(directory, name))),
+      down: { name: downName, checksum: hash(downBytes) } });
+  }
   await writeFile(join(directory, 'manifest.json'), JSON.stringify({ targetVersion: migrations.at(-1).version, migrations }));
 };
 const copyBase = async (directory) => {
   await mkdir(directory);
-  for (const name of baseNames) await cp(resolve('schema/migrations', name), join(directory, name));
+  for (const name of [...baseNames, ...baseNames.map((name) => name.replace('.up.sql', '.down.sql')), 'legacy-manifest.json']) {
+    await cp(resolve('schema/migrations', name), join(directory, name));
+  }
   await manifest(directory, baseNames);
 };
+const legacySql = (name) => readFile(name === initName ? init : resolve('schema/migrations', name));
 
 test('the complete migration target initializes the current schema and stores student ministries', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-migration-target-'));
@@ -73,10 +90,10 @@ test('upgrades v0.2.2 ministries without losing values or making an unchanged dr
     try {
       db.exec('PRAGMA foreign_keys = ON');
       for (const name of legacyNames) {
-        const sql = await readFile(resolve('schema/migrations', name));
+        const sql = await legacySql(name);
         db.exec(sql.toString('utf8'));
         db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)')
-          .run(Number(name.slice(0, 10)), name, hash(sql), when, '0.2.2');
+          .run(Number(name.slice(0, 10)), name.replace('.up.sql', '.sql'), hash(sql), when, '0.2.2');
       }
       db.exec("INSERT INTO store_meta VALUES (1, 'v022-epoch', 9)");
       db.prepare('INSERT INTO semesters VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('semester', 0, 'Fall', 'Fall', 1, 0, when, when);
@@ -100,8 +117,8 @@ test('upgrades v0.2.2 ministries without losing values or making an unchanged dr
     } finally { db.close(); }
     const before = history(file);
     const result = await migrateDatabase(file);
-    assert.deepEqual(result.applied, ['1791158400_rename_student_ministry.sql']);
-    assert.deepEqual(history(file).slice(0, before.length), before);
+    assert.deepEqual(result.applied, ['1791158400_rename_student_ministry.up.sql']);
+    assert.deepEqual(history(file), [{ version: 1791158400, dirty: 0 }]);
     assert.deepEqual(history(result.backupFile), before);
     const upgraded = await openStore(file, empty);
     const data = upgraded.read();
@@ -142,10 +159,10 @@ test('adds blank ministries to populated records while retaining existing draft 
   try {
     db.exec('PRAGMA foreign_keys = ON');
     for (const name of legacyNames) {
-      const sql = await readFile(resolve('schema/migrations', name));
+      const sql = await legacySql(name);
       db.exec(sql.toString('utf8'));
       db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)')
-        .run(Number(name.slice(0, 10)), name, hash(sql), when, '0.2.1');
+        .run(Number(name.slice(0, 10)), name.replace('.up.sql', '.sql'), hash(sql), when, '0.2.1');
     }
     db.exec("INSERT INTO store_meta VALUES (1, 'legacy-epoch', 9)");
     db.prepare('INSERT INTO semesters VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -200,7 +217,7 @@ test('first start creates the SQLite schema and repeats without another migratio
   const file = join(directory, 'db.sqlite');
   const store = await openStore(file, empty);
   assert.deepEqual(store.read(), empty);
-  assert.deepEqual(history(file).map(({ version, name }) => ({ version, name })), baseNames.map((name) => ({ version: Number(name.slice(0, 10)), name })));
+  assert.deepEqual(history(file), [{ version: Number(baseNames.at(-1).slice(0, 10)), dirty: 0 }]);
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     assert.equal(db.prepare('PRAGMA application_id').get().application_id, 0x47434f55);
@@ -221,10 +238,10 @@ test('upgrades an existing finalized draft into an independent receipt and remov
     db.exec('PRAGMA foreign_keys = ON');
     const when = '2026-09-25T00:00:00.000Z';
     for (const name of baseNames.filter((name) => Number(name.slice(0, 10)) < 1790336872)) {
-      const sql = await readFile(resolve('schema/migrations', name));
+      const sql = await legacySql(name);
       db.exec(sql.toString('utf8'));
       db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)')
-        .run(Number(name.slice(0, 10)), name, hash(sql), when, '0.1.0');
+        .run(Number(name.slice(0, 10)), name.replace('.up.sql', '.sql'), hash(sql), when, '0.1.0');
     }
     db.exec("INSERT INTO store_meta VALUES (1, 'legacy-epoch', 0)");
     db.prepare(`INSERT INTO semesters (id, position, name, name_key, semester_order,
@@ -258,11 +275,11 @@ test('upgrades populated v0.1.0 data without losing applications, enrollments, o
   const db = new DatabaseSync(file);
   try {
     db.exec('PRAGMA foreign_keys = ON');
-    for (const name of [initName, '1790314390_restore_receipts.sql']) {
-      const sql = await readFile(resolve('schema/migrations', name));
+    for (const name of [initName, '1790314390_restore_receipts.up.sql']) {
+      const sql = await legacySql(name);
       db.exec(sql.toString('utf8'));
       db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)')
-        .run(Number(name.slice(0, 10)), name, hash(sql), when, '0.1.0');
+        .run(Number(name.slice(0, 10)), name.replace('.up.sql', '.sql'), hash(sql), when, '0.1.0');
     }
     db.exec("INSERT INTO store_meta VALUES (1, 'v010-epoch', 7)");
     db.prepare('INSERT INTO semesters VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -333,35 +350,35 @@ test('skipped-release migrations run in order and retain a pre-upgrade SQLite ba
     createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z',
   }] };
   await new SQLiteAdapter(file).write(original, empty);
-  const first = `${nextVersion}_rename_member.sql`;
-  const second = `${nextVersion + 86_400}_add_index.sql`;
+  const first = `${nextVersion}_rename_member.up.sql`;
+  const second = `${nextVersion + 86_400}_add_index.up.sql`;
   await writeFile(join(migrationDirectory, first), "UPDATE members SET name = '새 이름', name_key = '새 이름' WHERE id = 'member-1';\n");
   await writeFile(join(migrationDirectory, second), 'CREATE INDEX members_position_idx ON members(position);\n');
   await manifest(migrationDirectory, [...baseNames, first, second]);
   const result = await migrateDatabase(file, empty, { directory: migrationDirectory, backupDirectory: join(directory, 'update-backups') });
   assert.deepEqual(result.applied, [first, second]);
-  assert.equal(history(file).length, baseNames.length + 2);
+  assert.deepEqual(history(file), [{ version: nextVersion + 86_400, dirty: 0 }]);
   assert.equal((await new SQLiteAdapter(file).read()).members[0].name, '새 이름');
   const backups = await readdir(join(directory, 'update-backups'));
   assert.equal(backups.filter((name) => name.endsWith('.sqlite')).length, 1);
-  assert.equal(history(join(directory, 'update-backups', backups[0])).length, baseNames.length);
+  assert.deepEqual(history(join(directory, 'update-backups', backups[0])), [{ version: Number(baseNames.at(-1).slice(0, 10)), dirty: 0 }]);
   assert.equal((await new SQLiteAdapter(join(directory, 'update-backups', backups[0])).read()).members[0].name, '이전 이름');
 });
 
-test('a later invalid SQL rolls back the whole batch and leaves the original usable', async (t) => {
+test('a later invalid SQL rolls back the whole batch and leaves its original data with dirty state', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-migration-rollback-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const migrationDirectory = join(directory, 'migrations');
   const file = join(directory, 'db.sqlite');
   await copyBase(migrationDirectory);
   await migrateDatabase(file, empty, { directory: migrationDirectory });
-  const first = `${nextVersion}_add_index.sql`;
-  const second = `${nextVersion + 86_400}_invalid.sql`;
+  const first = `${nextVersion}_add_index.up.sql`;
+  const second = `${nextVersion + 86_400}_invalid.up.sql`;
   await writeFile(join(migrationDirectory, first), 'CREATE INDEX members_position_idx ON members(position);\n');
   await writeFile(join(migrationDirectory, second), 'INSERT INTO missing_table VALUES (1);\n');
   await manifest(migrationDirectory, [...baseNames, first, second]);
   await assert.rejects(migrateDatabase(file, empty, { directory: migrationDirectory, backupDirectory: join(directory, 'update-backups') }), /missing_table/);
-  assert.equal(history(file).length, baseNames.length);
+  assert.deepEqual(history(file), [{ version: nextVersion + 86_400, dirty: 1 }]);
   const db = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE name = 'members_position_idx'").get().count, 0); }
   finally { db.close(); }
@@ -381,12 +398,10 @@ test('changed, missing, or newer migration history blocks startup without modify
   await assert.rejects(migrateDatabase(file, empty, { directory: migrationDirectory }), /missing|manifest/i);
   const db = new DatabaseSync(file);
   try {
-    db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)').run(
-      nextVersion, `${nextVersion}_future.sql`, 'a'.repeat(64), '2026-09-27T09:00:00.000Z', '9.0.0',
-    );
+    db.prepare('UPDATE schema_migrations SET version = ?').run(nextVersion);
   } finally { db.close(); }
   await assert.rejects(openStore(file, empty), /newer migration/);
-  assert.equal(history(file).length, baseNames.length + 1);
+  assert.deepEqual(history(file), [{ version: nextVersion, dirty: 0 }]);
 });
 
 test('refuses a migration that controls the transaction before touching the database', async (t) => {
@@ -394,7 +409,7 @@ test('refuses a migration that controls the transaction before touching the data
   t.after(() => rm(directory, { recursive: true, force: true }));
   const migrationDirectory = join(directory, 'migrations');
   await copyBase(migrationDirectory);
-  const unsafe = `${nextVersion}_unsafe.sql`;
+  const unsafe = `${nextVersion}_unsafe.up.sql`;
   await writeFile(join(migrationDirectory, unsafe), 'COMMIT; CREATE TABLE partial_change (id INTEGER);\n');
   await manifest(migrationDirectory, [...baseNames, unsafe]);
   const file = join(directory, 'db.sqlite');
@@ -411,7 +426,7 @@ test('upgrades a database and backup from before restore receipts without losing
   try {
     db.exec(initialSql.toString('utf8'));
     db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)').run(
-      1790294400, initName, hash(initialSql), '2026-09-25T00:00:00.000Z', '0.1.0',
+      1790294400, initName.replace('.up.sql', '.sql'), hash(initialSql), '2026-09-25T00:00:00.000Z', '0.1.0',
     );
     db.exec("INSERT INTO store_meta VALUES (1, 'before-receipts', 7)");
     db.exec("INSERT INTO members VALUES ('member', 0, '회원', '회원', '2026-09-25T00:00:00.000Z', '2026-09-25T00:00:00.000Z')");

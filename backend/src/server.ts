@@ -54,7 +54,6 @@ export const startLocalServer = async (options: {
     options.onProgress?.('자료를 확인하고 있습니다.');
     const store = await openStore(join(options.dataDirectory, 'db.sqlite'), emptyStore(), {
       backupDirectory: join(options.dataDirectory, 'update-backups'),
-      appVersion: options.version,
       onProgress: options.onProgress,
     });
     const apiHandler = options.apiHandler ?? createApiRouter(store);
