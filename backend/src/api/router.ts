@@ -51,10 +51,12 @@ export const createApiRouter = (repository: Repository): ApiHandler => {
     }
 
     if (request.method === 'GET' && ['/semesters', '/members', '/courses'].includes(path)) {
-      const key = path.slice(1) as 'semesters' | 'members' | 'courses';
-      return ok(repository.read((queries) => queries.catalog.listPage({ kind: key,
-        query: request.query.get('query') ?? undefined, ...pagination(request),
-      })));
+      const filters = { query: request.query.get('query') ?? undefined, ...pagination(request) };
+      return ok(repository.read((queries) => {
+        if (path === '/semesters') return queries.semesters.listPage(filters);
+        if (path === '/members') return queries.members.listPage(filters);
+        return queries.courses.listPage(filters);
+      }));
     }
 
     const semester = match(path, /^\/semesters\/([^/]+)$/);
@@ -208,7 +210,7 @@ export const createApiRouter = (repository: Repository): ApiHandler => {
     }
     if (request.method === 'GET' && path === '/enrollments/export') {
       const data = repository.read((queries) => ({
-        items: queries.enrollments.list(enrollmentFilters(request)), courses: queries.catalog.listSemesterCourses(),
+        items: queries.enrollments.list(enrollmentFilters(request)), courses: queries.semesterCourses.list(),
       }));
       return xlsx(await enrollmentWorkbook(data.items, data.courses), 'glorycourse-enrollments.xlsx');
     }
@@ -291,7 +293,7 @@ export const createApiRouter = (repository: Repository): ApiHandler => {
     const importBatch = match(path, /^\/import-batches\/([^/]+)$/);
     if (importBatch) {
       if (request.method !== 'GET') return methodNotAllowed();
-      const batch = repository.read((queries) => queries.imports.getBatch({ id: importBatch[1] }));
+      const batch = repository.read((queries) => queries.importBatches.getBatch({ id: importBatch[1] }));
       if (!batch) throw new HttpError(404, 'NOT_FOUND', '대상을 찾을 수 없습니다.');
       return ok(structuredClone(batch));
     }
@@ -374,7 +376,7 @@ export const createApiRouter = (repository: Repository): ApiHandler => {
       if (request.method !== 'POST') return methodNotAllowed();
       const data = repository.read((queries) => ({
         expectedStore: queries.metadata(), items: queries.enrollments.list({ semesterId: enrollmentReport[1] }),
-        courses: queries.catalog.listSemesterCourses(),
+        courses: queries.semesterCourses.list(),
       }));
       const expectedStore = data.expectedStore;
       const body = await enrollmentWorkbook(data.items, data.courses);

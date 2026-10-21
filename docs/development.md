@@ -13,7 +13,7 @@
 | `backend/src/api/` | HTTP 라우팅, 요청 처리, 세션과 오류 응답 |
 | `backend/src/services/` | 신청·이력·배정·이관의 업무 규칙 |
 | `backend/src/bootstrap/` | 마이그레이션·스냅샷 SQL·Repository 초기화의 조합 |
-| `backend/src/repository/` | 이름 있는 업무 SQL, 결과 매핑, 읽기·쓰기 트랜잭션과 충돌·복구 처리 |
+| `backend/src/repository/` | 테이블별 고정 SQL과 결과 매핑, 읽기·쓰기 트랜잭션과 충돌·복구 처리 |
 | `backend/src/allocation/` | 배정 입력 스냅샷과 계산 엔진 |
 | `backend/src/excel/` | XLSX 양식·현황 생성과 업로드 검증 |
 | `backend/src/domain/` | 공용 레코드·조회 View·Filter·정렬 타입과 충돌·검증·복구 오류 |
@@ -26,7 +26,9 @@
 | `tests/` | 사용자 관점 기능·계약·저장·운영 테스트 |
 | `scripts/` | 실행기, 배포 패키지, migration manifest, 커버리지 보고서 |
 
-업무 SQL은 `repository/`의 업무별 TypeScript 파일에서 직접 확인할 수 있다. 서비스는 타입이 있는 인자를 repository 함수에 전달하며 SQL이나 전체 `DatabaseState`를 조회·변경하지 않는다. 마이그레이션·안전 사본 검사 등 저장 장치 관리용 SQL은 해당 `storage/` 모듈에 있다. 실제 DB 자료를 JSON 문서로 저장하지 않는다. HTTP 요청·검증 스키마·배포 설정의 JSON 사용은 별개다.
+업무 SQL은 `repository/`의 테이블별 TypeScript 파일에서 직접 확인할 수 있다. `members.ts`·`courses.ts`·`semesters.ts`·`semester-courses.ts`처럼 테이블마다 파일과 쿼리 객체를 두고, SQL이 비슷해도 `kind`나 테이블명 인자로 여러 테이블의 CRUD를 합치지 않는다. JOIN은 주 조회 테이블의 파일에 두며, 자식 테이블의 저장·삭제 SQL은 해당 자식 테이블 파일이 소유한다. 서비스는 `queries.members.update({ record })`·`queries.courses.update({ record })`처럼 명시적인 메서드에 타입이 있는 인자를 전달한다. SQL이나 전체 `DatabaseState`를 서비스에서 조회·변경하지 않는다.
+
+`queries.ts`는 같은 연결을 사용하는 테이블별 객체를 구성하고, `database.ts`는 트랜잭션·충돌·복구 절차를 관리한다. `relational-store.ts`는 초기 검증·마이그레이션·내부 복구의 전체 상태를 조립하며 실제 테이블 SQL은 각 테이블 파일의 snapshot 함수에 있다. `row-changes.ts`는 변경 행·위치·고유값의 임시 이동을 계산하는 순수 함수이며 SQL을 생성하거나 실행하지 않는다. 마이그레이션·안전 사본 검사 등 저장 장치 관리용 SQL은 해당 `storage/` 모듈에 있다. 실제 DB 자료를 JSON 문서로 저장하지 않는다. HTTP 요청·검증 스키마·배포 설정의 JSON 사용은 별개다.
 
 기본 서버는 `bootstrap/database.ts`의 `openRepository()`로 SQLite 파일을 열고 같은 repository를 라우터와 서비스에 주입한다. bootstrap은 storage 마이그레이션에 repository의 스냅샷 읽기·쓰기 함수를 전달한다. 초기화와 up 후 전체 검증은 같은 DDL 트랜잭션에서 처리하며, 실패하면 업무 자료를 롤백하고 dirty 상태를 유지한다. storage는 repository·services를 import하지 않고 repository는 services·bootstrap을 import하지 않는다. 공용 조회 타입은 `domain/query-models.ts`에서 가져온다. 일반 조회는 SQL로 현재 자료를 읽으며 업무 상태 전체를 메모리에 계속 보관하지 않는다. 한 응답에 필요한 여러 조회는 같은 읽기 트랜잭션에서 처리한다. 쓰기는 직렬화된 `BEGIN IMMEDIATE` 트랜잭션에서 버전 검사, 업무 SQL, 전체 revision 증가를 함께 커밋한다. 커밋 응답이 불확실하면 버전과 SQLite `data_version`을 확인하고, 판단할 수 없으면 후속 쓰기를 차단한다.
 

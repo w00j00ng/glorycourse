@@ -164,7 +164,7 @@ test('staged current templates preserve ministry text and version after restart 
       idempotencyKey: `stage-${kind}`, storeRevision: reviewed.storeRevision, storeEpoch: reviewed.storeEpoch,
       warningDigest: reviewed.warningDigest, resolutions: [] });
     assert.equal(reopened.snapshot()[candidates][0].ministry, row[2].trim());
-    assert.equal(reopened.read((queries) => queries.imports.getBatch({ id: staged.id })).templateVersion, version);
+    assert.equal(reopened.read((queries) => queries.importBatches.getBatch({ id: staged.id })).templateVersion, version);
   }
 });
 

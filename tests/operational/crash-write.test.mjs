@@ -42,7 +42,7 @@ for (const stage of ['pending', 'committed']) {
       const repository = await openRepository(process.argv[1], ${JSON.stringify(initial)});
       const stage = process.argv[2];
       await repository.write({}, async (queries) => {
-        for (let i = 0; i < 20; i++) queries.catalog.insertNamed({ kind: 'members', record: {
+        for (let i = 0; i < 20; i++) queries.members.insert({ record: {
           id: 'repository-' + i, name: '회원 ' + i, nameKey: '회원 ' + i,
           createdAt: '2026-10-21T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z',
         } });

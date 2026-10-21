@@ -2,7 +2,10 @@ import { applicationWarnings } from '../domain/application-warnings.ts';
 import type { QuerySession } from '../repository/queries.ts';
 import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
 import type { Repository } from '../repository/database.ts';
-import type { CatalogQueries, SemesterContext } from '../repository/catalog.ts';
+import type { MemberQueries } from '../repository/members.ts';
+import type { CourseQueries } from '../repository/courses.ts';
+import type { SemesterQueries, SemesterContext } from '../repository/semesters.ts';
+import type { SemesterCourseQueries } from '../repository/semester-courses.ts';
 import type { ApplicationListFilters, ApplicationView } from '../domain/query-models.ts';
 import type {
   ApplicationChoiceRecord as Choice,
@@ -81,8 +84,8 @@ export class ApplicationService {
     return this.repository.write({}, (queries) => {
       const now = this.dependencies.now().toISOString();
       const created = cleanInputs.map((clean, index) => {
-        const semester = resolveSemester(queries.catalog, clean.semesterName, now, this.dependencies.id);
-        const member = resolveNamed(queries.catalog, 'members', clean.memberName, now, this.dependencies.id);
+        const semester = resolveSemester(queries.semesters, clean.semesterName, now, this.dependencies.id);
+        const member = resolveMember(queries.members, clean.memberName, now, this.dependencies.id);
         if (queries.applications.findBySemesterMember({ semesterId: semester.id, memberId: member.id })) {
           throw withRow(new ApplicationConflictError('같은 학기에 이미 신청한 회원입니다.'), index);
         }
@@ -103,15 +106,15 @@ export class ApplicationService {
         };
         queries.applications.insert({ record: application });
         for (const inputChoice of clean.choices) {
-          const course = resolveNamed(queries.catalog, 'courses', inputChoice.courseName, now, this.dependencies.id);
+          const course = resolveCourse(queries.courses, inputChoice.courseName, now, this.dependencies.id);
           const semesterCourse = resolveSemesterCourse(
-            queries.catalog,
+            queries.semesterCourses,
             semester.id,
             course.id,
             now,
             this.dependencies.id,
           );
-          queries.applications.insertChoice({ record: {
+          queries.applicationChoices.insert({ record: {
             id: this.dependencies.id(),
             applicationId: application.id,
             semesterCourseId: semesterCourse.id,
@@ -121,7 +124,7 @@ export class ApplicationService {
             updatedAt: now,
           } });
         }
-        queries.catalog.bumpSemester({ id: semester.id, now });
+        queries.semesters.bump({ id: semester.id, now });
         return queries.applications.getView({ id: application.id })!;
       });
       return withApplicationWarnings(queries, created);
@@ -137,17 +140,17 @@ export class ApplicationService {
       if (current.revision !== input.expectedRevision) throw new RevisionConflictError(current.revision);
 
       const now = this.dependencies.now().toISOString();
-      const oldSemester = semesterById(queries.catalog, current.semesterId);
-      const semester = resolveSemester(queries.catalog, clean.semesterName, now, this.dependencies.id);
-      const member = resolveNamed(queries.catalog, 'members', clean.memberName, now, this.dependencies.id);
+      const oldSemester = semesterById(queries.semesters, current.semesterId);
+      const semester = resolveSemester(queries.semesters, clean.semesterName, now, this.dependencies.id);
+      const member = resolveMember(queries.members, clean.memberName, now, this.dependencies.id);
       if (queries.applications.findBySemesterMember({ semesterId: semester.id, memberId: member.id, excludeId: id })) {
         throw new ApplicationConflictError();
       }
 
       const nextChoices = clean.choices.map((inputChoice): Choice => {
-        const course = resolveNamed(queries.catalog, 'courses', inputChoice.courseName, now, this.dependencies.id);
+        const course = resolveCourse(queries.courses, inputChoice.courseName, now, this.dependencies.id);
         const semesterCourse = resolveSemesterCourse(
-          queries.catalog,
+          queries.semesterCourses,
           semester.id,
           course.id,
           now,
@@ -172,9 +175,9 @@ export class ApplicationService {
       current.revision += 1;
       current.updatedAt = now;
       queries.applications.update({ record: current });
-      queries.applications.replaceChoices({ applicationId: id, records: nextChoices });
-      queries.catalog.bumpSemester({ id: oldSemester.id, now });
-      if (semester.id !== oldSemester.id) queries.catalog.bumpSemester({ id: semester.id, now });
+      queries.applicationChoices.replaceForApplication({ applicationId: id, records: nextChoices });
+      queries.semesters.bump({ id: oldSemester.id, now });
+      if (semester.id !== oldSemester.id) queries.semesters.bump({ id: semester.id, now });
       return withApplicationWarnings(queries, [queries.applications.getView({ id })!])[0]!;
     });
   }
@@ -207,13 +210,13 @@ export class ApplicationService {
         throw new RevisionConflictError(application.revision);
       }
       queries.applications.delete({ id });
-      queries.catalog.bumpSemester({ id: application.semesterId, now: this.dependencies.now().toISOString() });
+      queries.semesters.bump({ id: application.semesterId, now: this.dependencies.now().toISOString() });
     });
   }
 
   previewSemesterApplicationDeletion(semesterId: string) {
     return this.repository.read((queries) => {
-      const semester = semesterById(queries.catalog, semesterId);
+      const semester = semesterById(queries.semesters, semesterId);
       return { semesterName: semester.name, count: queries.applications.count({ semesterId }), ...queries.metadata() };
     });
   }
@@ -227,20 +230,20 @@ export class ApplicationService {
     }
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
     return this.repository.write({ expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch }, (queries) => {
-      const semester = semesterById(queries.catalog, semesterId);
+      const semester = semesterById(queries.semesters, semesterId);
       if (semester.name !== input.confirmationName) {
         throw new ApplicationValidationError('삭제할 학기명을 정확히 입력하세요.');
       }
       const deletedCount = queries.applications.count({ semesterId });
       if (deletedCount === 0) throw new ApplicationValidationError('선택한 학기에 삭제할 수강신청이 없습니다.');
       queries.applications.deleteSemester({ semesterId });
-      queries.catalog.bumpSemester({ id: semesterId, now: this.dependencies.now().toISOString() });
+      queries.semesters.bump({ id: semesterId, now: this.dependencies.now().toISOString() });
       return { deletedCount };
     });
   }
 
   getSemesterContext(semesterId: string): SemesterContext {
-    return this.repository.read((queries) => semesterContext(queries.catalog, semesterId));
+    return this.repository.read((queries) => semesterContext(queries.semesters, semesterId));
   }
 
   async createSemester(input: { name: string; order: number | null }): Promise<SemesterContext> {
@@ -248,11 +251,11 @@ export class ApplicationService {
     const name = cleanName(input.name, 'name');
     if (input.order !== null) requireSafeInteger(input.order, 'order');
     return this.repository.write({}, (queries) => {
-      if (queries.catalog.getNamedByNameKey({ kind: 'semesters', nameKey: nameKey(name) })) {
+      if (queries.semesters.getByNameKey({ nameKey: nameKey(name) })) {
         throw new ApplicationConflictError('Semester name must be unique');
       }
-      const order = input.order ?? queries.catalog.nextSemesterOrder();
-      if (queries.catalog.findSemesterByOrder({ order })) {
+      const order = input.order ?? queries.semesters.nextOrder();
+      if (queries.semesters.findByOrder({ order })) {
         throw new ApplicationConflictError('Semester order must be unique');
       }
       const now = this.dependencies.now().toISOString();
@@ -265,8 +268,8 @@ export class ApplicationService {
         createdAt: now,
         updatedAt: now,
       };
-      queries.catalog.insertSemester({ record: semester });
-      return semesterContext(queries.catalog, semester.id);
+      queries.semesters.insert({ record: semester });
+      return semesterContext(queries.semesters, semester.id);
     });
   }
 
@@ -282,30 +285,30 @@ export class ApplicationService {
     }
     requireSafeInteger(input.expectedOrder, 'expectedOrder');
     return this.repository.write({}, (queries) => {
-      const semester = semesterById(queries.catalog, input.semesterId);
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.order === null) throw new ApplicationValidationError('학기 정보를 저장해 순서를 정한 뒤 이동하세요.');
-      const adjacent = queries.catalog.findAdjacentSemester({ semesterId: semester.id, direction: input.direction });
+      const adjacent = queries.semesters.findAdjacent({ semesterId: semester.id, direction: input.direction });
       if (semester.order !== input.expectedOrder || !adjacent || adjacent.id !== input.adjacentSemesterId) {
         throw new ApplicationConflictError('Semester order changed');
       }
       const now = this.dependencies.now().toISOString();
-      queries.catalog.swapSemesterOrders({ left: semester, right: adjacent, now });
-      return semesterContext(queries.catalog, semester.id);
+      queries.semesters.swapOrders({ left: semester, right: adjacent, now });
+      return semesterContext(queries.semesters, semester.id);
     });
   }
 
   async deleteSemester(input: { semesterId: string; expectedRevision: number }): Promise<void> {
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
     await this.repository.write({}, (queries) => {
-      const semester = semesterById(queries.catalog, input.semesterId);
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.allocationInputRevision !== input.expectedRevision) {
         throw new RevisionConflictError(semester.allocationInputRevision);
       }
-      const usage = queries.catalog.semesterUsage({ id: semester.id });
+      const usage = queries.semesters.usage({ id: semester.id });
       if (usage.applications || usage.enrollments || usage.drafts || usage.receipts) {
         throw new ApplicationConflictError('신청·수강이력·배정초안·확정 기록이 있는 학기는 삭제할 수 없습니다.');
       }
-      queries.catalog.deleteSemester({ id: semester.id });
+      queries.semesters.delete({ id: semester.id });
     });
   }
 
@@ -338,57 +341,57 @@ export class ApplicationService {
     ensureUnique(cleanCourses.map(({ courseName }) => nameKey(courseName)), 'courseName');
 
     return this.repository.write({}, (queries) => {
-      const semester = semesterById(queries.catalog, input.semesterId);
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.allocationInputRevision !== input.expectedRevision) {
         throw new RevisionConflictError(semester.allocationInputRevision);
       }
-      const order = input.order ?? semester.order ?? queries.catalog.nextSemesterOrder();
-      if (queries.catalog.findSemesterByOrder({ order, excludeId: semester.id })) {
+      const order = input.order ?? semester.order ?? queries.semesters.nextOrder();
+      if (queries.semesters.findByOrder({ order, excludeId: semester.id })) {
         throw new ApplicationConflictError('Semester order must be unique');
       }
 
       const now = this.dependencies.now().toISOString();
       const semesterName = input.name === undefined ? semester.name : cleanName(input.name, 'name');
       const semesterNameKey = nameKey(semesterName);
-      const sameName = queries.catalog.getNamedByNameKey({ kind: 'semesters', nameKey: semesterNameKey });
+      const sameName = queries.semesters.getByNameKey({ nameKey: semesterNameKey });
       if (sameName && sameName.id !== semester.id) {
         throw new ApplicationConflictError('Semester name must be unique');
       }
       semester.name = semesterName;
       semester.nameKey = semesterNameKey;
       semester.order = order;
-      queries.catalog.updateSemester({ record: semester });
+      queries.semesters.update({ record: semester });
       const changedSemesterIds = new Set([semester.id]);
       for (const item of cleanCourses) {
         let semesterCourse: SemesterCourse;
         let course: Named;
         if (item.id) {
-          const existing = queries.catalog.getSemesterCourse({ id: item.id });
+          const existing = queries.semesterCourses.get({ id: item.id });
           if (!existing || existing.semesterId !== semester.id) {
             throw new ApplicationNotFoundError('Semester course was not found');
           }
           semesterCourse = existing;
-          const existingCourse = queries.catalog.getCourse({ id: existing.courseId });
+          const existingCourse = queries.courses.get({ id: existing.courseId });
           if (!existingCourse) throw new ApplicationNotFoundError('Course was not found');
           course = existingCourse;
           const courseNameKey = nameKey(item.courseName);
           if (course.nameKey !== courseNameKey) {
-            const sameCourse = queries.catalog.getNamedByNameKey({ kind: 'courses', nameKey: courseNameKey });
+            const sameCourse = queries.courses.getByNameKey({ nameKey: courseNameKey });
             if (sameCourse && sameCourse.id !== course.id) {
               throw new ApplicationConflictError('Course name must be unique');
             }
             course.name = item.courseName;
             course.nameKey = courseNameKey;
             course.updatedAt = now;
-            queries.catalog.updateNamed({ kind: 'courses', record: course });
-            for (const linked of queries.catalog.listSemesterCourses({ courseId: course.id })) {
+            queries.courses.update({ record: course });
+            for (const linked of queries.semesterCourses.list({ courseId: course.id })) {
               changedSemesterIds.add(linked.semesterId);
             }
           }
         } else {
-          course = resolveNamed(queries.catalog, 'courses', item.courseName, now, this.dependencies.id);
+          course = resolveCourse(queries.courses, item.courseName, now, this.dependencies.id);
           semesterCourse = resolveSemesterCourse(
-            queries.catalog,
+            queries.semesterCourses,
             semester.id,
             course.id,
             now,
@@ -397,10 +400,10 @@ export class ApplicationService {
         }
         semesterCourse.capacity = item.capacity;
         semesterCourse.updatedAt = now;
-        queries.catalog.updateSemesterCourse({ record: semesterCourse });
+        queries.semesterCourses.update({ record: semesterCourse });
       }
-      for (const semesterId of changedSemesterIds) queries.catalog.bumpSemester({ id: semesterId, now });
-      return semesterContext(queries.catalog, semester.id);
+      for (const semesterId of changedSemesterIds) queries.semesters.bump({ id: semesterId, now });
+      return semesterContext(queries.semesters, semester.id);
     });
   }
 
@@ -419,25 +422,25 @@ export class ApplicationService {
     }
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
     await this.repository.write({}, (queries) => {
-      const semester = semesterById(queries.catalog, input.semesterId);
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.allocationInputRevision !== input.expectedRevision) {
         throw new RevisionConflictError(semester.allocationInputRevision);
       }
-      const semesterCourse = queries.catalog.getSemesterCourse({ id: input.semesterCourseId });
+      const semesterCourse = queries.semesterCourses.get({ id: input.semesterCourseId });
       if (!semesterCourse || semesterCourse.semesterId !== semester.id) throw new ApplicationNotFoundError('Semester course was not found');
-      if (queries.catalog.hasCourseEnrollments({ semesterCourseId: semesterCourse.id })) {
+      if (queries.enrollments.hasForCourse({ semesterCourseId: semesterCourse.id })) {
         throw new ApplicationConflictError('Enrollment history uses this semester course');
       }
 
-      const linkedChoiceCount = queries.applications.countCourseChoices({ semesterCourseId: semesterCourse.id });
+      const linkedChoiceCount = queries.applicationChoices.countForCourse({ semesterCourseId: semesterCourse.id });
       if (linkedChoiceCount > 0 && !input.confirmApplications) {
         throw new ApplicationConflictError('Application choices use this semester course');
       }
 
       const now = this.dependencies.now().toISOString();
-      queries.applications.removeCourseChoices({ semesterCourseId: semesterCourse.id, now });
-      queries.catalog.deleteSemesterCourse({ id: semesterCourse.id });
-      queries.catalog.bumpSemester({ id: semester.id, now });
+      queries.applicationChoices.removeCourseChoices({ semesterCourseId: semesterCourse.id, now });
+      queries.semesterCourses.delete({ id: semesterCourse.id });
+      queries.semesters.bump({ id: semester.id, now });
     });
   }
 }
@@ -527,45 +530,54 @@ const ensureUnique = (values: (string | number)[], field: string): void => {
   }
 };
 
-const resolveNamed = (catalog: CatalogQueries, kind: 'members' | 'courses', name: string, now: string, id: () => string): Named => {
+const resolveMember = (members: MemberQueries, name: string, now: string, id: () => string): Named => {
   const key = nameKey(name);
-  const existing = catalog.getNamedByNameKey({ kind, nameKey: key });
+  const existing = members.getByNameKey({ nameKey: key });
   if (existing) return existing;
   const created = { id: id(), name, nameKey: key, createdAt: now, updatedAt: now };
-  catalog.insertNamed({ kind, record: created });
+  members.insert({ record: created });
+  return created;
+};
+
+const resolveCourse = (courses: CourseQueries, name: string, now: string, id: () => string): Named => {
+  const key = nameKey(name);
+  const existing = courses.getByNameKey({ nameKey: key });
+  if (existing) return existing;
+  const created = { id: id(), name, nameKey: key, createdAt: now, updatedAt: now };
+  courses.insert({ record: created });
   return created;
 };
 
 const resolveSemester = (
-  catalog: CatalogQueries,
+  semesters: SemesterQueries,
   name: string,
   now: string,
   id: () => string,
 ): Semester => {
   const key = nameKey(name);
-  const existing = catalog.getNamedByNameKey({ kind: 'semesters', nameKey: key });
+  const existing = semesters.getByNameKey({ nameKey: key });
   if (existing) return existing;
   const created: Semester = {
     id: id(),
     name,
     nameKey: key,
-    order: catalog.nextSemesterOrder(),
+    order: semesters.nextOrder(),
     allocationInputRevision: 0,
     createdAt: now,
     updatedAt: now,
   };
-  catalog.insertSemester({ record: created });
+  semesters.insert({ record: created });
   return created;
 };
 
 const resolveSemesterCourse = (
-  catalog: CatalogQueries,
+  semesterCourses: SemesterCourseQueries,
   semesterId: string,
   courseId: string,
   now: string,
   id: () => string,
 ): SemesterCourse => {
-  const existing = catalog.getSemesterCourseByPair({ semesterId, courseId });
+  const existing = semesterCourses.getByPair({ semesterId, courseId });
   if (existing) return existing;
   const created: SemesterCourse = {
     id: id(),
@@ -575,18 +587,18 @@ const resolveSemesterCourse = (
     createdAt: now,
     updatedAt: now,
   };
-  catalog.insertSemesterCourse({ record: created });
+  semesterCourses.insert({ record: created });
   return created;
 };
 
-const semesterContext = (catalog: CatalogQueries, id: string): SemesterContext => {
-  const context = catalog.semesterContext({ id });
+const semesterContext = (semesters: SemesterQueries, id: string): SemesterContext => {
+  const context = semesters.context({ id });
   if (!context) throw new ApplicationNotFoundError('Semester was not found');
   return context;
 };
 
-const semesterById = (catalog: CatalogQueries, id: string): Semester => {
-  const semester = catalog.getSemester({ id });
+const semesterById = (semesters: SemesterQueries, id: string): Semester => {
+  const semester = semesters.get({ id });
   if (!semester) throw new ApplicationNotFoundError('Semester was not found');
   return semester;
 };

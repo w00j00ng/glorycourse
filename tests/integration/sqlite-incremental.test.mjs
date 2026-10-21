@@ -77,20 +77,20 @@ const setup = async (t) => {
 };
 
 const applyBatch = (queries) => {
-  const batch = queries.imports.getBatch({ id: 'batch' });
+  const batch = queries.importBatches.getBatch({ id: 'batch' });
   batch.status = 'APPLIED';
   batch.receipt = {
     receiptId: 'import-receipt', importBatchId: batch.id, previewId: 'preview',
     storeEpoch: queries.metadata().storeEpoch, idempotencyKey: 'import-request', requestHash: 'a'.repeat(64),
     inserted: 0, updated: 0, skipped: 2, committedAt: timestamp,
   };
-  queries.imports.saveBatch({ record: batch });
+  queries.importBatches.saveBatch({ record: batch });
 };
 
 test('saves one member name without rewriting other records or imported and automatic evidence', async (t) => {
   const { store, reopen, changes } = await setup(t);
-  await store.write({}, (queries) => queries.catalog.updateNamed({
-    kind: 'members', record: { ...queries.catalog.listNamed({ kind: 'members' })[0], name: 'Alice renamed' },
+  await store.write({}, (queries) => queries.members.update({
+    record: { ...queries.members.list()[0], name: 'Alice renamed' },
   }));
 
   assert.deepEqual(await reopen(), store.snapshot());
@@ -190,8 +190,8 @@ test('rolls back all incremental changes when a receipt is rejected and saves a 
   const { store, reopen, db, changes } = await setup(t);
   const before = store.snapshot();
   const save = (queries) => {
-    queries.catalog.updateNamed({
-      kind: 'members', record: { ...queries.catalog.listNamed({ kind: 'members' })[0], name: 'Alice renamed' },
+    queries.members.update({
+      record: { ...queries.members.list()[0], name: 'Alice renamed' },
     });
     applyBatch(queries);
   };
@@ -211,8 +211,8 @@ test('rolls back all incremental changes when a receipt is rejected and saves a 
 test('rejects restores based on an older revision or a different epoch without changing saved records', async (t) => {
   const { store, db, reopen, changes } = await setup(t);
   const before = store.snapshot();
-  await store.write({}, (queries) => queries.catalog.updateNamed({
-    kind: 'members', record: { ...before.members[0], name: 'Newest name' },
+  await store.write({}, (queries) => queries.members.update({
+    record: { ...before.members[0], name: 'Newest name' },
   }));
   const current = store.snapshot();
   db.exec('DELETE FROM write_audit');
@@ -232,7 +232,7 @@ test('rejects restores based on an older revision or a different epoch without c
 test('rejects a duplicated existing record instead of losing it when reopening the store', async (t) => {
   const { store, reopen, changes } = await setup(t);
   const before = store.snapshot();
-  await assert.rejects(store.write({}, (queries) => queries.catalog.insertNamed({ kind: 'members', record: before.members[0] })));
+  await assert.rejects(store.write({}, (queries) => queries.members.insert({ record: before.members[0] })));
   assert.deepEqual(store.snapshot(), before);
   assert.deepEqual(await reopen(), before);
   assert.deepEqual(changes(), {});

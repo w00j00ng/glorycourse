@@ -61,7 +61,7 @@ test('keeps GET and HEAD handlers read-only while accepting a protected POST sav
     dataDirectory: workspace.data, staticDirectory: workspace.static,
     apiHandler: async (request, { repository }) => {
       await repository.write({}, (queries) => {
-        queries.catalog.insertNamed({ kind: 'members', record: named({ id: 'saved', name: '저장된 회원' }) });
+        queries.members.insert({ record: named({ id: 'saved', name: '저장된 회원' }) });
       });
       return { status: 201, json: { saved: true } };
     },
@@ -77,7 +77,7 @@ test('keeps GET and HEAD handlers read-only while accepting a protected POST sav
     assert.deepEqual(runtime.repository.snapshot(), before);
   }
   assert.equal((await call(runtime.origin, '/api/v1/test/save', { method: 'POST', headers })).status, 201);
-  assert.deepEqual(runtime.repository.read((queries) => queries.catalog.listNamed({ kind: 'members' })).map(({ name }) => name), ['저장된 회원']);
+  assert.deepEqual(runtime.repository.read((queries) => queries.members.list()).map(({ name }) => name), ['저장된 회원']);
 });
 
 test('rejects forged Host, external Origin, missing tokens, and multipart forms before mutation', async (t) => {
@@ -1083,14 +1083,14 @@ test('removes the manual backup and restore API without changing stored data', a
 
 const testApi = async (request, { repository }) => {
   if (request.method === 'GET' && request.path === '/api/v1/test/state') {
-    return { status: 200, json: { members: repository.read((queries) => queries.catalog.listNamed({ kind: 'members' })).map(({ name }) => name) } };
+    return { status: 200, json: { members: repository.read((queries) => queries.members.list()).map(({ name }) => name) } };
   }
   if (request.path === '/api/v1/test/write') {
     if (request.method !== 'POST') return { status: 405, json: error('METHOD_NOT_ALLOWED', 'Method not allowed') };
     const input = JSON.parse(request.body.toString('utf8'));
     await repository.write({}, (queries) => {
-      const count = queries.catalog.listNamed({ kind: 'members' }).length;
-      queries.catalog.insertNamed({ kind: 'members', record: named({ id: `member-${count + 1}`, name: input.name }) });
+      const count = queries.members.list().length;
+      queries.members.insert({ record: named({ id: `member-${count + 1}`, name: input.name }) });
     });
     return { status: 201, json: { created: input.name } };
   }

@@ -23,7 +23,7 @@ import {
 } from '../domain/records.ts';
 import { StoreRevisionConflictError, StoreEpochConflictError } from '../domain/errors.ts';
 import type { Repository } from '../repository/database.ts';
-import type { ImportContext } from '../repository/imports.ts';
+import type { ImportContext } from '../repository/import-batches.ts';
 import { applyContext, bumpSemester, ImportCommitConflictError, resolveNamed, resolveSemester, resolveSemesterCourse } from './import-context.ts';
 export { ImportCommitConflictError } from './import-context.ts';
 type Dependencies = { id: () => string; now: () => Date };
@@ -74,7 +74,7 @@ export class ImportCommitService {
   async commit(input: CommitInput): Promise<ImportReceipt> {
     validateInput(input);
     const requestHash = hashRequest(input);
-    const previous = this.#repository.read((queries) => queries.imports.findReceipt({
+    const previous = this.#repository.read((queries) => queries.importReceipts.find({
       previewId: input.previewId, storeEpoch: input.storeEpoch, idempotencyKey: input.idempotencyKey,
     }));
     if (previous) return matchingReceipt(previous, requestHash);
@@ -96,7 +96,7 @@ export class ImportCommitService {
 
     try {
       return await this.#repository.write({ expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch }, (queries) => {
-        const previous = queries.imports.getContext();
+        const previous = queries.importBatches.getContext();
         const data = structuredClone(previous);
         assertCurrent(data.meta, preview, input);
         const committedAt = this.#dependencies.now().toISOString();
@@ -115,7 +115,7 @@ export class ImportCommitService {
           committedAt,
         };
         const batch = preview.sourceBatchId
-          ? queries.imports.getBatch({ id: preview.sourceBatchId })
+          ? queries.importBatches.getBatch({ id: preview.sourceBatchId })
           : undefined;
         if (preview.sourceBatchId && (!batch || batch.status !== 'STAGED')) {
           throw new ImportCommitConflictError('Staged import is no longer available');
@@ -125,9 +125,9 @@ export class ImportCommitService {
           batch.importedAt = committedAt;
           batch.resolutions = structuredClone(input.resolutions);
           batch.receipt = receipt;
-          queries.imports.saveBatch({ record: batch });
+          queries.importBatches.saveBatch({ record: batch });
         } else {
-          queries.imports.saveBatch({ record: {
+          queries.importBatches.saveBatch({ record: {
             id: batchId,
             kind: preview.kind,
             templateVersion: preview.templateVersion,
@@ -139,12 +139,12 @@ export class ImportCommitService {
             receipt,
           } });
         }
-        queries.imports.applyCandidate({ previous, candidate: data });
+        queries.importBatches.applyCandidate({ previous, candidate: data });
         return structuredClone(receipt);
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError || error instanceof StoreEpochConflictError) {
-        const receipt = this.#repository.read((queries) => queries.imports.findReceipt({
+        const receipt = this.#repository.read((queries) => queries.importReceipts.find({
           previewId: input.previewId, storeEpoch: input.storeEpoch, idempotencyKey: input.idempotencyKey,
         }));
         if (receipt) return matchingReceipt(receipt, requestHash);

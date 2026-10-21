@@ -15,7 +15,7 @@ import {
 import { applyBatchCandidate, evaluateEnrollmentImport } from './enrollments.ts';
 import { applyContext } from './import-context.ts';
 import type { Repository } from '../repository/database.ts';
-import type { ImportContext } from '../repository/imports.ts';
+import type { ImportContext } from '../repository/import-batches.ts';
 import type { ImportBatchRecord } from '../domain/records.ts';
 
 export type ImportMode = 'MERGE_KEEP_EXISTING' | 'REPLACE_APPLICATION';
@@ -130,7 +130,7 @@ export class ImportPreviewService {
     const templateVersion = validateMetadata(workbook, input.kind);
     const rawRows = extractRawRows(workbook, input.kind);
     return this.#remember(buildPreview(
-      this.#repository.read((queries) => queries.imports.getContext()),
+      this.#repository.read((queries) => queries.importBatches.getContext()),
       input.kind,
       templateVersion,
       rawRows,
@@ -159,13 +159,13 @@ export class ImportPreviewService {
         resolutions: [],
         receipt: null,
       };
-      queries.imports.saveBatch({ record: batch });
+      queries.importBatches.saveBatch({ record: batch });
       return structuredClone(batch);
     });
   }
 
   getStaged(id: string): ImportBatch {
-    const batch = this.#repository.read((queries) => queries.imports.getBatch({ id }));
+    const batch = this.#repository.read((queries) => queries.importBatches.getBatch({ id }));
     if (!batch || batch.status !== 'STAGED') throw new ImportBatchNotFoundError();
     return structuredClone(batch);
   }
@@ -173,7 +173,7 @@ export class ImportPreviewService {
   repreviewStaged(id: string): ImportPreview {
     const batch = this.getStaged(id);
     return this.#remember(buildPreview(
-      this.#repository.read((queries) => queries.imports.getContext()),
+      this.#repository.read((queries) => queries.importBatches.getContext()),
       batch.kind,
       batch.templateVersion,
       batch.rawRows,

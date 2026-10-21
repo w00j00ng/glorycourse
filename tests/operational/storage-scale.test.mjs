@@ -91,8 +91,8 @@ for (const members of [1_000, 10_000]) {
     const changedRows = await changedRowsFor(async () => {
       const started = performance.now();
       await repository.write({}, (queries) => {
-        const current = queries.catalog.getMember({ id: request.id });
-        queries.catalog.updateNamed({ kind: 'members', record: { ...current, ...request } });
+        const current = queries.members.get({ id: request.id });
+        queries.members.update({ record: { ...current, ...request } });
       });
       elapsed = performance.now() - started;
     });

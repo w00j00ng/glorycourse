@@ -195,7 +195,7 @@ export class FinalizationService {
   preview(draftId: string, input: { expectedDraftRevision: number }) {
     requireId(draftId, 'draftId');
     requireRevision(input.expectedDraftRevision);
-    const data = this.#repository.read((queries) => queries.allocation.getContext({ draftId }));
+    const data = this.#repository.read((queries) => queries.allocationDrafts.getContext({ draftId }));
     const draft = requireDraft(data, draftId);
     requireEditableRevision(draft, input.expectedDraftRevision);
     const selected = selectedItems(data, draftId);
@@ -236,7 +236,7 @@ export class FinalizationService {
   async finalize(draftId: string, input: FinalizeInput): Promise<FinalizationReceipt> {
     validateFinalizeInput(draftId, input);
     const requestHash = hashRequest(draftId, input);
-    const previous = this.#repository.read((queries) => queries.receipts.getFinalization({ idempotencyKey: input.idempotencyKey }));
+    const previous = this.#repository.read((queries) => queries.finalizationReceipts.get({ idempotencyKey: input.idempotencyKey }));
     if (previous) return matchingReceipt(previous, requestHash);
 
     const payload = verify(input.preparedActionToken, this.#dependencies.secret);
@@ -245,15 +245,15 @@ export class FinalizationService {
       || payload.draftRevision !== input.expectedDraftRevision
       || this.#dependencies.now().getTime() >= Date.parse(payload.expiresAt)
     ) throw new FinalizationTokenError();
-    const currentEvaluation = this.#repository.read((queries) => assertCurrent(queries.allocation.getContext({ draftId }), payload));
+    const currentEvaluation = this.#repository.read((queries) => assertCurrent(queries.allocationDrafts.getContext({ draftId }), payload));
     validateApproval(currentEvaluation.issues, payload.warningDigest, input);
 
     const receiptId = this.#dependencies.id();
     try {
       return await this.#repository.write({ expectedRevision: payload.storeRevision }, (queries) => {
-        const raced = queries.receipts.getFinalization({ idempotencyKey: input.idempotencyKey });
+        const raced = queries.finalizationReceipts.get({ idempotencyKey: input.idempotencyKey });
         if (raced) return matchingReceipt(raced, requestHash);
-        const data = queries.allocation.getContext({ draftId });
+        const data = queries.allocationDrafts.getContext({ draftId });
         const evaluation = assertCurrent(data, payload);
         validateApproval(evaluation.issues, payload.warningDigest, input);
         const finalizedAt = this.#dependencies.now().toISOString();
@@ -281,7 +281,7 @@ export class FinalizationService {
           createdCount: inserted.length,
           finalizedAt,
         };
-        queries.receipts.insertFinalization({ record: {
+        queries.finalizationReceipts.insert({ record: {
           idempotencyKey: input.idempotencyKey,
           requestHash,
           semesterId,
@@ -289,12 +289,12 @@ export class FinalizationService {
           enrollmentReportDownloadedAt: null,
           enrollmentReportStoreRevision: null,
         } });
-        queries.allocation.delete({ id: draftId });
+        queries.allocationDrafts.delete({ id: draftId });
         return structuredClone(receipt);
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError) {
-        const raced = this.#repository.read((queries) => queries.receipts.getFinalization({ idempotencyKey: input.idempotencyKey }));
+        const raced = this.#repository.read((queries) => queries.finalizationReceipts.get({ idempotencyKey: input.idempotencyKey }));
         if (raced) return matchingReceipt(raced, requestHash);
         throw new FinalizationStaleError();
       }
@@ -306,7 +306,7 @@ export class FinalizationService {
     requireId(semesterId, 'semesterId');
     return this.#repository.read((queries) => {
       const current = queries.metadata();
-      const receipt = queries.receipts.latestFinalization({ semesterId });
+      const receipt = queries.finalizationReceipts.latest({ semesterId });
       return {
         semesterId,
         finalized: Boolean(receipt),
@@ -322,7 +322,7 @@ export class FinalizationService {
   ): Promise<void> {
     requireId(semesterId, 'semesterId');
     const { current, receipt } = this.#repository.read((queries) => ({
-      current: queries.metadata(), receipt: queries.receipts.latestFinalization({ semesterId }),
+      current: queries.metadata(), receipt: queries.finalizationReceipts.latest({ semesterId }),
     }));
     if (current.storeEpoch !== expected.storeEpoch) throw new StoreEpochConflictError();
     if (current.storeRevision !== expected.storeRevision) {
@@ -331,9 +331,9 @@ export class FinalizationService {
     if (!receipt) throw new FinalizationValidationError('No finalized allocation exists for this semester');
     if (receipt.enrollmentReportStoreRevision === current.storeRevision) return;
     await this.#repository.write({ expectedRevision: expected.storeRevision, expectedEpoch: expected.storeEpoch }, (queries) => {
-      const latest = queries.receipts.latestFinalization({ semesterId });
+      const latest = queries.finalizationReceipts.latest({ semesterId });
       if (!latest || latest.idempotencyKey !== receipt.idempotencyKey) throw new FinalizationStaleError();
-      queries.receipts.markReportDownloaded({ idempotencyKey: latest.idempotencyKey,
+      queries.finalizationReceipts.markReportDownloaded({ idempotencyKey: latest.idempotencyKey,
         downloadedAt: this.#dependencies.now().toISOString(), storeRevision: queries.metadata().storeRevision + 1 });
     });
   }

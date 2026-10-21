@@ -1,4 +1,4 @@
-import type { ImportContext } from '../repository/imports.ts';
+import type { ImportContext } from '../repository/import-batches.ts';
 import type { ImportResolutionRecord as Resolution, NamedRecord as Named, SemesterCourseRecord as SemesterCourse, SemesterRecord as Semester } from '../domain/records.ts';
 import type { ImportContextChange } from './import-preview.ts';
 import { nextSemesterOrder } from './semester-order.ts';

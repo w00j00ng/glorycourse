@@ -131,7 +131,7 @@ test('saving one draft reads its own snapshot, preserves sibling evidence and ap
     return statement;
   };
   try {
-    await repository.write({}, (queries) => queries.allocation.save({ draft: target, items: [changedItem, newItem] }));
+    await repository.write({}, (queries) => queries.allocationDrafts.save({ draft: target, items: [changedItem, newItem] }));
   } finally { DatabaseSync.prototype.prepare = prepare; }
   assert.equal(siblingRowsRead, 0, 'an edit must not materialize snapshots or items belonging to sibling drafts');
 

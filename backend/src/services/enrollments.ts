@@ -271,7 +271,7 @@ export class EnrollmentService {
   }
 
   previewSemesterDeletion(semesterId: string) {
-    const summary = this.repository.read((queries) => queries.enrollments.semesterSummary({ semesterId }));
+    const summary = this.repository.read((queries) => queries.semesters.enrollmentSummary({ semesterId }));
     if (!summary) throw new EnrollmentNotFoundError();
     return summary;
   }
@@ -288,7 +288,7 @@ export class EnrollmentService {
       return await this.repository.write({
         expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch,
       }, (queries) => {
-        const summary = queries.enrollments.semesterSummary({ semesterId });
+        const summary = queries.semesters.enrollmentSummary({ semesterId });
         if (!summary) throw new EnrollmentNotFoundError();
         if (summary.semesterName !== input.confirmationName) {
           throw new EnrollmentValidationError('삭제할 학기명을 정확히 입력하세요.');

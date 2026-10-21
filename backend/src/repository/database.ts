@@ -6,6 +6,7 @@ import type { DatabaseState } from '../domain/records.ts';
 import { StoreEpochConflictError, StoreRecoveryRequiredError, StoreRevisionConflictError } from '../domain/errors.ts';
 import { assertValidStore } from '../storage/validate-store.ts';
 import { QuerySession } from './queries.ts';
+import { StoreMetaQueries } from './store-meta.ts';
 
 type Version = DatabaseState['meta'];
 type WriteOptions = { expectedRevision?: number; expectedEpoch?: string };
@@ -13,14 +14,7 @@ type TransactionOptions = { restore?: DatabaseState };
 
 const applicationId = 0x47434f55;
 
-const metadata = (db: DatabaseSync): Version => {
-  const row = db.prepare(`
-    SELECT store_epoch AS storeEpoch, store_revision AS storeRevision
-    FROM store_meta WHERE id = 1
-  `).get();
-  if (!row) throw new Error('SQLite store metadata is missing');
-  return { storeEpoch: String(row.storeEpoch), storeRevision: Number(row.storeRevision) };
-};
+const metadata = (db: DatabaseSync): Version => new StoreMetaQueries(db).get();
 
 const sameVersion = (left: Version, right: Version): boolean => (
   left.storeEpoch === right.storeEpoch && left.storeRevision === right.storeRevision
@@ -119,7 +113,7 @@ export class Repository {
         if (transaction.restore) previousState = readRelationalStore(db);
         result = structuredClone(await command(db, previousState));
         if (!transaction.restore) {
-          db.prepare('UPDATE store_meta SET store_revision = ? WHERE id = 1').run(before.storeRevision + 1);
+          new StoreMetaQueries(db).updateRevision({ revision: before.storeRevision + 1 });
         }
         expected = metadata(db);
         committing = true;

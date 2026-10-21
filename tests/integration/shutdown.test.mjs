@@ -20,7 +20,7 @@ test('protected shutdown finishes an accepted save and allows restart with saved
       saveStarted();
       await proceed;
       await repository.write({}, (queries) => {
-        queries.catalog.insertNamed({ kind: 'members', record: {
+        queries.members.insert({ record: {
           id: 'saved-before-exit', name: '저장된 회원', nameKey: '저장된 회원',
           createdAt: '2026-09-22T00:00:00.000Z', updatedAt: '2026-09-22T00:00:00.000Z',
         } });

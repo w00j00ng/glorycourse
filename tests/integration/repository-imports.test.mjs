@@ -191,7 +191,7 @@ test('SQL import staging and commit preserve original cells, choice sources and 
   assert.deepEqual(await reloaded.commit(request(preview)), receipt);
   await assert.rejects(reloaded.commit({ ...request(preview), resolutions: [{ entity: 'APPLICATION',
     action: 'KEEP_EXISTING', semesterName: '2026 가을', memberName: '홍길동' }] }), ImportIdempotencyConflictError);
-  assert.equal(repository.read((queries) => queries.imports.getBatch({ id: staged.id })).receipt.receiptId, receipt.receiptId);
+  assert.equal(repository.read((queries) => queries.importBatches.getBatch({ id: staged.id })).receipt.receiptId, receipt.receiptId);
 });
 
 test('SQL enrollment imports roll back unacknowledged retakes and preserve row acknowledgements when accepted', async (t) => {

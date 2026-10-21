@@ -37,19 +37,19 @@ test('repository persists a requested member and reads another committed connect
   const { repository, file } = await open(t);
   const request = member('requested-member');
   await repository.write({ expectedRevision: 0, expectedEpoch: 'epoch-1' }, (queries) => (
-    queries.catalog.insertNamed({ kind: 'members', record: request })
+    queries.members.insert({ record: request })
   ));
 
-  assert.deepEqual(repository.read((queries) => queries.catalog.listNamed({ kind: 'members' })), [request]);
+  assert.deepEqual(repository.read((queries) => queries.members.list()), [request]);
   assert.deepEqual(repository.version(), { storeEpoch: 'epoch-1', storeRevision: 1 });
 
   const external = await openRepository(file, emptyStore());
   t.after(() => external.close());
   await external.write({}, (queries) => {
-    queries.catalog.updateNamed({ kind: 'members', record: { ...request, name: 'renamed' } });
+    queries.members.update({ record: { ...request, name: 'renamed' } });
   });
 
-  assert.equal(repository.read((queries) => queries.catalog.listNamed({ kind: 'members' }))[0].name, 'renamed');
+  assert.equal(repository.read((queries) => queries.members.list())[0].name, 'renamed');
   assert.equal(repository.version().storeRevision, 2);
 });
 
@@ -57,14 +57,14 @@ test('repository serializes saves and rolls back all data when a requested opera
   const { repository } = await open(t);
   const failed = new Error('requested operation failed');
   await assert.rejects(repository.write({}, (queries) => {
-    queries.catalog.insertNamed({ kind: 'members', record: member('rolled-back') });
+    queries.members.insert({ record: member('rolled-back') });
     throw failed;
   }), failed);
   assert.deepEqual(repository.snapshot(), emptyStore());
 
   await Promise.all(['first', 'second'].map((id) => repository.write({}, async (queries) => {
     await Promise.resolve();
-    queries.catalog.insertNamed({ kind: 'members', record: member(id) });
+    queries.members.insert({ record: member(id) });
   })));
   assert.deepEqual(repository.snapshot().members.map(({ id }) => id), ['first', 'second']);
   assert.equal(repository.version().storeRevision, 2);
@@ -78,26 +78,26 @@ test('repository reads the last committed version during an awaited save and ret
   const paused = new Promise((resolve) => { resume = resolve; });
   const requested = member('suspended-save');
   const saving = repository.write({}, async (queries) => {
-    queries.catalog.insertNamed({ kind: 'members', record: requested });
+    queries.members.insert({ record: requested });
     entered();
     await paused;
-    return queries.catalog.getMember({ id: requested.id });
+    return queries.members.get({ id: requested.id });
   });
   await ready;
   try {
     assert.deepEqual(repository.read((queries) => ({
-      members: queries.catalog.listNamed({ kind: 'members' }), version: queries.metadata(),
+      members: queries.members.list(), version: queries.metadata(),
     })), { members: [], version: { storeEpoch: 'epoch-1', storeRevision: 0 } });
   } finally { resume(); }
   const saved = await saving;
   assert.deepEqual(saved, requested);
   saved.name = 'caller changed the save result';
-  const read = repository.read((queries) => queries.catalog.getMember({ id: requested.id }));
+  const read = repository.read((queries) => queries.members.get({ id: requested.id }));
   read.name = 'caller changed the read result';
-  assert.deepEqual(repository.read((queries) => queries.catalog.getMember({ id: requested.id })), requested);
+  assert.deepEqual(repository.read((queries) => queries.members.get({ id: requested.id })), requested);
   const snapshot = repository.snapshot();
   snapshot.members[0].name = 'caller changed a recovery snapshot';
-  assert.deepEqual(repository.read((queries) => queries.catalog.getMember({ id: requested.id })), requested);
+  assert.deepEqual(repository.read((queries) => queries.members.get({ id: requested.id })), requested);
 });
 
 test('repository rolls back requested rows when the store revision cannot be incremented safely', async (t) => {
@@ -106,7 +106,7 @@ test('repository rolls back requested rows when the store revision cannot be inc
   const { repository } = await open(t, initial);
 
   await assert.rejects(repository.write({}, (queries) => (
-    queries.catalog.insertNamed({ kind: 'members', record: member('overflowed-save') })
+    queries.members.insert({ record: member('overflowed-save') })
   )), /CHECK constraint failed/);
   assert.deepEqual(repository.snapshot(), initial);
 });
@@ -114,21 +114,21 @@ test('repository rolls back requested rows when the store revision cannot be inc
 test('repository read operations reject writes and leave committed data unchanged', async (t) => {
   const { repository } = await open(t);
   assert.throws(() => repository.read((queries) => (
-    queries.catalog.insertNamed({ kind: 'members', record: member('read-operation') })
+    queries.members.insert({ record: member('read-operation') })
   )), /readonly|read-only/i);
   assert.deepEqual(repository.snapshot(), emptyStore());
 });
 
 test('repository rejects stale revisions and epochs without changing saved data', async (t) => {
   const { repository } = await open(t);
-  await repository.write({}, (queries) => queries.catalog.insertNamed({ kind: 'members', record: member('saved') }));
+  await repository.write({}, (queries) => queries.members.insert({ record: member('saved') }));
   const before = repository.snapshot();
   for (const { options, error } of [
     { options: { expectedRevision: 0 }, error: StoreRevisionConflictError },
     { options: { expectedEpoch: 'older-epoch' }, error: StoreEpochConflictError },
   ]) {
     await assert.rejects(repository.write(options, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('stale') })
+      queries.members.insert({ record: member('stale') })
     )), error);
     assert.deepEqual(repository.snapshot(), before);
   }
@@ -149,7 +149,7 @@ test('repository reconciles a lost commit response and returns the saved operati
   let result;
   try {
     result = await repository.write({}, (queries) => {
-      queries.catalog.insertNamed({ kind: 'members', record: member('saved') });
+      queries.members.insert({ record: member('saved') });
       return { receiptId: 'saved-receipt' };
     });
   } finally { DatabaseSync.prototype.exec = exec; }
@@ -174,7 +174,7 @@ test('repository blocks unreconciled saves until an explicit restore succeeds', 
   };
   try {
     await assert.rejects(repository.write({}, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('uncertain') })
+      queries.members.insert({ record: member('uncertain') })
     )), StoreRecoveryRequiredError);
   } finally { DatabaseSync.prototype.exec = exec; }
 
@@ -197,7 +197,7 @@ test('repository blocks unreconciled saves until an explicit restore succeeds', 
   assert.equal(backups, 1);
   assert.deepEqual(repository.snapshot(), replacement);
   await repository.write({ expectedRevision: 0, expectedEpoch: 'recovered-epoch' }, (queries) => (
-    queries.catalog.insertNamed({ kind: 'members', record: member('recovered-save') })
+    queries.members.insert({ record: member('recovered-save') })
   ));
   assert.deepEqual(repository.snapshot().members, [member('recovered-save')]);
 });
@@ -219,7 +219,7 @@ test('repository detects another writer after a lost commit response even when m
   };
   try {
     await assert.rejects(repository.write({}, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('saved') })
+      queries.members.insert({ record: member('saved') })
     )), StoreRecoveryRequiredError);
   } finally { DatabaseSync.prototype.exec = exec; }
 
@@ -252,7 +252,7 @@ test('repository detects another writer between a lost commit response and the r
   };
   try {
     await assert.rejects(repository.write({}, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('saved') })
+      queries.members.insert({ record: member('saved') })
     )), StoreRecoveryRequiredError);
   } finally {
     DatabaseSync.prototype.exec = exec;
@@ -276,12 +276,12 @@ test('repository keeps the original error and saved state when commit fails befo
   };
   try {
     await assert.rejects(repository.write({}, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('not-saved') })
+      queries.members.insert({ record: member('not-saved') })
     )), failure);
   } finally { DatabaseSync.prototype.exec = exec; }
 
   assert.deepEqual(repository.snapshot(), emptyStore());
-  await repository.write({}, (queries) => queries.catalog.insertNamed({ kind: 'members', record: member('next-save') }));
+  await repository.write({}, (queries) => queries.members.insert({ record: member('next-save') }));
   assert.deepEqual(repository.snapshot().members, [member('next-save')]);
 });
 
@@ -304,7 +304,7 @@ test('repository blocks later saves when the commit outcome cannot be read', asy
   };
   try {
     await assert.rejects(repository.write({}, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('uncertain') })
+      queries.members.insert({ record: member('uncertain') })
     )), StoreRecoveryRequiredError);
   } finally {
     DatabaseSync.prototype.exec = exec;
@@ -316,7 +316,7 @@ test('repository blocks later saves when the commit outcome cannot be read', asy
 
 test('repository restore validates and backs up before replacing the current state', async (t) => {
   const { repository } = await open(t);
-  await repository.write({}, (queries) => queries.catalog.insertNamed({ kind: 'members', record: member('current') }));
+  await repository.write({}, (queries) => queries.members.insert({ record: member('current') }));
   const before = repository.snapshot();
   const replacement = emptyStore();
   replacement.meta = { storeEpoch: 'restored-epoch', storeRevision: 7 };
@@ -367,7 +367,7 @@ for (const { stage, persisted } of [
 
     assert.deepEqual(repository.snapshot(), persisted ? replacement : initial);
     await repository.write({ expectedRevision: 0, expectedEpoch: 'epoch-1' }, (queries) => (
-      queries.catalog.insertNamed({ kind: 'members', record: member('next-save') })
+      queries.members.insert({ record: member('next-save') })
     ));
     assert.deepEqual(repository.snapshot().members, [...(persisted ? replacement : initial).members, member('next-save')]);
   });

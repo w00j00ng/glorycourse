@@ -23,7 +23,7 @@ test('reopens independent student ministries and preserves the draft generation 
   await store.write({}, (queries) => {
     queries.applications.update({ record: { ...initial.applications[0], ministry: 'Changed application school' } });
     queries.enrollments.update({ record: { ...initial.enrollments[0], ministry: null } });
-    queries.allocation.save({
+    queries.allocationDrafts.save({
       draft: initial.allocationDrafts[0],
       items: [{ ...initial.allocationDraftItems[0], ministry: null }],
     });
@@ -69,9 +69,9 @@ test('creates a managed SQLite database and reopens committed records', async (t
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
   const store = await openRepository(file, empty);
-  await store.write({}, (queries) => queries.catalog.insertNamed({ kind: 'members', record: member }));
+  await store.write({}, (queries) => queries.members.insert({ record: member }));
   assert.equal((await readFile(file)).subarray(0, 16).toString(), 'SQLite format 3\0');
-  await store.write({}, (queries) => queries.catalog.updateNamed({ kind: 'members', record: { ...member, name: '수정 회원' } }));
+  await store.write({}, (queries) => queries.members.update({ record: { ...member, name: '수정 회원' } }));
   const reopened = await openRepository(file, empty);
   assert.equal(reopened.snapshot().members[0].name, '수정 회원');
   const db = new DatabaseSync(file, { readOnly: true });
@@ -114,8 +114,8 @@ test('leaves an old JSON file untouched and rolls back a failed SQLite transacti
   assert.equal(await readFile(legacyFile, 'utf8'), '{broken');
   const repository = await openRepository(file, empty);
   await assert.rejects(repository.write({}, (queries) => {
-    queries.catalog.insertNamed({ kind: 'members', record: member });
-    queries.catalog.insertNamed({ kind: 'members', record: member });
+    queries.members.insert({ record: member });
+    queries.members.insert({ record: member });
   }));
   assert.deepEqual(repository.snapshot(), empty);
 });
@@ -126,7 +126,7 @@ test('rejects a record whose foreign keys do not exist and keeps committed data 
   const file = join(directory, 'db.sqlite');
   const store = await openRepository(file, empty);
   await assert.rejects(store.write({}, (queries) => {
-    queries.catalog.insertSemesterCourse({ record: {
+    queries.semesterCourses.insert({ record: {
       id: 'semester-course-1', semesterId: 'missing-semester', courseId: 'missing-course', capacity: 1,
       createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z',
     } });

@@ -338,8 +338,8 @@ test('upgrades populated v0.1.0 data without losing applications, enrollments, o
   assert.deepEqual(restored.enrollments, data.enrollments);
   assert.deepEqual(restored.finalizationReceipts, data.finalizationReceipts);
   assert.deepEqual(await readFile(result.backupFile), backupBytes);
-  await upgraded.write({}, (queries) => queries.catalog.updateNamed({
-    kind: 'members', record: { ...queries.catalog.getMember({ id: data.members[0].id }), name: '변경한 회원' },
+  await upgraded.write({}, (queries) => queries.members.update({
+    record: { ...queries.members.get({ id: data.members[0].id }), name: '변경한 회원' },
   }));
   const reopened = (await openRepository(file, empty)).snapshot();
   assert.equal(reopened.members[0].name, '변경한 회원');
