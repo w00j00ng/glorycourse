@@ -6,12 +6,17 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { migrateDatabase } from '../../backend/src/storage/migrations.ts';
-import { SQLiteAdapter, readStoreFromDatabase, writeStoreToDatabase } from '../../backend/src/storage/sqlite.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
+import { migrateDatabase } from '../../backend/src/bootstrap/database.ts';
+import { readRelationalStore, writeRelationalStore } from '../../backend/src/repository/relational-store.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 import { DraftService } from '../../backend/src/services/drafts.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
+const readDatabase = (file) => {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try { return readRelationalStore(db); }
+  finally { db.close(); }
+};
 const initName = '1790294400_init.up.sql';
 const init = resolve('tests/fixtures/migrations/1790294400_init.sql');
 const baseNames = (await readdir(resolve('schema/migrations'))).filter((name) => name.endsWith('.up.sql')).sort();
@@ -65,8 +70,8 @@ test('the complete migration target initializes the current schema and stores st
     assert.equal(target.prepare('PRAGMA application_id').get().application_id, 0x47434f55);
     assert.equal(target.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
     const records = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
-    writeStoreToDatabase(target, records);
-    assert.deepEqual(readStoreFromDatabase(target), records);
+    writeRelationalStore(target, records);
+    assert.deepEqual(readRelationalStore(target), records);
     assert.deepEqual(target.prepare('PRAGMA foreign_key_check').all(), []);
   } finally {
     migrated.close();
@@ -120,8 +125,8 @@ test('upgrades v0.2.2 ministries without losing values or making an unchanged dr
     assert.deepEqual(result.applied, ['1791158400_rename_student_ministry.up.sql']);
     assert.deepEqual(history(file), [{ version: 1791158400, dirty: 0 }]);
     assert.deepEqual(history(result.backupFile), before);
-    const upgraded = await openStore(file, empty);
-    const data = upgraded.read();
+    const upgraded = await openRepository(file, empty);
+    const data = upgraded.snapshot();
     const records = [data.applications[0], data.enrollments[0], data.allocationDraftItems[0],
       data.allocationDrafts[0].inputSnapshot.applications[0], data.allocationDrafts[0].inputSnapshot.existingEnrollments[0]];
     assert.deepEqual(records.map(({ ministry }) => ministry), [input.application, input.enrollment, input.draft, input.application, input.enrollment]);
@@ -143,7 +148,7 @@ test('upgrades v0.2.2 ministries without losing values or making an unchanged dr
     const edited = await drafts.updateItem('draft', 'member', { expectedDraftRevision: 0, ministry: '새 소속',
       finalDecision: 'REJECTED', finalSemesterCourseId: null, finalReasonCode: null, finalReasonDetail: null });
     assert.equal(edited.studentResults[0].ministry, '새 소속');
-    const reopened = await openStore(file, empty);
+    const reopened = await openRepository(file, empty);
     assert.equal(new DraftService(reopened, dependencies).get('draft').studentResults[0].ministry, '새 소속');
     assert.equal(new DraftService(reopened, dependencies).get('draft').isStale, false);
   }
@@ -193,8 +198,8 @@ test('adds blank ministries to populated records while retaining existing draft 
 
   const result = await migrateDatabase(file);
   assert.deepEqual(result.applied, baseNames.filter((name) => !legacyNames.includes(name)));
-  const store = await openStore(file, empty);
-  const upgraded = store.read();
+  const store = await openRepository(file, empty);
+  const upgraded = store.snapshot();
   for (const records of [upgraded.applications, upgraded.enrollments, upgraded.allocationDraftItems,
     upgraded.allocationDrafts[0].inputSnapshot.applications, upgraded.allocationDrafts[0].inputSnapshot.existingEnrollments]) {
     assert.equal(records.length, 1);
@@ -207,16 +212,18 @@ test('adds blank ministries to populated records while retaining existing draft 
   const after = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(after.prepare('PRAGMA table_info(members)').all().some(({ name }) => name === 'ministry'), false); }
   finally { after.close(); }
-  await store.write({}, (data) => { data.applications[0].ministry = 'New school'; });
-  assert.equal((await openStore(file, empty)).read().applications[0].ministry, 'New school');
+  await store.write({}, (queries) => queries.applications.update({
+    record: { ...queries.applications.get({ id: upgraded.applications[0].id }), ministry: 'New school' },
+  }));
+  assert.equal((await openRepository(file, empty)).snapshot().applications[0].ministry, 'New school');
 });
 
 test('first start creates the SQLite schema and repeats without another migration', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-migration-new-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  const store = await openStore(file, empty);
-  assert.deepEqual(store.read(), empty);
+  const store = await openRepository(file, empty);
+  assert.deepEqual(store.snapshot(), empty);
   assert.deepEqual(history(file), [{ version: Number(baseNames.at(-1).slice(0, 10)), dirty: 0 }]);
   const db = new DatabaseSync(file, { readOnly: true });
   try {
@@ -224,7 +231,7 @@ test('first start creates the SQLite schema and repeats without another migratio
     assert.equal(db.prepare('PRAGMA user_version').get().user_version, 0);
   } finally { db.close(); }
   const before = history(file);
-  assert.deepEqual((await openStore(file, empty)).read(), empty);
+  assert.deepEqual((await openRepository(file, empty)).snapshot(), empty);
   assert.deepEqual(history(file), before);
   assert.equal((await readdir(directory)).filter((name) => name.endsWith('.sqlite')).length, 1);
 });
@@ -259,7 +266,7 @@ test('upgrades an existing finalized draft into an independent receipt and remov
   } finally { db.close(); }
 
   await migrateDatabase(file, empty, { skipBackup: true });
-  const upgraded = (await openStore(file, empty)).read();
+  const upgraded = (await openRepository(file, empty)).snapshot();
   assert.deepEqual(upgraded.allocationDrafts, []);
   assert.deepEqual(upgraded.allocationDraftItems, []);
   assert.equal(upgraded.finalizationReceipts[0].receipt.draftId, 'draft-1');
@@ -313,8 +320,8 @@ test('upgrades populated v0.1.0 data without losing applications, enrollments, o
   const result = await migrateDatabase(file);
   assert.deepEqual(result.applied, baseNames.slice(2));
   assert.equal(history(result.backupFile).length, 2);
-  const upgraded = await openStore(file, empty);
-  const data = upgraded.read();
+  const upgraded = await openRepository(file, empty);
+  const data = upgraded.snapshot();
   assert.equal(data.meta.storeRevision, 7);
   assert.equal(data.applications[0].id, 'app-1');
   assert.equal(data.applicationChoices[0].semesterCourseId, 'sc-1');
@@ -327,12 +334,14 @@ test('upgrades populated v0.1.0 data without losing applications, enrollments, o
   const backupBytes = await readFile(result.backupFile);
   const copy = join(directory, 'update-copy.sqlite');
   await cp(result.backupFile, copy);
-  const restored = (await openStore(copy, empty)).read();
+  const restored = (await openRepository(copy, empty)).snapshot();
   assert.deepEqual(restored.enrollments, data.enrollments);
   assert.deepEqual(restored.finalizationReceipts, data.finalizationReceipts);
   assert.deepEqual(await readFile(result.backupFile), backupBytes);
-  await upgraded.write({}, (candidate) => { candidate.members[0].name = '변경한 회원'; });
-  const reopened = (await openStore(file, empty)).read();
+  await upgraded.write({}, (queries) => queries.catalog.updateNamed({
+    kind: 'members', record: { ...queries.catalog.getMember({ id: data.members[0].id }), name: '변경한 회원' },
+  }));
+  const reopened = (await openRepository(file, empty)).snapshot();
   assert.equal(reopened.members[0].name, '변경한 회원');
   assert.deepEqual(reopened.enrollments, data.enrollments);
   assert.deepEqual(reopened.finalizationReceipts, data.finalizationReceipts);
@@ -349,7 +358,11 @@ test('skipped-release migrations run in order and retain a pre-upgrade SQLite ba
     id: 'member-1', name: '이전 이름', nameKey: '이전 이름',
     createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z',
   }] };
-  await new SQLiteAdapter(file).write(original, empty);
+  const seed = await openRepository(file, empty);
+  await seed.restore(original, {
+    expectedRevision: empty.meta.storeRevision, expectedEpoch: empty.meta.storeEpoch, backup: async () => {},
+  });
+  seed.close();
   const first = `${nextVersion}_rename_member.up.sql`;
   const second = `${nextVersion + 86_400}_add_index.up.sql`;
   await writeFile(join(migrationDirectory, first), "UPDATE members SET name = '새 이름', name_key = '새 이름' WHERE id = 'member-1';\n");
@@ -358,11 +371,11 @@ test('skipped-release migrations run in order and retain a pre-upgrade SQLite ba
   const result = await migrateDatabase(file, empty, { directory: migrationDirectory, backupDirectory: join(directory, 'update-backups') });
   assert.deepEqual(result.applied, [first, second]);
   assert.deepEqual(history(file), [{ version: nextVersion + 86_400, dirty: 0 }]);
-  assert.equal((await new SQLiteAdapter(file).read()).members[0].name, '새 이름');
+  assert.equal((readDatabase(file)).members[0].name, '새 이름');
   const backups = await readdir(join(directory, 'update-backups'));
   assert.equal(backups.filter((name) => name.endsWith('.sqlite')).length, 1);
   assert.deepEqual(history(join(directory, 'update-backups', backups[0])), [{ version: Number(baseNames.at(-1).slice(0, 10)), dirty: 0 }]);
-  assert.equal((await new SQLiteAdapter(join(directory, 'update-backups', backups[0])).read()).members[0].name, '이전 이름');
+  assert.equal((readDatabase(join(directory, 'update-backups', backups[0]))).members[0].name, '이전 이름');
 });
 
 test('a later invalid SQL rolls back the whole batch and leaves its original data with dirty state', async (t) => {
@@ -382,14 +395,14 @@ test('a later invalid SQL rolls back the whole batch and leaves its original dat
   const db = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE name = 'members_position_idx'").get().count, 0); }
   finally { db.close(); }
-  assert.deepEqual(await new SQLiteAdapter(file).read(), empty);
+  assert.deepEqual(readDatabase(file), empty);
 });
 
 test('changed, missing, or newer migration history blocks startup without modifying data', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-migration-history-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const migrationDirectory = join(directory, 'migrations');
   await copyBase(migrationDirectory);
   await writeFile(join(migrationDirectory, initName), 'SELECT 1;\n');
@@ -400,7 +413,7 @@ test('changed, missing, or newer migration history blocks startup without modify
   try {
     db.prepare('UPDATE schema_migrations SET version = ?').run(nextVersion);
   } finally { db.close(); }
-  await assert.rejects(openStore(file, empty), /newer migration/);
+  await assert.rejects(openRepository(file, empty), /newer migration/);
   assert.deepEqual(history(file), [{ version: nextVersion, dirty: 0 }]);
 });
 
@@ -433,16 +446,16 @@ test('upgrades a database and backup from before restore receipts without losing
   } finally { db.close(); }
   const result = await migrateDatabase(file);
   assert.deepEqual(result.applied, baseNames.slice(1));
-  const upgraded = await openStore(file, empty);
-  assert.equal(upgraded.read().members[0].name, '회원');
-  assert.equal(upgraded.read().meta.storeRevision, 7);
-  assert.notEqual(upgraded.read().meta.storeEpoch, 'before-receipts');
-  assert.deepEqual(upgraded.read().restoreReceipts, []);
+  const upgraded = await openRepository(file, empty);
+  assert.equal(upgraded.snapshot().members[0].name, '회원');
+  assert.equal(upgraded.snapshot().meta.storeRevision, 7);
+  assert.notEqual(upgraded.snapshot().meta.storeEpoch, 'before-receipts');
+  assert.deepEqual(upgraded.snapshot().restoreReceipts, []);
   assert.equal(history(result.backupFile).length, 1);
   const before = await readFile(result.backupFile);
   const copy = join(directory, 'update-copy.sqlite');
   await cp(result.backupFile, copy);
-  const candidate = (await openStore(copy, empty)).read();
+  const candidate = (await openRepository(copy, empty)).snapshot();
   assert.equal(candidate.members[0].name, '회원');
   assert.notEqual(candidate.meta.storeEpoch, 'before-receipts');
   assert.deepEqual(candidate.restoreReceipts, []);

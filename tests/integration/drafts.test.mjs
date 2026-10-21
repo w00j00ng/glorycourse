@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { seedRepository } from '../helpers/repository.mjs';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 import {
   DraftReadOnlyError,
   DraftRevisionConflictError,
@@ -11,7 +13,6 @@ import {
   DraftUnsupportedEngineError,
   DraftValidationError,
 } from '../../backend/src/services/drafts.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
 import { FinalizationService } from '../../backend/src/services/finalization.ts';
 import { draftFinalSelection } from '../../frontend/draft-view.js';
 
@@ -79,7 +80,7 @@ test('persists automatic evidence and an administrator final edit across a real 
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const file = join(workspace, 'db.sqlite');
   const first = await serviceAt(file, fixture());
-  const beforeEnrollments = first.store.read().enrollments;
+  const beforeEnrollments = first.store.snapshot().enrollments;
   const created = await first.service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   const automatic = structuredClone(created.studentResults[0]);
   assert.deepEqual(first.service.list().map(({ id }) => id), [created.draft.id]);
@@ -105,7 +106,7 @@ test('persists automatic evidence and an administrator final edit across a real 
       remaining: 1,
     },
   );
-  assert.deepEqual(reopened.store.read().enrollments, beforeEnrollments);
+  assert.deepEqual(reopened.store.snapshot().enrollments, beforeEnrollments);
   assert.equal(stored.isStale, false);
 
   const restored = await reopened.service.restoreAuto(created.draft.id, 'member-1', {
@@ -113,7 +114,7 @@ test('persists automatic evidence and an administrator final edit across a real 
   });
   assert.equal(restored.studentResults[0].finalDecision, automatic.autoDecision);
   assert.equal(restored.studentResults[0].finalSemesterCourseId, automatic.autoSemesterCourseId);
-  assert.deepEqual(reopened.store.read().enrollments, beforeEnrollments);
+  assert.deepEqual(reopened.store.snapshot().enrollments, beforeEnrollments);
 });
 
 test('assigns the next semester order before creating an automatic draft', async (t) => {
@@ -123,7 +124,7 @@ test('assigns the next semester order before creating an automatic draft', async
 
   const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
 
-  const saved = store.read();
+  const saved = store.snapshot();
   const semester = saved.semesters.find(({ id }) => id === 'semester-1');
   const draft = saved.allocationDrafts.find(({ id }) => id === created.draft.id);
   assert.equal(semester.order, 4);
@@ -147,7 +148,7 @@ test('allows only one edit at a draft revision and keeps a previously archived d
   assert.ok(rejected.reason instanceof DraftRevisionConflictError);
   const afterRace = service.get(created.draft.id);
   assert.equal(afterRace.draft.revision, 1);
-  const snapshot = structuredClone(store.read());
+  const snapshot = structuredClone(store.snapshot());
   await assert.rejects(service.updateItem(created.draft.id, 'member-1', {
     expectedDraftRevision: 1,
     finalDecision: 'SELECTED',
@@ -155,9 +156,9 @@ test('allows only one edit at a draft revision and keeps a previously archived d
     finalReasonCode: null,
     finalReasonDetail: null,
   }), DraftValidationError);
-  assert.deepEqual(store.read(), snapshot);
+  assert.deepEqual(store.snapshot(), snapshot);
 
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     const draft = data.allocationDrafts.find(({ id }) => id === created.draft.id);
     draft.status = 'ARCHIVED';
     draft.revision = 2;
@@ -168,7 +169,7 @@ test('allows only one edit at a draft revision and keeps a previously archived d
   );
   assert.equal(service.get(created.draft.id).draft.status, 'ARCHIVED');
   assert.deepEqual(service.list(), []);
-  assert.equal(store.read().enrollments.length, 0);
+  assert.equal(store.snapshot().enrollments.length, 0);
 });
 
 test('deletes an archived draft without deleting enrollments', async (t) => {
@@ -178,7 +179,7 @@ test('deletes an archived draft without deleting enrollments', async (t) => {
     service.delete(created.draft.id, { expectedDraftRevision: 1 }),
     DraftRevisionConflictError,
   );
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     const draft = data.allocationDrafts.find(({ id }) => id === created.draft.id);
     draft.status = 'ARCHIVED';
     draft.revision = 1;
@@ -190,9 +191,9 @@ test('deletes an archived draft without deleting enrollments', async (t) => {
 
   await service.delete(created.draft.id, { expectedDraftRevision: 1 });
 
-  assert.equal(store.read().allocationDrafts.length, 0);
-  assert.equal(store.read().allocationDraftItems.length, 0);
-  assert.equal(store.read().enrollments.length, 1);
+  assert.equal(store.snapshot().allocationDrafts.length, 0);
+  assert.equal(store.snapshot().allocationDraftItems.length, 0);
+  assert.equal(store.snapshot().enrollments.length, 1);
 });
 
 test('creates a manual draft with unresolved automatic input and assigns only registered applicants', async (t) => {
@@ -202,7 +203,7 @@ test('creates a manual draft with unresolved automatic input and assigns only re
   data.applications[0].applicationOrderStatus = 'MISSING';
   data.applications[0].orderResolution = 'UNRESOLVED';
   const { service, store } = await temporaryService(t, data);
-  const beforeApplications = store.read().applications.length;
+  const beforeApplications = store.snapshot().applications.length;
   const created = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
 
   assert.equal(created.studentResults[0].autoDecision, 'NOT_EVALUATED');
@@ -220,8 +221,8 @@ test('creates a manual draft with unresolved automatic input and assigns only re
   assert.deepEqual(assigned.studentResults.map(({ memberId, sourceApplicationId, finalSemesterCourseId }) => (
     [memberId, sourceApplicationId, finalSemesterCourseId]
   )), [['member-1', 'application-1', 'sc-b']]);
-  assert.equal(store.read().applications.length, beforeApplications);
-  assert.equal(store.read().enrollments.length, 0);
+  assert.equal(store.snapshot().applications.length, beforeApplications);
+  assert.equal(store.snapshot().enrollments.length, 0);
 });
 
 test('builds an empty manual draft by existing and new member names, then finalizes the selected courses', async (t) => {
@@ -240,9 +241,9 @@ test('builds an empty manual draft by existing and new member names, then finali
     assert.equal(added.draft.revision, revision + 1);
     assert.equal(added.isStale, false);
   }
-  assert.equal(store.read().members.length, 3);
-  assert.equal(store.read().applications.length, 0);
-  assert.equal(store.read().enrollments.length, 0);
+  assert.equal(store.snapshot().members.length, 3);
+  assert.equal(store.snapshot().applications.length, 0);
+  assert.equal(store.snapshot().enrollments.length, 0);
   let finalizationId = 0;
   const finalization = new FinalizationService(store, {
     id: () => `manual-finalization-${++finalizationId}`, now: () => new Date(timestamp), secret: '0123456789abcdef0123456789abcdef',
@@ -254,7 +255,7 @@ test('builds an empty manual draft by existing and new member names, then finali
     acknowledgedWarningDigest: preview.warningDigest, acknowledgementNote: '', idempotencyKey: 'manual-finalization',
   });
   assert.equal(receipt.createdCount, 2);
-  assert.equal(store.read().enrollments.length, 2);
+  assert.equal(store.snapshot().enrollments.length, 2);
 });
 
 test('rejects invalid manual member additions without partial changes and explains the problem', async (t) => {
@@ -275,26 +276,26 @@ test('rejects invalid manual member additions without partial changes and explai
     { request: null, expected: /입력/ },
   ];
   for (const { id = manual.draft.id, request, expected } of cases) {
-    const before = store.read();
+    const before = store.snapshot();
     await assert.rejects(service.addManualItem(id, request), (error) => {
       assert.ok(error instanceof DraftValidationError);
       assert.match(error.issues[0].message, expected);
       return true;
     });
-    assert.deepEqual(store.read(), before);
+    assert.deepEqual(store.snapshot(), before);
   }
   await service.addManualItem(manual.draft.id, base);
-  const before = store.read();
+  const before = store.snapshot();
   await assert.rejects(service.addManualItem(manual.draft.id, { ...base, memberName: '동시 입력' }), DraftRevisionConflictError);
-  assert.deepEqual(store.read(), before);
-  await store.write({}, (candidate) => { candidate.allocationDrafts.find(({ id }) => id === manual.draft.id).status = 'ARCHIVED'; });
+  assert.deepEqual(store.snapshot(), before);
+  await seedRepository(store, (candidate) => { candidate.allocationDrafts.find(({ id }) => id === manual.draft.id).status = 'ARCHIVED'; });
   await assert.rejects(service.addManualItem(manual.draft.id, { ...base, expectedDraftRevision: 1 }), DraftReadOnlyError);
 });
 
 test('keeps a previously saved member without an application available for draft review and editing', async (t) => {
   const { service, store } = await temporaryService(t, fixture());
   const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.allocationDraftItems.push({
       ...data.allocationDraftItems[0], id: 'legacy-item', memberId: 'member-2', ministry: null,
       memberNameAtGeneration: '김영희', sourceApplicationId: null,
@@ -313,7 +314,7 @@ test('keeps a previously saved member without an application available for draft
   });
   assert.equal(edited.studentResults.find(({ memberId }) => memberId === 'member-2').finalDecision, 'REJECTED');
   assert.equal(edited.studentResults.length, 2);
-  assert.equal(store.read().applications.length, 1);
+  assert.equal(store.snapshot().applications.length, 1);
 });
 
 test('reports current semester enrollment members even when their history was registered after draft creation', async (t) => {
@@ -322,20 +323,20 @@ test('reports current semester enrollment members even when their history was re
   const { service, store } = await temporaryService(t, data);
   const created = await service.create({ semesterId: 'semester-1', mode: 'MANUAL', ...policy });
   assert.deepEqual(created.currentEnrolledMembers, [{ id: 'member-2', name: '김영희' }]);
-  await store.write({}, (candidate) => {
+  await seedRepository(store, (candidate) => {
     candidate.enrollments.push(stamped({ id: 'later-history', semesterCourseId: 'sc-a', memberId: 'member-1', ministry: null, revision: 0, exceptionAcknowledgement: null }));
   });
   const detail = service.get(created.draft.id);
   assert.deepEqual(detail.currentEnrolledMembers, [{ id: 'member-1', name: '홍길동' }, { id: 'member-2', name: '김영희' }]);
   assert.equal(detail.existingEnrollments.length, 1, 'capacity evidence keeps the original snapshot');
-  const before = store.read();
+  const before = store.snapshot();
   for (const memberName of [' 김영희 ', '홍길동'.normalize('NFD')]) {
     await assert.rejects(service.addManualItem(created.draft.id, { expectedDraftRevision: 0, memberName, semesterCourseId: 'sc-a' }), (error) => {
       assert.match(error.issues[0].message, /같은 학기에 수강이력/);
       return true;
     });
   }
-  assert.deepEqual(store.read(), before);
+  assert.deepEqual(store.snapshot(), before);
 });
 
 test('uses a semantic fingerprint, preserves deleted-source evidence, and replays the stored input', async (t) => {
@@ -343,7 +344,7 @@ test('uses a semantic fingerprint, preserves deleted-source evidence, and replay
   const original = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   const originalAuto = original.studentResults.map(autoProjection);
 
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesters.reverse();
     data.members.reverse();
     data.courses.reverse();
@@ -368,7 +369,7 @@ test('uses a semantic fingerprint, preserves deleted-source evidence, and replay
   });
   assert.equal(service.get(original.draft.id).isStale, false);
 
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesterCourses.push(stamped({
       id: 'sc-past',
       semesterId: 'semester-0',
@@ -384,27 +385,27 @@ test('uses a semantic fingerprint, preserves deleted-source evidence, and replay
     }));
   });
   assert.ok(service.get(original.draft.id).inputChanges.some(({ code }) => code === 'PAST_ENROLLMENTS_CHANGED'));
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.enrollments = data.enrollments.filter(({ id }) => id !== 'related-past-enrollment');
     data.semesterCourses = data.semesterCourses.filter(({ id }) => id !== 'sc-past');
   });
   assert.equal(service.get(original.draft.id).isStale, false);
 
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesters.find(({ id }) => id === 'semester-1').order = 4;
   });
   assert.ok(service.get(original.draft.id).inputChanges.some(({ code }) => code === 'SEMESTER_CHANGED'));
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesters.find(({ id }) => id === 'semester-1').order = 2;
     data.semesterCourses.find(({ id }) => id === 'sc-a').capacity = 2;
   });
   assert.ok(service.get(original.draft.id).inputChanges.some(({ code }) => code === 'SEMESTER_COURSES_CHANGED'));
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesterCourses.find(({ id }) => id === 'sc-a').capacity = 1;
   });
   assert.equal(service.get(original.draft.id).isStale, false);
 
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.applications = [];
     data.applicationChoices = [];
   });
@@ -421,14 +422,14 @@ test('uses a semantic fingerprint, preserves deleted-source evidence, and replay
     replayFromDraftId: original.draft.id,
   });
   assert.notEqual(replayed.draft.id, original.draft.id);
-  const persisted = store.read().allocationDrafts;
+  const persisted = store.snapshot().allocationDrafts;
   const originalRecord = persisted.find(({ id }) => id === original.draft.id);
   const replayedRecord = persisted.find(({ id }) => id === replayed.draft.id);
   assert.equal(replayedRecord.randomSeed, originalRecord.randomSeed);
   assert.equal(replayedRecord.inputFingerprint, originalRecord.inputFingerprint);
   assert.deepEqual(replayed.studentResults.map(autoProjection), originalAuto);
 
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.allocationDrafts.find(({ id }) => id === original.draft.id).engineVersion = '0.0.0';
   });
   await assert.rejects(service.create({
@@ -446,7 +447,7 @@ const temporaryService = async (t, data) => {
 };
 
 const serviceAt = async (file, data) => {
-  const store = await openStore(file, data);
+  const store = await openRepository(file, data);
   let nextId = 0;
   const service = new DraftService(store, {
     id: () => `draft-generated-${++nextId}`,

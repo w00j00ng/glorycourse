@@ -9,7 +9,10 @@ import { HttpError, writeHttpError } from './api/errors.ts';
 import { LocalSessionGuard } from './api/local-session.ts';
 import { createApiRouter } from './api/router.ts';
 import { acquireInstanceLock } from './storage/instance-lock.ts';
-import { openStore, type Store, type DatabaseState } from './storage/store.ts';
+import type { DatabaseState } from './domain/records.ts';
+import { openRepository } from './bootstrap/database.ts';
+import type { Repository } from './repository/database.ts';
+type HandlerRepository = Pick<Repository, 'read' | 'write' | 'version'>;
 
 const LOOPBACK = '127.0.0.1';
 const DEFAULT_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -29,7 +32,7 @@ export type ApiResponse = {
 };
 export type ApiHandler = (
   request: ApiRequest,
-  context: { store: Store | Pick<Store, 'read'> },
+  context: { repository: HandlerRepository | Pick<HandlerRepository, 'read' | 'version'> },
 ) => Promise<ApiResponse | undefined> | ApiResponse | undefined;
 
 export const startLocalServer = async (options: {
@@ -50,13 +53,14 @@ export const startLocalServer = async (options: {
   await mkdir(options.dataDirectory, { recursive: true });
   const lock = await acquireInstanceLock(options.dataDirectory);
   let server: ReturnType<typeof createServer> | undefined;
+  let repository: Repository | undefined;
   try {
     options.onProgress?.('자료를 확인하고 있습니다.');
-    const store = await openStore(join(options.dataDirectory, 'db.sqlite'), emptyStore(), {
+    repository = await openRepository(join(options.dataDirectory, 'db.sqlite'), emptyStore(), {
       backupDirectory: join(options.dataDirectory, 'update-backups'),
       onProgress: options.onProgress,
     });
-    const apiHandler = options.apiHandler ?? createApiRouter(store);
+    const apiHandler = options.apiHandler ?? createApiRouter(repository);
     let guard: LocalSessionGuard;
     let stopping = false;
     let closing: Promise<void> | undefined;
@@ -67,7 +71,7 @@ export const startLocalServer = async (options: {
         await closeServer(server!);
         await Promise.all(active.values());
         try { await options.onClose?.(); }
-        finally { await lock.release(); }
+        finally { repository!.close(); await lock.release(); }
       })();
       return closing;
     };
@@ -79,7 +83,7 @@ export const startLocalServer = async (options: {
     };
     server = createServer((request, response) => {
       const pending = handleRequest(request, response, {
-        store,
+        repository: repository!,
         guard,
         staticDirectory: options.staticDirectory,
         uploadBytes,
@@ -106,11 +110,12 @@ export const startLocalServer = async (options: {
       address: LOOPBACK,
       port: address.port,
       origin,
-      store,
+      repository,
       close,
     };
   } catch (error) {
     if (server?.listening) await closeServer(server);
+    repository?.close();
     await lock.release();
     throw error;
   }
@@ -120,7 +125,7 @@ const handleRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
   context: {
-    store: Store;
+    repository: Repository;
     guard: LocalSessionGuard;
     staticDirectory: string;
     uploadBytes: number;
@@ -163,10 +168,12 @@ const handleRequest = async (
         return;
       }
       const safe = request.method === 'GET' || request.method === 'HEAD';
-      const handlerStore = safe ? { read: () => context.store.read() } : context.store;
+      const handlerRepository = safe
+        ? { read: context.repository.read.bind(context.repository), version: () => context.repository.version() }
+        : context.repository;
       const result = await context.apiHandler?.({
         method: request.method ?? 'GET', path, query: url.searchParams, headers: request.headers, body,
-      }, { store: handlerStore });
+      }, { repository: handlerRepository });
       if (!result) throw new HttpError(404, 'NOT_FOUND', '대상을 찾을 수 없습니다.');
       writeApiResponse(response, result, request.method === 'HEAD');
       return;

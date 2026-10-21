@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { changedRecords, prepareChanges, prepareRow, replaceChildren } from './row-changes.ts';
 
-import type { AllocationSnapshot, PolicySettings } from '../../allocation/engine.ts';
+import type { AllocationSnapshot, PolicySettings } from '../allocation/engine.ts';
 import type {
   AllocationDraftItemRecord as DraftItem,
   AllocationDraftRecord as Draft,
@@ -18,7 +18,7 @@ import type {
   RestoreReceiptRecord,
   SemesterCourseRecord as SemesterCourse,
   SemesterRecord as Semester,
-} from '../store.ts';
+} from '../domain/records.ts';
 
 type SqlValue = string | number | null;
 type SourceRef = { importBatchId: string; sheet: string; row: number };
@@ -56,6 +56,9 @@ const group = <T extends { parentId: string }>(items: T[]): Map<string, Omit<T, 
 };
 
 export const readRelationalStore = (db: DatabaseSync): DatabaseState => {
+  if (db.prepare('PRAGMA application_id').get()?.application_id !== 0x47434f55) {
+    throw new Error('Unsupported Glorycourse SQLite database');
+  }
   const meta = one<{ storeEpoch: string; storeRevision: number }>(
     db, 'SELECT store_epoch AS storeEpoch, store_revision AS storeRevision FROM store_meta WHERE id = 1',
   );
@@ -117,31 +120,36 @@ export const readRelationalStore = (db: DatabaseSync): DatabaseState => {
   } as DatabaseState;
 };
 
-const readImportBatches = (db: DatabaseSync): ImportBatch[] => {
+export const readImportBatches = (db: DatabaseSync, batchId: string | null = null): ImportBatch[] => {
   const cells = new Map<string, Record<string, string | null>>();
   for (const row of all<{ batchId: string; rowPosition: number; columnName: string; cellValue: string | null }>(db, `SELECT
     import_batch_id AS batchId, row_position AS rowPosition, column_name AS columnName, cell_value AS cellValue
-    FROM import_raw_cells ORDER BY import_batch_id, row_position, position`)) {
+    FROM import_raw_cells WHERE (? IS NULL OR import_batch_id = ?)
+    ORDER BY import_batch_id, row_position, position`, batchId, batchId)) {
     const key = `${row.batchId}\0${row.rowPosition}`;
     cells.set(key, { ...(cells.get(key) ?? {}), [row.columnName]: row.cellValue });
   }
   const rawRows = group(all<{ parentId: string; position: number; sheet: string; row: number }>(db, `SELECT
     import_batch_id AS parentId, position, sheet, row_number AS row FROM import_raw_rows
-    ORDER BY import_batch_id, position`).map(({ parentId, position, sheet, row }) => ({
+    WHERE (? IS NULL OR import_batch_id = ?)
+    ORDER BY import_batch_id, position`, batchId, batchId).map(({ parentId, position, sheet, row }) => ({
     parentId, sheet, row, cells: cells.get(`${parentId}\0${position}`) ?? {},
   })));
   const resolutions = group(all<WithParent<ImportResolutionRecord>>(db, `SELECT import_batch_id AS parentId,
     entity, action, field, semester_name AS semesterName, member_name AS memberName,
     course_name AS courseName, application_order AS applicationOrder, warning_digest AS warningDigest,
-    acknowledgement_note AS acknowledgementNote FROM import_resolutions ORDER BY import_batch_id, position`)
+    acknowledgement_note AS acknowledgementNote FROM import_resolutions WHERE (? IS NULL OR import_batch_id = ?)
+    ORDER BY import_batch_id, position`, batchId, batchId)
     .map(compact));
   const receipts = new Map(all<ImportReceipt>(db, `SELECT receipt_id AS receiptId, import_batch_id AS importBatchId,
     preview_id AS previewId, store_epoch AS storeEpoch, idempotency_key AS idempotencyKey,
     request_hash AS requestHash, inserted_count AS inserted, updated_count AS updated,
-    skipped_count AS skipped, committed_at AS committedAt FROM import_receipts`).map((item) => [item.importBatchId, item]));
+    skipped_count AS skipped, committed_at AS committedAt FROM import_receipts
+    WHERE (? IS NULL OR import_batch_id = ?)`, batchId, batchId).map((item) => [item.importBatchId, item]));
   return all<Omit<ImportBatch, 'rawRows' | 'resolutions' | 'receipt'>>(db, `SELECT id, kind,
     template_version AS templateVersion, file_hash AS fileHash, imported_at AS importedAt, status
-    FROM import_batches ORDER BY position`).map((batch) => ({
+    FROM import_batches WHERE (? IS NULL OR id = ?)
+    ORDER BY position`, batchId, batchId).map((batch) => ({
     ...batch,
     rawRows: (rawRows.get(batch.id) as RawRow[] | undefined) ?? [],
     resolutions: resolutions.get(batch.id) ?? [],
@@ -149,52 +157,64 @@ const readImportBatches = (db: DatabaseSync): ImportBatch[] => {
   }));
 };
 
-const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } => {
+export const readDrafts = (db: DatabaseSync, draftId: string | null = null): { drafts: Draft[]; items: DraftItem[] } => {
   const policy = new Map(all<PolicySettings & { draftId: string }>(db, `SELECT allocation_draft_id AS draftId,
-    preference_mode AS preferenceMode, fallback_mode AS fallbackMode FROM allocation_draft_policy_settings`)
+    preference_mode AS preferenceMode, fallback_mode AS fallbackMode FROM allocation_draft_policy_settings
+    WHERE (? IS NULL OR allocation_draft_id = ?)`, draftId, draftId)
     .map(({ draftId, ...item }) => [draftId, item]));
   const snapshotSemester = new Map(all<Snapshot['semester'] & { draftId: string }>(db, `SELECT allocation_draft_id AS draftId,
-    semester_id AS id, name, semester_order AS "order" FROM allocation_snapshot_semesters`)
+    semester_id AS id, name, semester_order AS "order" FROM allocation_snapshot_semesters
+    WHERE (? IS NULL OR allocation_draft_id = ?)`, draftId, draftId)
     .map(({ draftId, ...item }) => [draftId, item]));
   const snapshotCourses = group(all<WithParent<Snapshot['semesterCourses'][number]>>(db, `SELECT allocation_draft_id AS parentId,
     semester_course_id AS id, course_id AS courseId, course_name AS courseName, capacity
-    FROM allocation_snapshot_semester_courses ORDER BY allocation_draft_id, position`));
+    FROM allocation_snapshot_semester_courses WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId));
   const snapshotApplications = group(all<WithParent<Snapshot['applications'][number]>>(db, `SELECT allocation_draft_id AS parentId,
     application_id AS id, member_id AS memberId, member_name AS memberName, ministry,
     application_order AS applicationOrder, application_order_status AS applicationOrderStatus
-    FROM allocation_snapshot_applications ORDER BY allocation_draft_id, position`));
+    FROM allocation_snapshot_applications WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId));
   const snapshotChoices = group(all<WithParent<Snapshot['choices'][number]>>(db, `SELECT allocation_draft_id AS parentId,
     choice_id AS id, application_id AS applicationId, semester_course_id AS semesterCourseId, preference
-    FROM allocation_snapshot_choices ORDER BY allocation_draft_id, position`));
+    FROM allocation_snapshot_choices WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId));
   const snapshotPast = group(all<WithParent<Snapshot['relevantPastEnrollments'][number]>>(db, `SELECT allocation_draft_id AS parentId,
     enrollment_id AS id, member_id AS memberId, course_id AS courseId, semester_id AS semesterId,
-    semester_order AS semesterOrder FROM allocation_snapshot_past_enrollments ORDER BY allocation_draft_id, position`));
+    semester_order AS semesterOrder FROM allocation_snapshot_past_enrollments WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId));
   const snapshotExisting = group(all<WithParent<Snapshot['existingEnrollments'][number]>>(db, `SELECT allocation_draft_id AS parentId,
     enrollment_id AS id, member_id AS memberId, member_name AS memberName, ministry,
     semester_course_id AS semesterCourseId FROM allocation_snapshot_existing_enrollments
-    ORDER BY allocation_draft_id, position`));
+    WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId));
 
   const attempts = group(all<WithParent<PreferenceAttempt>>(db, `SELECT allocation_draft_item_id AS parentId,
     choice_id_at_generation AS choiceIdAtGeneration, semester_course_id AS semesterCourseId,
     course_name_at_generation AS courseNameAtGeneration, preference, decision, reason_code AS reasonCode
-    FROM allocation_item_preference_attempts ORDER BY allocation_draft_item_id, position`));
+    FROM allocation_item_preference_attempts WHERE allocation_draft_item_id IN (SELECT id FROM allocation_draft_items WHERE (? IS NULL OR allocation_draft_id = ?))
+    ORDER BY allocation_draft_item_id, position`, draftId, draftId));
   const fallbackCandidates = group(all<{ parentId: string; semesterCourseId: string }>(db, `SELECT
     allocation_draft_item_id AS parentId, semester_course_id AS semesterCourseId
-    FROM allocation_item_fallback_candidates ORDER BY allocation_draft_item_id, position`));
+    FROM allocation_item_fallback_candidates WHERE allocation_draft_item_id IN (SELECT id FROM allocation_draft_items WHERE (? IS NULL OR allocation_draft_id = ?))
+    ORDER BY allocation_draft_item_id, position`, draftId, draftId));
   const fallbacks = new Map(all<Omit<Fallback, 'stageCandidateSemesterCourseIds'> & { itemId: string }>(db, `SELECT allocation_draft_item_id AS itemId,
     selected_semester_course_id AS selectedSemesterCourseId, reason_code AS reasonCode,
-    total_assigned_in_stage AS totalAssignedInStage FROM allocation_item_fallbacks`).map(({ itemId, ...item }) => [
+    total_assigned_in_stage AS totalAssignedInStage FROM allocation_item_fallbacks
+    WHERE allocation_draft_item_id IN (SELECT id FROM allocation_draft_items WHERE (? IS NULL OR allocation_draft_id = ?))`, draftId, draftId).map(({ itemId, ...item }) => [
     itemId,
     { ...item, stageCandidateSemesterCourseIds: (fallbackCandidates.get(itemId) ?? []).map(({ semesterCourseId }) => semesterCourseId) },
   ]));
   const finalReasons = new Map(all<{ itemId: string; note: string }>(db, `SELECT
-    allocation_draft_item_id AS itemId, note FROM allocation_item_final_reasons`).map(({ itemId, note }) => [itemId, { note }]));
+    allocation_draft_item_id AS itemId, note FROM allocation_item_final_reasons
+    WHERE allocation_draft_item_id IN (SELECT id FROM allocation_draft_items WHERE (? IS NULL OR allocation_draft_id = ?))`, draftId, draftId).map(({ itemId, note }) => [itemId, { note }]));
   const items = all<Omit<DraftItem, 'autoReasonDetail' | 'finalReasonDetail'>>(db, `SELECT id, allocation_draft_id AS draftId, member_id AS memberId,
     source_application_id AS sourceApplicationId, member_name_at_generation AS memberNameAtGeneration, ministry,
     auto_semester_course_id AS autoSemesterCourseId, auto_decision AS autoDecision,
     auto_reason_code AS autoReasonCode, final_semester_course_id AS finalSemesterCourseId,
     final_decision AS finalDecision, final_reason_code AS finalReasonCode, updated_at AS updatedAt
-    FROM allocation_draft_items ORDER BY position`).map((item) => ({
+    FROM allocation_draft_items WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY position`, draftId, draftId).map((item) => ({
     ...item,
     autoReasonDetail: { preferenceAttempts: attempts.get(item.id) ?? [], fallback: fallbacks.get(item.id) ?? null },
     finalReasonDetail: finalReasons.get(item.id) ?? null,
@@ -202,17 +222,20 @@ const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } =
 
   const enrollmentIds = group(all<{ parentId: string; enrollmentId: string }>(db, `SELECT
     allocation_draft_id AS parentId, enrollment_id AS enrollmentId
-    FROM allocation_finalization_enrollment_ids ORDER BY allocation_draft_id, position`));
+    FROM allocation_finalization_enrollment_ids WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId));
   const receipts = new Map(all<Omit<FinalizationRecord['receipt'], 'draftId' | 'createdEnrollmentIds'> & { draftId: string }>(db, `SELECT allocation_draft_id AS draftId,
     receipt_id AS receiptId, created_count AS createdCount, finalized_at AS finalizedAt
-    FROM allocation_finalization_receipts`).map(({ draftId, ...item }) => [draftId, {
+    FROM allocation_finalization_receipts
+    WHERE (? IS NULL OR allocation_draft_id = ?)`, draftId, draftId).map(({ draftId, ...item }) => [draftId, {
     ...item, draftId, createdEnrollmentIds: (enrollmentIds.get(draftId) ?? []).map(({ enrollmentId }) => enrollmentId),
   }]));
   const warnings = group(all<FinalizationWarningRow>(db, `SELECT allocation_draft_id AS parentId,
     code, message, severity, subject_entity_type AS subjectEntityType, subject_entity_id AS subjectEntityId,
     subject_member_id AS subjectMemberId, subject_course_id AS subjectCourseId, change_code AS changeCode,
     note, acknowledged_at AS acknowledgedAt FROM allocation_finalization_warnings
-    ORDER BY allocation_draft_id, position`).map(({ parentId, subjectEntityType, subjectEntityId, subjectMemberId,
+    WHERE (? IS NULL OR allocation_draft_id = ?)
+    ORDER BY allocation_draft_id, position`, draftId, draftId).map(({ parentId, subjectEntityType, subjectEntityId, subjectMemberId,
     subjectCourseId, changeCode, note, acknowledgedAt, ...item }) => ({
     parentId,
     ...item,
@@ -225,7 +248,8 @@ const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } =
     acknowledgedAt,
   })));
   const finalizations = new Map(all<Pick<FinalizationRecord, 'idempotencyKey' | 'requestHash'> & { draftId: string }>(db, `SELECT allocation_draft_id AS draftId,
-    idempotency_key AS idempotencyKey, request_hash AS requestHash FROM allocation_finalizations`)
+    idempotency_key AS idempotencyKey, request_hash AS requestHash FROM allocation_finalizations
+    WHERE (? IS NULL OR allocation_draft_id = ?)`, draftId, draftId)
     .map(({ draftId, ...item }) => [draftId, {
       ...item, receipt: receipts.get(draftId), acknowledgedWarnings: warnings.get(draftId) ?? [],
     }]));
@@ -236,7 +260,8 @@ const readDrafts = (db: DatabaseSync): { drafts: Draft[]; items: DraftItem[] } =
     created_at AS createdAt, updated_at AS updatedAt, finalized_at AS finalizedAt,
     enrollment_report_downloaded_at AS enrollmentReportDownloadedAt,
     enrollment_report_store_revision AS enrollmentReportStoreRevision
-    FROM allocation_drafts ORDER BY position`).map((draft) => ({
+    FROM allocation_drafts WHERE (? IS NULL OR id = ?)
+    ORDER BY position`, draftId, draftId).map((draft) => ({
     ...draft,
     policySettings: policy.get(draft.id)!,
     inputSnapshot: {
@@ -279,25 +304,48 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
     prepareChanges(db, 'restore_receipts', data.restoreReceipts, previous.restoreReceipts,
       [['receipt_id', (item) => item.receiptId]]);
   }
-  prepareRow(db, 'store_meta', 'id, store_epoch, store_revision')
+  prepareRow(db, 'store_meta', {
+    insert: `INSERT INTO store_meta (id, store_epoch, store_revision)
+      VALUES (?, ?, ?)`,
+    read: `SELECT id, store_epoch, store_revision
+      FROM store_meta WHERE id = ?`,
+    update: `UPDATE store_meta SET store_epoch = ?, store_revision = ?
+      WHERE id = ?`,
+  })
     .run(1, data.meta.storeEpoch, data.meta.storeRevision);
 
-  const receiptInsert = prepareRow(db, 'restore_receipts',
-    'idempotency_key, position, request_hash, receipt_id, previous_backup_id, store_revision, store_epoch, restored_at');
+  const receiptInsert = prepareRow(db, 'restore_receipts', {
+    insert: `INSERT INTO restore_receipts (idempotency_key, position, request_hash, receipt_id, previous_backup_id, store_revision, store_epoch, restored_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT idempotency_key, position, request_hash, receipt_id, previous_backup_id, store_revision, store_epoch, restored_at
+      FROM restore_receipts WHERE idempotency_key = ?`,
+    update: `UPDATE restore_receipts SET position = ?, request_hash = ?, receipt_id = ?, previous_backup_id = ?, store_revision = ?, store_epoch = ?, restored_at = ?
+      WHERE idempotency_key = ?`,
+  });
   changedRecords(data.restoreReceipts, previous?.restoreReceipts).forEach(({ item, position }) => receiptInsert.run(
     item.idempotencyKey, position, item.requestHash, item.receiptId, item.previousBackupId,
     item.storeRevision, item.storeEpoch, item.restoredAt,
   ));
 
-  const semesterInsert = prepareRow(db, 'semesters',
-    'id, position, name, name_key, semester_order, allocation_input_revision, created_at, updated_at');
+  const semesterInsert = prepareRow(db, 'semesters', {
+    insert: `INSERT INTO semesters (id, position, name, name_key, semester_order, allocation_input_revision, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, name, name_key, semester_order, allocation_input_revision, created_at, updated_at
+      FROM semesters WHERE id = ?`,
+    update: `UPDATE semesters SET position = ?, name = ?, name_key = ?, semester_order = ?, allocation_input_revision = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  });
   changedRecords(data.semesters, previous?.semesters).forEach(({ item, position }) => semesterInsert.run(
     item.id, position, item.name, item.nameKey, item.order, item.allocationInputRevision, item.createdAt, item.updatedAt,
   ));
-  const finalizationInsert = prepareRow(db, 'finalization_receipts', `
-    idempotency_key, position, request_hash, semester_id, draft_id, receipt_id, created_count,
-    finalized_at, enrollment_report_downloaded_at, enrollment_report_store_revision
-  `);
+  const finalizationInsert = prepareRow(db, 'finalization_receipts', {
+    insert: `INSERT INTO finalization_receipts (idempotency_key, position, request_hash, semester_id, draft_id, receipt_id, created_count, finalized_at, enrollment_report_downloaded_at, enrollment_report_store_revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT idempotency_key, position, request_hash, semester_id, draft_id, receipt_id, created_count, finalized_at, enrollment_report_downloaded_at, enrollment_report_store_revision
+      FROM finalization_receipts WHERE idempotency_key = ?`,
+    update: `UPDATE finalization_receipts SET position = ?, request_hash = ?, semester_id = ?, draft_id = ?, receipt_id = ?, created_count = ?, finalized_at = ?, enrollment_report_downloaded_at = ?, enrollment_report_store_revision = ?
+      WHERE idempotency_key = ?`,
+  });
   const finalizationEnrollmentInsert = db.prepare(`INSERT INTO finalization_receipt_enrollment_ids
     (idempotency_key, position, enrollment_id) VALUES (?, ?, ?)`);
   changedRecords(data.finalizationReceipts, previous?.finalizationReceipts).forEach(({ item: record, position, before }) => {
@@ -310,29 +358,61 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
       receipt.createdEnrollmentIds.forEach((id, position) => finalizationEnrollmentInsert.run(record.idempotencyKey, position, id));
     }
   });
-  const namedInsert = (table: 'members' | 'courses', items: Named[], before?: Named[]): void => {
-    const statement = prepareRow(db, table, 'id, position, name, name_key, created_at, updated_at');
+  const memberInsert = prepareRow(db, 'members', {
+    insert: `INSERT INTO members (id, position, name, name_key, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, name, name_key, created_at, updated_at
+      FROM members WHERE id = ?`,
+    update: `UPDATE members SET position = ?, name = ?, name_key = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  });
+  const courseInsert = prepareRow(db, 'courses', {
+    insert: `INSERT INTO courses (id, position, name, name_key, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, name, name_key, created_at, updated_at
+      FROM courses WHERE id = ?`,
+    update: `UPDATE courses SET position = ?, name = ?, name_key = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  });
+  const namedInsert = (statement: ReturnType<typeof prepareRow>, items: Named[], before?: Named[]): void => {
     changedRecords(items, before).forEach(({ item, position }) => statement.run(item.id, position, item.name, item.nameKey, item.createdAt, item.updatedAt));
   };
-  namedInsert('members', data.members, previous?.members);
-  namedInsert('courses', data.courses, previous?.courses);
-  const semesterCourseInsert = prepareRow(db, 'semester_courses',
-    'id, position, semester_id, course_id, capacity, created_at, updated_at');
+  namedInsert(memberInsert, data.members, previous?.members);
+  namedInsert(courseInsert, data.courses, previous?.courses);
+  const semesterCourseInsert = prepareRow(db, 'semester_courses', {
+    insert: `INSERT INTO semester_courses (id, position, semester_id, course_id, capacity, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, semester_id, course_id, capacity, created_at, updated_at
+      FROM semester_courses WHERE id = ?`,
+    update: `UPDATE semester_courses SET position = ?, semester_id = ?, course_id = ?, capacity = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  });
   changedRecords(data.semesterCourses, previous?.semesterCourses).forEach(({ item, position }) => semesterCourseInsert.run(
     item.id, position, item.semesterId, item.courseId, item.capacity, item.createdAt, item.updatedAt,
   ));
 
   writeImportBatches(db, data.importBatches, previous?.importBatches);
 
-  const applicationInsert = prepareRow(db, 'applications',
-    `id, position, semester_id, member_id, application_order, application_order_status, order_resolution,
-      order_resolution_note, revision, created_at, updated_at, ministry`);
+  const applicationInsert = prepareRow(db, 'applications', {
+    insert: `INSERT INTO applications (id, position, semester_id, member_id, application_order, application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at, ministry)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, semester_id, member_id, application_order, application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at, ministry
+      FROM applications WHERE id = ?`,
+    update: `UPDATE applications SET position = ?, semester_id = ?, member_id = ?, application_order = ?, application_order_status = ?, order_resolution = ?, order_resolution_note = ?, revision = ?, created_at = ?, updated_at = ?, ministry = ?
+      WHERE id = ?`,
+  });
   changedRecords(data.applications, previous?.applications).forEach(({ item, position }) => applicationInsert.run(
     item.id, position, item.semesterId, item.memberId, item.applicationOrder, item.applicationOrderStatus,
     item.orderResolution, item.orderResolutionNote, item.revision, item.createdAt, item.updatedAt, item.ministry,
   ));
-  const choiceInsert = prepareRow(db, 'application_choices',
-    'id, position, application_id, semester_course_id, preference, created_at, updated_at');
+  const choiceInsert = prepareRow(db, 'application_choices', {
+    insert: `INSERT INTO application_choices (id, position, application_id, semester_course_id, preference, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, application_id, semester_course_id, preference, created_at, updated_at
+      FROM application_choices WHERE id = ?`,
+    update: `UPDATE application_choices SET position = ?, application_id = ?, semester_course_id = ?, preference = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  });
   const sourceInsert = db.prepare(`INSERT INTO application_choice_source_refs
     (application_choice_id, position, import_batch_id, sheet, row_number) VALUES (?, ?, ?, ?, ?)`);
   const applicationIds = data.applicationChoices === previous?.applicationChoices
@@ -350,8 +430,14 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
 
   writeDrafts(db, data.allocationDrafts, data.allocationDraftItems, previous);
 
-  const enrollmentInsert = prepareRow(db, 'enrollments',
-    'id, position, semester_course_id, member_id, revision, created_at, updated_at, ministry');
+  const enrollmentInsert = prepareRow(db, 'enrollments', {
+    insert: `INSERT INTO enrollments (id, position, semester_course_id, member_id, revision, created_at, updated_at, ministry)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, semester_course_id, member_id, revision, created_at, updated_at, ministry
+      FROM enrollments WHERE id = ?`,
+    update: `UPDATE enrollments SET position = ?, semester_course_id = ?, member_id = ?, revision = ?, created_at = ?, updated_at = ?, ministry = ?
+      WHERE id = ?`,
+  });
   const acknowledgementInsert = db.prepare(`INSERT INTO enrollment_acknowledgements
     (enrollment_id, warning_digest, note, acknowledged_at) VALUES (?, ?, ?, ?)`);
   changedRecords(data.enrollments, previous?.enrollments).forEach(({ item, position, before }) => {
@@ -365,9 +451,15 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
   });
 };
 
-const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[], previous?: ImportBatch[]): void => {
-  const batchInsert = prepareRow(db, 'import_batches',
-    'id, position, kind, template_version, file_hash, imported_at, status');
+export const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[], previous?: ImportBatch[]): void => {
+  const batchInsert = prepareRow(db, 'import_batches', {
+    insert: `INSERT INTO import_batches (id, position, kind, template_version, file_hash, imported_at, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, kind, template_version, file_hash, imported_at, status
+      FROM import_batches WHERE id = ?`,
+    update: `UPDATE import_batches SET position = ?, kind = ?, template_version = ?, file_hash = ?, imported_at = ?, status = ?
+      WHERE id = ?`,
+  });
   const rowInsert = db.prepare(`INSERT INTO import_raw_rows
     (import_batch_id, position, sheet, row_number) VALUES (?, ?, ?, ?)`);
   const cellInsert = db.prepare(`INSERT INTO import_raw_cells
@@ -405,11 +497,21 @@ const writeImportBatches = (db: DatabaseSync, batches: ImportBatch[], previous?:
   });
 };
 
-const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], previous?: DatabaseState): void => {
-  const draftInsert = prepareRow(db, 'allocation_drafts',
-    `id, position, semester_id, status, revision, mode, policy_id, policy_version, engine_version,
-      random_seed, source_revision, input_fingerprint, created_at, updated_at, finalized_at,
-      enrollment_report_downloaded_at, enrollment_report_store_revision`);
+export const writeDrafts = (
+  db: DatabaseSync,
+  drafts: Draft[],
+  items: DraftItem[],
+  previous?: Pick<DatabaseState, 'allocationDrafts' | 'allocationDraftItems'>,
+  positions?: { draftPositions: ReadonlyMap<string, number>; itemPositions: ReadonlyMap<string, number> },
+): void => {
+  const draftInsert = prepareRow(db, 'allocation_drafts', {
+    insert: `INSERT INTO allocation_drafts (id, position, semester_id, status, revision, mode, policy_id, policy_version, engine_version, random_seed, source_revision, input_fingerprint, created_at, updated_at, finalized_at, enrollment_report_downloaded_at, enrollment_report_store_revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, semester_id, status, revision, mode, policy_id, policy_version, engine_version, random_seed, source_revision, input_fingerprint, created_at, updated_at, finalized_at, enrollment_report_downloaded_at, enrollment_report_store_revision
+      FROM allocation_drafts WHERE id = ?`,
+    update: `UPDATE allocation_drafts SET position = ?, semester_id = ?, status = ?, revision = ?, mode = ?, policy_id = ?, policy_version = ?, engine_version = ?, random_seed = ?, source_revision = ?, input_fingerprint = ?, created_at = ?, updated_at = ?, finalized_at = ?, enrollment_report_downloaded_at = ?, enrollment_report_store_revision = ?
+      WHERE id = ?`,
+  });
   const policyInsert = db.prepare(`INSERT INTO allocation_draft_policy_settings
     (allocation_draft_id, preference_mode, fallback_mode) VALUES (?, ?, ?)`);
   const snapshotSemesterInsert = db.prepare(`INSERT INTO allocation_snapshot_semesters
@@ -441,7 +543,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   changedRecords(drafts, previous?.allocationDrafts).forEach(({ item: draft, position, before }) => {
-    draftInsert.run(draft.id, position, draft.semesterId, draft.status,
+    draftInsert.run(draft.id, positions?.draftPositions.get(draft.id) ?? position, draft.semesterId, draft.status,
       draft.revision, draft.mode, draft.policyId, draft.policyVersion,
       draft.engineVersion, draft.randomSeed, draft.sourceRevision,
       draft.inputFingerprint, draft.createdAt, draft.updatedAt, draft.finalizedAt,
@@ -493,10 +595,14 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
     });
   });
 
-  const itemInsert = prepareRow(db, 'allocation_draft_items',
-    `id, position, allocation_draft_id, member_id, source_application_id, member_name_at_generation,
-      auto_semester_course_id, auto_decision, auto_reason_code, final_semester_course_id,
-      final_decision, final_reason_code, updated_at, ministry`);
+  const itemInsert = prepareRow(db, 'allocation_draft_items', {
+    insert: `INSERT INTO allocation_draft_items (id, position, allocation_draft_id, member_id, source_application_id, member_name_at_generation, auto_semester_course_id, auto_decision, auto_reason_code, final_semester_course_id, final_decision, final_reason_code, updated_at, ministry)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, allocation_draft_id, member_id, source_application_id, member_name_at_generation, auto_semester_course_id, auto_decision, auto_reason_code, final_semester_course_id, final_decision, final_reason_code, updated_at, ministry
+      FROM allocation_draft_items WHERE id = ?`,
+    update: `UPDATE allocation_draft_items SET position = ?, allocation_draft_id = ?, member_id = ?, source_application_id = ?, member_name_at_generation = ?, auto_semester_course_id = ?, auto_decision = ?, auto_reason_code = ?, final_semester_course_id = ?, final_decision = ?, final_reason_code = ?, updated_at = ?, ministry = ?
+      WHERE id = ?`,
+  });
   const attemptInsert = db.prepare(`INSERT INTO allocation_item_preference_attempts
     (allocation_draft_item_id, position, choice_id_at_generation, semester_course_id,
       course_name_at_generation, preference, decision, reason_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -511,7 +617,7 @@ const writeDrafts = (db: DatabaseSync, drafts: Draft[], items: DraftItem[], prev
   const changedItems = changedRecords(items, previous?.allocationDraftItems,
     (item) => draftIds !== null && !draftIds.has(item.draftId));
   changedItems.forEach(({ item, position, before }) => {
-    itemInsert.run(item.id, position, item.draftId, item.memberId, item.sourceApplicationId,
+    itemInsert.run(item.id, positions?.itemPositions.get(item.id) ?? position, item.draftId, item.memberId, item.sourceApplicationId,
       item.memberNameAtGeneration, item.autoSemesterCourseId, item.autoDecision,
       item.autoReasonCode, item.finalSemesterCourseId, item.finalDecision,
       item.finalReasonCode, item.updatedAt, item.ministry);

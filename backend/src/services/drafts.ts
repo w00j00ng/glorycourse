@@ -11,14 +11,13 @@ import {
   type InputChange,
 } from '../allocation/snapshot.ts';
 import {
-  cloneStoreValue,
   type AllocationDraftItemRecord as DraftItemRecord,
   type AllocationDraftRecord as DraftRecord,
-  type DatabaseState,
-  type Store,
-} from '../storage/store.ts';
+} from '../domain/records.ts';
 import { nextSemesterOrder } from './semester-order.ts';
-import { resolveNamed } from './import-context.ts';
+import type { Repository } from '../repository/database.ts';
+import type { AllocationContext, DraftSummaryRecord } from '../repository/allocation-drafts.ts';
+import type { QuerySession } from '../repository/queries.ts';
 
 type DraftStatus = 'DRAFT' | 'FINALIZED' | 'ARCHIVED';
 type DraftMode = 'AUTO' | 'MANUAL';
@@ -119,20 +118,18 @@ export class DraftUnsupportedEngineError extends Error {
 type Dependencies = { id: () => string; now: () => Date; seed: () => string };
 
 export class DraftService {
-  private readonly store: Store;
+  private readonly repository: Repository;
   private readonly dependencies: Dependencies;
 
-  constructor(store: Store, dependencies: Dependencies) {
-    this.store = store;
+  constructor(repository: Repository, dependencies: Dependencies) {
+    this.repository = repository;
     this.dependencies = dependencies;
   }
 
   async create(input: CreateDraftInput): Promise<DraftDetail> {
     validateCreateInput(input);
-    const id = await this.store.write({}, (data) => {
-      const replay = input.replayFromDraftId
-        ? requireDraft(data, input.replayFromDraftId)
-        : undefined;
+    const id = await this.repository.write({}, (queries) => {
+      const replay = input.replayFromDraftId ? requireDraft(queries, input.replayFromDraftId) : undefined;
       if (replay && replay.engineVersion !== ALLOCATION_ENGINE_VERSION) {
         throw new DraftUnsupportedEngineError(replay.engineVersion);
       }
@@ -142,147 +139,116 @@ export class DraftService {
       const policyVersion = replay?.policyVersion ?? input.policyVersion;
       const policySettings = replay?.policySettings ?? input.policySettings;
       const randomSeed = replay?.randomSeed ?? this.dependencies.seed();
-      const semester = data.semesters.find(({ id: candidate }) => candidate === semesterId);
+      const semester = queries.catalog.getSemester({ id: semesterId });
       if (!semester && !replay) throw new DraftValidationError('Semester was not found');
       const now = this.dependencies.now().toISOString();
       if (!replay && semester!.order === null) {
-        semester!.order = nextSemesterOrder(data.semesters);
+        semester!.order = nextSemesterOrder(queries.catalog.listSemesters());
         semester!.allocationInputRevision += 1;
         semester!.updatedAt = now;
+        queries.catalog.updateSemester({ record: semester! });
       }
-      const snapshot = replay?.inputSnapshot ?? liveSnapshot(data, semesterId);
+      const snapshot = replay?.inputSnapshot ?? liveSnapshot(queries.allocation.getContext({ semesterId }), semesterId);
       const draft: DraftRecord = {
-        id: this.dependencies.id(),
-        semesterId,
-        status: 'DRAFT',
-        revision: 0,
-        mode,
-        policyId,
-        policyVersion,
-        engineVersion: ALLOCATION_ENGINE_VERSION,
-        policySettings: cloneStoreValue(policySettings),
-        randomSeed,
+        id: this.dependencies.id(), semesterId, status: 'DRAFT', revision: 0, mode,
+        policyId, policyVersion, engineVersion: ALLOCATION_ENGINE_VERSION,
+        policySettings: structuredClone(policySettings), randomSeed,
         sourceRevision: replay?.sourceRevision ?? semester!.allocationInputRevision,
-        inputFingerprint: allocationFingerprint(snapshot, {
-          policyId,
-          policyVersion,
-          settings: policySettings,
-        }),
-        inputSnapshot: cloneStoreValue(snapshot),
-        createdAt: now,
-        updatedAt: now,
-        finalizedAt: null,
-        enrollmentReportDownloadedAt: null,
-        enrollmentReportStoreRevision: null,
-        finalization: null,
+        inputFingerprint: allocationFingerprint(snapshot, { policyId, policyVersion, settings: policySettings }),
+        inputSnapshot: structuredClone(snapshot), createdAt: now, updatedAt: now, finalizedAt: null,
+        enrollmentReportDownloadedAt: null, enrollmentReportStoreRevision: null, finalization: null,
       };
-      const autoItems = mode === 'AUTO'
-        ? allocate(snapshot, policySettings, randomSeed).items
-        : manualItems(snapshot);
+      const autoItems = mode === 'AUTO' ? allocate(snapshot, policySettings, randomSeed).items : manualItems(snapshot);
       const ministries = new Map(snapshot.applications.map(({ id, ministry }) => [id, ministry]));
-      drafts(data).push(draft);
-      draftItems(data).push(...autoItems.map((item) => persistedItem(
-        item,
-        draft.id,
-        this.dependencies.id(),
-        now,
-        ministries.get(item.sourceApplicationId ?? '') ?? null,
-      )));
+      const items = autoItems.map((item) => persistedItem(item, draft.id, this.dependencies.id(), now,
+        ministries.get(item.sourceApplicationId ?? '') ?? null));
+      queries.allocation.save({ draft, items });
       return draft.id;
     });
     return this.get(id);
   }
 
   get(id: string): DraftDetail {
-    const data = this.store.draftDetailData();
-    const draft = requireDraft(data, id);
-    const items = draftItems(data).filter(({ draftId }) => draftId === id);
-    const courseIds = new Set(data.semesterCourses.filter(({ semesterId }) => semesterId === draft.semesterId).map(({ id }) => id));
-    const enrolledIds = new Set(data.enrollments.filter(({ semesterCourseId }) => courseIds.has(semesterCourseId)).map(({ memberId }) => memberId));
-    let isStale = true;
-    let inputChanges: InputChange[] = [{ code: 'INPUT_UNAVAILABLE' }];
-    try {
-      const current = buildAllocationSnapshot(data, draft.semesterId);
-      const currentFingerprint = allocationFingerprint(current, {
-        policyId: draft.policyId,
-        policyVersion: draft.policyVersion,
-        settings: draft.policySettings,
-      });
-      isStale = currentFingerprint !== draft.inputFingerprint;
-      inputChanges = isStale ? allocationInputChanges(draft.inputSnapshot, current) : [];
-    } catch (error) {
-      if (!(error instanceof AllocationSnapshotError)) throw error;
-    }
-    return {
-      draft: draftSummary(draft, data.meta.storeRevision),
-      studentResults: structuredClone(items).sort(byMemberId),
-      applicationSnapshot: structuredClone({
-        applications: draft.inputSnapshot.applications,
-        choices: draft.inputSnapshot.choices,
-        semesterCourses: draft.inputSnapshot.semesterCourses,
-      }),
-      existingEnrollments: structuredClone(draft.inputSnapshot.existingEnrollments),
-      currentEnrolledMembers: data.members.filter(({ id }) => enrolledIds.has(id)).map(({ id, name }) => ({ id, name })),
-      courseSummary: summarizeCourses(draft.inputSnapshot, items),
-      isStale,
-      inputChanges,
-      issues: [],
-    };
+    return this.repository.read((queries) => {
+      const draft = requireDraft(queries, id);
+      const data = queries.allocation.getContext({ draftId: id });
+      const items = data.allocationDraftItems;
+      let isStale = true;
+      let inputChanges: InputChange[] = [{ code: 'INPUT_UNAVAILABLE' }];
+      try {
+        const current = buildAllocationSnapshot(data, draft.semesterId);
+        const currentFingerprint = allocationFingerprint(current, {
+          policyId: draft.policyId, policyVersion: draft.policyVersion, settings: draft.policySettings,
+        });
+        isStale = currentFingerprint !== draft.inputFingerprint;
+        inputChanges = isStale ? allocationInputChanges(draft.inputSnapshot, current) : [];
+      } catch (error) {
+        if (!(error instanceof AllocationSnapshotError)) throw error;
+      }
+      return {
+        draft: draftSummary(draft, data.meta.storeRevision),
+        studentResults: structuredClone(items).sort(byMemberId),
+        applicationSnapshot: structuredClone({
+          applications: draft.inputSnapshot.applications, choices: draft.inputSnapshot.choices,
+          semesterCourses: draft.inputSnapshot.semesterCourses,
+        }),
+        existingEnrollments: structuredClone(draft.inputSnapshot.existingEnrollments),
+        currentEnrolledMembers: queries.allocation.currentEnrolledMembers({ semesterId: draft.semesterId }),
+        courseSummary: summarizeCourses(draft.inputSnapshot, items), isStale, inputChanges, issues: [],
+      };
+    });
   }
 
   list(): Array<ReturnType<typeof draftSummary>> {
-    const data = this.store.draftListData();
-    return drafts(data).filter((draft) => draft.status === 'DRAFT')
-      .map((draft) => draftSummary(draft, data.meta.storeRevision)).sort((left, right) => (
-      right.createdAt.localeCompare(left.createdAt) || compareId(left.id, right.id)
-    ));
+    return this.repository.read((queries) => {
+      const revision = queries.metadata().storeRevision;
+      return queries.allocation.list().map((draft) => draftSummary(draft, revision));
+    });
+  }
+
+  listPage(input: { semesterId?: string; query?: string; page: number; limit: number }) {
+    return this.repository.read((queries) => {
+      const revision = queries.metadata().storeRevision;
+      const result = queries.allocation.listPage(input);
+      return { ...result, items: result.items.map((draft) => draftSummary(draft, revision)) };
+    });
   }
 
   async delete(draftId: string, input: { expectedDraftRevision: number }): Promise<void> {
     requireRevision(input.expectedDraftRevision);
-    await this.store.write({}, (data) => {
-      const draft = requireDraft(data, draftId);
-      if (draft.revision !== input.expectedDraftRevision) {
-        throw new DraftRevisionConflictError(draft.revision);
-      }
-      data.allocationDrafts = drafts(data).filter(({ id }) => id !== draftId);
-      data.allocationDraftItems = draftItems(data).filter(({ draftId: id }) => id !== draftId);
+    await this.repository.write({}, (queries) => {
+      const draft = requireDraft(queries, draftId);
+      if (draft.revision !== input.expectedDraftRevision) throw new DraftRevisionConflictError(draft.revision);
+      queries.allocation.delete({ id: draftId });
     });
   }
 
   async updateItem(draftId: string, memberId: string, input: DraftItemInput): Promise<DraftDetail> {
     validateItemInput(input);
-    await this.store.write({}, (data) => {
-      const draft = editableDraft(data, draftId, input.expectedDraftRevision);
-      validateSelectedCourse(data, draft, input.finalDecision, input.finalSemesterCourseId);
-      const item = draftItems(data).find((candidate) => (
-        candidate.draftId === draftId && candidate.memberId === memberId
-      ));
+    await this.repository.write({}, (queries) => {
+      const draft = editableDraft(queries, draftId, input.expectedDraftRevision);
+      validateSelectedCourse(queries, draft, input.finalDecision, input.finalSemesterCourseId);
+      const item = queries.allocation.getItem({ draftId, memberId });
       if (!item) throw new DraftNotFoundError('Allocation draft item was not found');
-      validateLiveItem(data, draft, item);
+      validateLiveItem(queries, draft, item);
       applyFinal(item, input, this.dependencies.now().toISOString());
       bumpDraft(draft, item.updatedAt);
+      queries.allocation.save({ draft, items: [item] });
     });
     return this.get(draftId);
   }
 
-  async restoreAuto(
-    draftId: string,
-    memberId: string,
-    input: { expectedDraftRevision: number },
-  ): Promise<DraftDetail> {
+  async restoreAuto(draftId: string, memberId: string, input: { expectedDraftRevision: number }): Promise<DraftDetail> {
     requireRevision(input.expectedDraftRevision);
-    await this.store.write({}, (data) => {
-      const draft = editableDraft(data, draftId, input.expectedDraftRevision);
-      const item = draftItems(data).find((candidate) => (
-        candidate.draftId === draftId && candidate.memberId === memberId
-      ));
+    await this.repository.write({}, (queries) => {
+      const draft = editableDraft(queries, draftId, input.expectedDraftRevision);
+      const item = queries.allocation.getItem({ draftId, memberId });
       if (!item) throw new DraftNotFoundError('Allocation draft item was not found');
       if (item.autoDecision === 'NOT_EVALUATED') {
         throw new DraftValidationError('A manual-only item has no automatic result to restore');
       }
-      validateLiveItem(data, draft, item);
-      validateSelectedCourse(data, draft, item.autoDecision, item.autoSemesterCourseId);
+      validateLiveItem(queries, draft, item);
+      validateSelectedCourse(queries, draft, item.autoDecision, item.autoSemesterCourseId);
       const now = this.dependencies.now().toISOString();
       item.finalDecision = item.autoDecision;
       item.finalSemesterCourseId = item.autoSemesterCourseId;
@@ -290,6 +256,7 @@ export class DraftService {
       item.finalReasonDetail = null;
       item.updatedAt = now;
       bumpDraft(draft, now);
+      queries.allocation.save({ draft, items: [item] });
     });
     return this.get(draftId);
   }
@@ -306,30 +273,36 @@ export class DraftService {
     if (input.ministry != null && (typeof input.ministry !== 'string' || input.ministry.trim().length > 200)) {
       throw new DraftValidationError('학생 소속은 200자 이내로 입력하세요.');
     }
-    await this.store.write({}, (data) => {
-      const draft = editableDraft(data, draftId, input.expectedDraftRevision);
+    await this.repository.write({}, (queries) => {
+      const draft = editableDraft(queries, draftId, input.expectedDraftRevision);
       if (draft.mode !== 'MANUAL') throw new DraftValidationError('회원 추가는 수동 초안에서 사용할 수 있습니다.');
-      if (!data.semesterCourses.some(({ id, semesterId }) => id === input.semesterCourseId && semesterId === draft.semesterId)) {
+      const course = queries.catalog.getSemesterCourse({ id: input.semesterCourseId });
+      if (!course || course.semesterId !== draft.semesterId) {
         throw new DraftValidationError('이 학기의 개설 강좌를 선택하세요.');
       }
       const now = this.dependencies.now().toISOString();
-      const member = resolveNamed(data.members, input.memberName.trim(), now, this.dependencies.id);
-      const courseIds = new Set(data.semesterCourses.filter(({ semesterId }) => semesterId === draft.semesterId).map(({ id }) => id));
-      if (data.enrollments.some(({ memberId, semesterCourseId }) => memberId === member.id && courseIds.has(semesterCourseId))) {
+      let member = queries.catalog.getNamedByNameKey({ kind: 'members', nameKey: input.memberName.trim().normalize('NFC') });
+      if (!member) {
+        member = { id: this.dependencies.id(), name: input.memberName.trim(), nameKey: input.memberName.trim().normalize('NFC'),
+          createdAt: now, updatedAt: now };
+        queries.catalog.insertNamed({ kind: 'members', record: member });
+      }
+      if (queries.allocation.hasEnrollment({ semesterId: draft.semesterId, memberId: member.id })) {
         throw new DraftValidationError('이 회원은 같은 학기에 수강이력이 있습니다. 수강이력에서 확인하세요.');
       }
-      if (draftItems(data).some((item) => item.draftId === draftId && item.memberId === member.id)) {
+      if (queries.allocation.getItem({ draftId, memberId: member.id })) {
         throw new DraftValidationError('이미 이 초안에 있는 회원입니다. 기존 행의 최종 결정을 수정하세요.');
       }
-      draftItems(data).push({
+      const item: DraftItemRecord = {
         id: this.dependencies.id(), draftId, memberId: member.id, memberNameAtGeneration: member.name,
-        ministry: input.ministry?.trim() || null,
-        sourceApplicationId: null, autoDecision: 'NOT_EVALUATED', autoSemesterCourseId: null,
-        autoReasonCode: 'MANUAL_ONLY', autoReasonDetail: { preferenceAttempts: [], fallback: null },
+        ministry: input.ministry?.trim() || null, sourceApplicationId: null,
+        autoDecision: 'NOT_EVALUATED', autoSemesterCourseId: null, autoReasonCode: 'MANUAL_ONLY',
+        autoReasonDetail: { preferenceAttempts: [], fallback: null },
         finalDecision: 'SELECTED', finalSemesterCourseId: input.semesterCourseId,
         finalReasonCode: 'ADMIN_ADDED', finalReasonDetail: null, updatedAt: now,
-      });
+      };
       bumpDraft(draft, now);
+      queries.allocation.save({ draft, items: [item] });
     });
     return this.get(draftId);
   }
@@ -414,30 +387,29 @@ const validateItemInput = (input: DraftItemInput): void => {
 };
 
 const validateSelectedCourse = (
-  data: DatabaseState,
+  queries: QuerySession,
   draft: DraftRecord,
   decision: Decision,
   semesterCourseId: string | null,
 ): void => {
   if (decision !== 'SELECTED') return;
-  const course = (data.semesterCourses as Array<{ id: string; semesterId: string }>)
-    .find(({ id }) => id === semesterCourseId);
+  const course = queries.catalog.getSemesterCourse({ id: semesterCourseId! });
   if (!course || course.semesterId !== draft.semesterId) {
     throw new DraftValidationError('Selected course does not belong to the draft semester');
   }
 };
 
-const validateLiveItem = (data: DatabaseState, draft: DraftRecord, item: DraftItemRecord): void => {
-  if (!(data.semesters as Array<{ id: string }>).some(({ id }) => id === draft.semesterId)) {
+const validateLiveItem = (queries: QuerySession, draft: DraftRecord, item: DraftItemRecord): void => {
+  if (!queries.catalog.getSemester({ id: draft.semesterId })) {
     throw new DraftValidationError('Draft semester was not found');
   }
-  if (!(data.members as Array<{ id: string }>).some(({ id }) => id === item.memberId)) {
+  if (!queries.catalog.getMember({ id: item.memberId })) {
     throw new DraftValidationError('Draft member was not found');
   }
 };
 
-const editableDraft = (data: DatabaseState, id: string, expectedRevision: number): DraftRecord => {
-  const draft = requireDraft(data, id);
+const editableDraft = (queries: QuerySession, id: string, expectedRevision: number): DraftRecord => {
+  const draft = requireDraft(queries, id);
   if (draft.status !== 'DRAFT') throw new DraftReadOnlyError(draft.status);
   if (draft.revision !== expectedRevision) throw new DraftRevisionConflictError(draft.revision);
   return draft;
@@ -457,7 +429,7 @@ const bumpDraft = (draft: DraftRecord, now: string): void => {
   draft.updatedAt = now;
 };
 
-const liveSnapshot = (data: DatabaseState, semesterId: string): AllocationSnapshot => {
+const liveSnapshot = (data: AllocationContext, semesterId: string): AllocationSnapshot => {
   try {
     return buildAllocationSnapshot(data, semesterId);
   } catch (error) {
@@ -490,7 +462,7 @@ const count = (ids: string[]): Map<string, number> => {
   return result;
 };
 
-const draftSummary = (draft: DraftRecord, storeRevision: number) => ({
+const draftSummary = (draft: DraftSummaryRecord, storeRevision: number) => ({
   id: draft.id,
   semesterId: draft.semesterId,
   status: draft.status,
@@ -505,13 +477,11 @@ const draftSummary = (draft: DraftRecord, storeRevision: number) => ({
   enrollmentReportIsCurrent: draft.enrollmentReportStoreRevision === storeRevision,
 });
 
-const requireDraft = (data: Pick<DatabaseState, 'allocationDrafts'>, id: string): DraftRecord => {
-  const draft = drafts(data).find((item) => item.id === id);
+const requireDraft = (queries: QuerySession, id: string): DraftRecord => {
+  const draft = queries.allocation.get({ id });
   if (!draft) throw new DraftNotFoundError();
   return draft;
 };
-const drafts = (data: Pick<DatabaseState, 'allocationDrafts'>): DraftRecord[] => data.allocationDrafts;
-const draftItems = (data: Pick<DatabaseState, 'allocationDraftItems'>): DraftItemRecord[] => data.allocationDraftItems;
 const byMemberId = (left: DraftItemRecord, right: DraftItemRecord): number => compareId(left.memberId, right.memberId);
 const compareId = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 

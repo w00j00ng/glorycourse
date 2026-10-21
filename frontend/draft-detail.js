@@ -10,7 +10,7 @@ import {
 } from './draft-view.js';
 
 /** @typedef {import('../backend/src/services/drafts.ts').DraftDetail} DraftDetail */
-/** @typedef {import('../backend/src/storage/store.ts').AllocationDraftItemRecord} DraftItem */
+/** @typedef {import('../backend/src/domain/records.ts').AllocationDraftItemRecord} DraftItem */
 /** @typedef {ReturnType<import('../backend/src/services/applications.ts').ApplicationService['getSemesterContext']>} DraftContext */
 
 /**

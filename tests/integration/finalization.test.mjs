@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
+import { createTestRepository, seedRepository } from '../helpers/repository.mjs';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
+import { StoreEpochConflictError, StoreRevisionConflictError } from '../../backend/src/domain/errors.ts';
 import { DraftService, DraftNotFoundError } from '../../backend/src/services/drafts.ts';
 import {
   FinalizationAcknowledgementError,
@@ -13,12 +17,6 @@ import {
   FinalizationStaleError,
   FinalizationValidationError,
 } from '../../backend/src/services/finalization.ts';
-import {
-  Store,
-  StoreEpochConflictError,
-  StoreRevisionConflictError,
-  openStore,
-} from '../../backend/src/storage/store.ts';
 
 const timestamp = '2026-09-23T00:00:00.000Z';
 const secret = '0123456789abcdef0123456789abcdef';
@@ -35,7 +33,7 @@ test('finalizes all selected rows atomically and returns the same receipt after 
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-finalize-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  const store = await openStore(file, fixture());
+  const store = await openRepository(file, fixture());
   const drafts = draftService(store);
   const created = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   let clock = new Date(timestamp);
@@ -47,7 +45,7 @@ test('finalizes all selected rows atomically and returns the same receipt after 
 
   const receipt = await service.finalize(created.draft.id, request);
 
-  const committed = store.read();
+  const committed = store.snapshot();
   assert.equal(receipt.createdCount, 1);
   assert.deepEqual(receipt.createdEnrollmentIds, [preview.enrollments[0].id]);
   assert.equal('sourceDraftId' in committed.enrollments[0], false);
@@ -58,17 +56,17 @@ test('finalizes all selected rows atomically and returns the same receipt after 
   assert.deepEqual(committed.finalizationReceipts[0].receipt, receipt);
   assert.throws(() => drafts.get(created.draft.id), DraftNotFoundError);
 
-  const reopened = await openStore(file, emptyStore());
-  await reopened.write({}, (data) => { data.meta.storeEpoch = 'epoch-after-restore'; });
-  const revisionBeforeRetry = reopened.read().meta.storeRevision;
+  const reopened = await openRepository(file, emptyStore());
+  await seedRepository(reopened, (data) => { data.meta.storeEpoch = 'epoch-after-restore'; });
+  const revisionBeforeRetry = reopened.snapshot().meta.storeRevision;
   clock = new Date('2026-09-23T01:00:00.000Z');
   const retried = await finalizationService(reopened, {
     now: () => clock,
   }).finalize(created.draft.id, request);
 
   assert.deepEqual(retried, receipt);
-  assert.equal(reopened.read().meta.storeRevision, revisionBeforeRetry);
-  assert.equal(reopened.read().enrollments.length, 1);
+  assert.equal(reopened.snapshot().meta.storeRevision, revisionBeforeRetry);
+  assert.equal(reopened.snapshot().enrollments.length, 1);
   await assert.rejects(
     finalizationService(reopened, { now: () => clock })
       .finalize(created.draft.id, { ...request, acknowledgementNote: '다른 본문' }),
@@ -85,7 +83,7 @@ test('requires the exact warning digest and rejects a changed preview without pa
     id: 'past-enrollment', semesterCourseId: 'sc-past', memberId: 'member-1', ministry: null,
     exceptionAcknowledgement: null, revision: 0,
   }));
-  const store = await Store.open(new MemoryAdapter(data), data);
+  const store = await createTestRepository(data);
   const drafts = draftService(store);
   const created = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   await drafts.updateItem(created.draft.id, 'member-1', {
@@ -98,30 +96,30 @@ test('requires the exact warning digest and rejects a changed preview without pa
   const service = finalizationService(store);
   const preview = service.preview(created.draft.id, { expectedDraftRevision: 1 });
   assert.ok(preview.issues.some(({ code }) => code === 'RETAKE'));
-  const before = store.read();
+  const before = store.snapshot();
 
   await assert.rejects(service.finalize(created.draft.id, {
     ...finalizeRequest(preview, 'warning-1'),
     acknowledgedWarningDigest: 'confirmed=true',
   }), FinalizationAcknowledgementError);
-  assert.deepEqual(store.read(), before);
+  assert.deepEqual(store.snapshot(), before);
 
-  await store.write({}, (candidate) => {
+  await seedRepository(store, (candidate) => {
     candidate.semesterCourses.find(({ id }) => id === 'sc-a').capacity = 0;
   });
-  const changed = store.read();
+  const changed = store.snapshot();
   await assert.rejects(
     service.finalize(created.draft.id, finalizeRequest(preview, 'warning-1')),
     FinalizationStaleError,
   );
-  assert.deepEqual(store.read(), changed);
+  assert.deepEqual(store.snapshot(), changed);
 
   const refreshed = service.preview(created.draft.id, { expectedDraftRevision: 1 });
   const receipt = await service.finalize(
     created.draft.id,
     finalizeRequest(refreshed, 'warning-2'),
   );
-  const committed = store.read();
+  const committed = store.snapshot();
   assert.equal(receipt.createdCount, 1);
   assert.equal(committed.enrollments.at(-1).exceptionAcknowledgement.warningDigest, refreshed.warningDigest);
   assert.equal(committed.enrollments.at(-1).exceptionAcknowledgement.note, '표시된 경고와 최종 선택을 확인함');
@@ -133,43 +131,43 @@ test('finalizes with optional notes and preserves provided notes even without wa
   for (const warned of [false, true]) {
     for (const [note, expected] of [[undefined, ''], ['', ''], ['  ', ''], ['  배정 검토\n추가 승인  ', '배정 검토\n추가 승인']]) {
       const data = fixture();
-      const store = await Store.open(new MemoryAdapter(data), data);
+      const store = await createTestRepository(data);
       const drafts = draftService(store);
       const created = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
-      if (warned) await store.write({}, (candidate) => { candidate.semesterCourses[0].capacity = 0; });
+      if (warned) await seedRepository(store, (candidate) => { candidate.semesterCourses[0].capacity = 0; });
       const service = finalizationService(store);
       const preview = service.preview(created.draft.id, { expectedDraftRevision: 0 });
       assert.equal(preview.issues.some(({ severity }) => severity === 'WARNING'), warned);
       const { acknowledgementNote, ...request } = finalizeRequest(preview, 'optional-note');
-      const before = store.read();
+      const before = store.snapshot();
       for (const invalid of [123, null, 'x'.repeat(2001)]) {
         await assert.rejects(service.finalize(created.draft.id, { ...request, acknowledgementNote: invalid }),
           typeof invalid === 'string' ? FinalizationAcknowledgementError : FinalizationValidationError);
-        assert.deepEqual(store.read(), before);
+        assert.deepEqual(store.snapshot(), before);
       }
       const receipt = await service.finalize(created.draft.id, { ...request,
         ...(note === undefined ? {} : { acknowledgementNote: note }) });
       assert.equal(receipt.createdCount, 1);
-      assert.equal(store.read().enrollments[0].exceptionAcknowledgement?.note ?? '', expected);
+      assert.equal(store.snapshot().enrollments[0].exceptionAcknowledgement?.note ?? '', expected);
     }
   }
 });
 
 test('marks a downloaded enrollment report current until the stored data changes', async () => {
   const data = fixture();
-  const store = await Store.open(new MemoryAdapter(data), data);
+  const store = await createTestRepository(data);
   const drafts = draftService(store);
   const created = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
 
   const finalization = finalizationService(store);
-  await assert.rejects(finalization.recordEnrollmentReportDownload('semester-1', store.read().meta),
+  await assert.rejects(finalization.recordEnrollmentReportDownload('semester-1', store.snapshot().meta),
     /No finalized allocation/);
 
   const preview = finalization.preview(created.draft.id, { expectedDraftRevision: 0 });
   await finalization.finalize(created.draft.id, finalizeRequest(preview, 'report-finalize'));
-  const generatedFromRevision = store.read().meta.storeRevision;
-  const generatedFromEpoch = store.read().meta.storeEpoch;
-  await store.write({}, (candidate) => {
+  const generatedFromRevision = store.snapshot().meta.storeRevision;
+  const generatedFromEpoch = store.snapshot().meta.storeEpoch;
+  await seedRepository(store, (candidate) => {
     candidate.enrollments[0].updatedAt = '2026-09-23T00:30:00.000Z';
   });
   await assert.rejects(
@@ -178,22 +176,22 @@ test('marks a downloaded enrollment report current until the stored data changes
     }),
     StoreRevisionConflictError,
   );
-  assert.equal(store.read().finalizationReceipts[0].enrollmentReportDownloadedAt, null);
+  assert.equal(store.snapshot().finalizationReceipts[0].enrollmentReportDownloadedAt, null);
 
-  const currentStoreRevision = store.read().meta.storeRevision;
-  const currentStoreEpoch = store.read().meta.storeEpoch;
+  const currentStoreRevision = store.snapshot().meta.storeRevision;
+  const currentStoreEpoch = store.snapshot().meta.storeEpoch;
   await finalization.recordEnrollmentReportDownload('semester-1', {
     storeRevision: currentStoreRevision, storeEpoch: currentStoreEpoch,
   });
 
   assert.equal(finalization.reportStatus('semester-1').enrollmentReportDownloadedAt, timestamp);
   assert.equal(finalization.reportStatus('semester-1').enrollmentReportIsCurrent, true);
-  const recordedStoreRevision = store.read().meta.storeRevision;
+  const recordedStoreRevision = store.snapshot().meta.storeRevision;
 
-  await finalization.recordEnrollmentReportDownload('semester-1', store.read().meta);
-  assert.equal(store.read().meta.storeRevision, recordedStoreRevision);
+  await finalization.recordEnrollmentReportDownload('semester-1', store.snapshot().meta);
+  assert.equal(store.snapshot().meta.storeRevision, recordedStoreRevision);
 
-  await store.write({}, (candidate) => {
+  await seedRepository(store, (candidate) => {
     candidate.enrollments[0].updatedAt = '2026-09-23T01:00:00.000Z';
   });
   assert.equal(finalization.reportStatus('semester-1').enrollmentReportIsCurrent, false);
@@ -201,13 +199,13 @@ test('marks a downloaded enrollment report current until the stored data changes
 
 test('rejects enrollment report completion after a same-revision restore changes the store epoch', async () => {
   const data = fixture();
-  const store = await Store.open(new MemoryAdapter(data), data);
+  const store = await createTestRepository(data);
   const drafts = draftService(store);
   const created = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   const finalization = finalizationService(store);
   const preview = finalization.preview(created.draft.id, { expectedDraftRevision: 0 });
   await finalization.finalize(created.draft.id, finalizeRequest(preview, 'epoch-finalize'));
-  const beforeRestore = store.read();
+  const beforeRestore = store.snapshot();
   const restored = structuredClone(beforeRestore);
   restored.meta.storeEpoch = 'epoch-after-report-generation';
   await store.restore(restored, {
@@ -220,11 +218,11 @@ test('rejects enrollment report completion after a same-revision restore changes
     finalization.recordEnrollmentReportDownload('semester-1', beforeRestore.meta),
     StoreEpochConflictError,
   );
-  assert.equal(store.read().finalizationReceipts[0].enrollmentReportDownloadedAt, null);
+  assert.equal(store.snapshot().finalizationReceipts[0].enrollmentReportDownloadedAt, null);
 });
 
 test('reports another finalized draft as a hard conflict instead of silently skipping the member', async () => {
-  const store = await Store.open(new MemoryAdapter(fixture()), fixture());
+  const store = await createTestRepository(fixture());
   const drafts = draftService(store);
   const first = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   const second = await drafts.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
@@ -241,26 +239,33 @@ test('reports another finalized draft as a hard conflict instead of silently ski
     service.finalize(second.draft.id, finalizeRequest(secondPreview, 'second')),
     FinalizationConflictError,
   );
-  assert.equal(store.read().enrollments.length, 1);
-  assert.equal(store.read().allocationDrafts.find(({ id }) => id === second.draft.id).status, 'DRAFT');
+  assert.equal(store.snapshot().enrollments.length, 1);
+  assert.equal(store.snapshot().allocationDrafts.find(({ id }) => id === second.draft.id).status, 'DRAFT');
 });
 
-test('keeps enrollments and draft state unchanged when file persistence fails', async () => {
-  const initial = fixture();
-  const adapter = new FailingMemoryAdapter(initial);
-  const failingStore = await Store.open(adapter, initial);
+test('keeps enrollments and draft state unchanged when SQLite commit fails', async () => {
+  const failingStore = await createTestRepository(fixture());
   const failingDraft = await draftService(failingStore)
     .create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
   const writeFailure = finalizationService(failingStore);
   const failingPreview = writeFailure.preview(failingDraft.draft.id, { expectedDraftRevision: 0 });
-  const beforeWrite = failingStore.read();
-  adapter.failNext = true;
-
-  await assert.rejects(
-    writeFailure.finalize(failingDraft.draft.id, finalizeRequest(failingPreview, 'write-failure')),
-    /write failed/,
-  );
-  assert.deepEqual(failingStore.read(), beforeWrite);
+  const beforeWrite = failingStore.snapshot();
+  const exec = DatabaseSync.prototype.exec;
+  let failCommit = true;
+  DatabaseSync.prototype.exec = function(sql) {
+    if (sql === 'COMMIT' && failCommit && this.prepare('PRAGMA query_only').get().query_only === 0) {
+      failCommit = false;
+      throw new Error('write failed');
+    }
+    return exec.call(this, sql);
+  };
+  try {
+    await assert.rejects(
+      writeFailure.finalize(failingDraft.draft.id, finalizeRequest(failingPreview, 'write-failure')),
+      /write failed/,
+    );
+  } finally { DatabaseSync.prototype.exec = exec; }
+  assert.deepEqual(failingStore.snapshot(), beforeWrite);
 });
 
 const finalizationService = (store, overrides = {}) => {
@@ -319,20 +324,3 @@ const fixture = () => ({
 
 const named = (value) => stamped({ ...value, nameKey: value.name });
 const stamped = (value) => ({ ...value, createdAt: timestamp, updatedAt: timestamp });
-
-class MemoryAdapter {
-  constructor(data) { this.data = structuredClone(data); }
-  async read() { return structuredClone(this.data); }
-  async write(data) { this.data = structuredClone(data); }
-}
-
-class FailingMemoryAdapter extends MemoryAdapter {
-  failNext = false;
-  async write(data) {
-    if (this.failNext) {
-      this.failNext = false;
-      throw new Error('write failed');
-    }
-    await super.write(data);
-  }
-}

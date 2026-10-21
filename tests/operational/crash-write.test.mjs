@@ -9,8 +9,8 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { openStore } from '../../backend/src/storage/store.ts';
-import { migrateDatabase } from '../../backend/src/storage/migrations.ts';
+import { migrateDatabase } from '../../backend/src/bootstrap/database.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 
 const emptyStore = () => ({
   meta: { storeEpoch: 'epoch-before-write', storeRevision: 0 },
@@ -28,7 +28,59 @@ const emptyStore = () => ({
   restoreReceipts: [],
 });
 
-test('restarts with the complete old or new store after an incremental writer is terminated', async (t) => {
+for (const stage of ['pending', 'committed']) {
+  test(`reopens a complete SQL repository after terminating a ${stage} command`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'glorycourse-repository-crash-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const file = join(directory, 'db.sqlite');
+    const initial = emptyStore();
+    const repository = await openRepository(file, initial);
+    repository.close();
+    const module = new URL('../../backend/src/bootstrap/database.ts', import.meta.url).href;
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', '--input-type=module', '-e', `
+      import { openRepository } from ${JSON.stringify(module)};
+      const repository = await openRepository(process.argv[1], ${JSON.stringify(initial)});
+      const stage = process.argv[2];
+      await repository.write({}, async (queries) => {
+        for (let i = 0; i < 20; i++) queries.catalog.insertNamed({ kind: 'members', record: {
+          id: 'repository-' + i, name: '회원 ' + i, nameKey: '회원 ' + i,
+          createdAt: '2026-10-21T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z',
+        } });
+        if (stage === 'pending') {
+          process.send('pending');
+          await new Promise(() => { setInterval(() => {}, 1000); });
+        }
+      });
+      process.send('committed');
+      setInterval(() => {}, 1000);
+    `, file, stage], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+    const exited = once(child, 'exit');
+    try {
+      const [message] = await Promise.race([
+        once(child, 'message', { signal: AbortSignal.timeout(15_000) }),
+        exited.then(() => { throw new Error('Repository writer exited before the selected commit stage'); }),
+      ]);
+      assert.equal(message, stage);
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
+      await exited;
+    }
+    const reopened = await openRepository(file, emptyStore());
+    try {
+      const expected = structuredClone(initial);
+      if (stage === 'committed') {
+        expected.meta.storeRevision = 1;
+        expected.members = Array.from({ length: 20 }, (_, index) => ({
+          id: `repository-${index}`, name: `회원 ${index}`, nameKey: `회원 ${index}`,
+          createdAt: '2026-10-21T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z',
+        }));
+      }
+      assert.deepEqual(reopened.snapshot(), expected);
+    } finally { reopened.close(); }
+  });
+}
+
+test('restarts with the complete old or restored state after terminating a large restore', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-crash-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataFile = join(directory, 'db.sqlite');
@@ -38,7 +90,7 @@ test('restarts with the complete old or new store after an incremental writer is
     id: 'original-member', name: '기존 회원', nameKey: '기존 회원',
     createdAt: '2026-09-22T00:00:00.000Z', updatedAt: '2026-09-22T00:00:00.000Z',
   });
-  await openStore(dataFile, initial);
+  (await openRepository(dataFile, initial)).close();
   const child = spawn(process.execPath, [
     '--experimental-strip-types', '--disable-warning=ExperimentalWarning',
     fileURLToPath(new URL('./write-large-store.mjs', import.meta.url)),
@@ -62,8 +114,9 @@ test('restarts with the complete old or new store after an incremental writer is
   if (child.exitCode === null) await exited;
   assert.equal(interrupted, true, 'writer did not expose an interruptible SQLite transaction');
 
-  const reopened = await openStore(dataFile, emptyStore());
-  const data = reopened.read();
+  const reopened = await openRepository(dataFile, emptyStore());
+  t.after(() => reopened.close());
+  const data = reopened.snapshot();
   assert.ok([1, 200000].includes(data.members.length));
   if (data.members.length === 1) {
     assert.deepEqual(data, initial);
@@ -82,7 +135,7 @@ test('rolls back spilled uncommitted pages when restarting after a crash', async
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-hot-journal-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  await openStore(file, emptyStore());
+  (await openRepository(file, emptyStore())).close();
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', `
     import { DatabaseSync } from 'node:sqlite';
     const db = new DatabaseSync(process.argv[1]);
@@ -106,14 +159,16 @@ test('rolls back spilled uncommitted pages when restarting after a crash', async
     child.kill('SIGKILL');
     await exited;
   }
-  assert.deepEqual((await openStore(file, emptyStore())).read(), emptyStore());
+  const reopened = await openRepository(file, emptyStore());
+  try { assert.deepEqual(reopened.snapshot(), emptyStore()); }
+  finally { reopened.close(); }
 });
 
 test('a terminated migration rolls back its DDL and keeps the committed dirty marker', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-migration-crash-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  await openStore(file, emptyStore());
+  (await openRepository(file, emptyStore())).close();
   const migrations = join(directory, 'migrations');
   await cp(new URL('../../schema/migrations/', import.meta.url), migrations, { recursive: true });
   const manifest = JSON.parse(await readFile(join(migrations, 'manifest.json'), 'utf8'));
@@ -127,7 +182,7 @@ test('a terminated migration rolls back its DDL and keeps the committed dirty ma
   await writeFile(join(migrations, downName), down);
   await writeFile(join(migrations, 'manifest.json'), JSON.stringify({ targetVersion: version,
     migrations: [...manifest.migrations, { version, name, checksum: hash(up), down: { name: downName, checksum: hash(down) } }] }));
-  const module = new URL('../../backend/src/storage/migrations.ts', import.meta.url).href;
+  const module = new URL('../../backend/src/bootstrap/database.ts', import.meta.url).href;
   const child = spawn(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', '--input-type=module', '-e', `
     import { migrateDatabase } from ${JSON.stringify(module)};
     await migrateDatabase(process.argv[1], undefined, { directory: process.argv[2], onProgress: (message) => {

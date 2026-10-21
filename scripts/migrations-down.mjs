@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { acquireInstanceLock } from '../backend/src/storage/instance-lock.ts';
-import { migrateDatabase } from '../backend/src/storage/migrations.ts';
+import { migrateDatabase } from '../backend/src/bootstrap/database.ts';
 
 const [file, version, ...extra] = process.argv.slice(2);
 if (!file || !/^(0|[1-9]\d{9})$/.test(version ?? '') || extra.length) {

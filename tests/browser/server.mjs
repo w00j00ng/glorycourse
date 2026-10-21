@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import ExcelJS from '@excel.js/exceljs';
+import { seedRepository } from '../helpers/repository.mjs';
 
 import { startLocalServer } from '../../backend/src/server.ts';
 
@@ -14,7 +15,7 @@ process.send({ type: 'ready', origin: server.origin });
 process.on('message', async (message) => {
   try {
     if (message.type === 'clear-application-preferences') {
-      await server.store.write({}, (data) => {
+      await seedRepository(server.repository, (data) => {
         for (const choice of data.applicationChoices) choice.preference = null;
       });
       process.send({ type: 'preferences-cleared' });
@@ -57,7 +58,7 @@ process.on('message', async (message) => {
       return;
     }
     if (message.type !== 'seed-large') return;
-    await server.store.write({}, (data) => {
+    await seedRepository(server.repository, (data) => {
       data.semesters.push({ id: 'semester', name: '검증 학기', nameKey: '검증 학기', order: 1,
         allocationInputRevision: 0, createdAt: timestamp, updatedAt: timestamp });
       for (let index = 0; index < 100; index++) {

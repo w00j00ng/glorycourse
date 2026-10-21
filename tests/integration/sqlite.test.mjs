@@ -5,9 +5,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { openStore } from '../../backend/src/storage/store.ts';
-import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
-import { readRelationalStore, writeRelationalStore } from '../../backend/src/storage/queries/relational-store.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
+import { readRelationalStore, writeRelationalStore } from '../../backend/src/repository/relational-store.ts';
 import { allocationFingerprint, allocationInputChanges, buildAllocationSnapshot } from '../../backend/src/allocation/snapshot.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
@@ -18,16 +17,19 @@ test('reopens independent student ministries and preserves the draft generation 
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
   const initial = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
-  const store = await openStore(file, initial);
-  assert.deepEqual((await openStore(file, empty)).read(), initial);
+  const store = await openRepository(file, initial);
+  assert.deepEqual((await openRepository(file, empty)).snapshot(), initial);
 
-  await store.write({}, (data) => {
-    data.applications[0].ministry = 'Changed application school';
-    data.enrollments[0].ministry = null;
-    data.allocationDraftItems[0].ministry = null;
+  await store.write({}, (queries) => {
+    queries.applications.update({ record: { ...initial.applications[0], ministry: 'Changed application school' } });
+    queries.enrollments.update({ record: { ...initial.enrollments[0], ministry: null } });
+    queries.allocation.save({
+      draft: initial.allocationDrafts[0],
+      items: [{ ...initial.allocationDraftItems[0], ministry: null }],
+    });
   });
-  const reopened = (await openStore(file, empty)).read();
-  assert.deepEqual(reopened, store.read());
+  const reopened = (await openRepository(file, empty)).snapshot();
+  assert.deepEqual(reopened, store.snapshot());
   assert.deepEqual(reopened.allocationDrafts[0].inputSnapshot, initial.allocationDrafts[0].inputSnapshot);
   assert.deepEqual(reopened.members, initial.members);
 });
@@ -66,12 +68,12 @@ test('creates a managed SQLite database and reopens committed records', async (t
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-sqlite-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  const store = await openStore(file, empty);
-  await store.write({}, (data) => { data.members.push(member); });
+  const store = await openRepository(file, empty);
+  await store.write({}, (queries) => queries.catalog.insertNamed({ kind: 'members', record: member }));
   assert.equal((await readFile(file)).subarray(0, 16).toString(), 'SQLite format 3\0');
-  await store.write({}, (data) => { data.members[0].name = '수정 회원'; });
-  const reopened = await openStore(file, empty);
-  assert.equal(reopened.read().members[0].name, '수정 회원');
+  await store.write({}, (queries) => queries.catalog.updateNamed({ kind: 'members', record: { ...member, name: '수정 회원' } }));
+  const reopened = await openRepository(file, empty);
+  assert.equal(reopened.snapshot().members[0].name, '수정 회원');
   const db = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(db.prepare('SELECT count(*) AS count FROM members').get().count, 1); }
   finally { db.close(); }
@@ -81,7 +83,7 @@ test('stores business data in explicit relational columns without JSON documents
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-sqlite-schema-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     db.exec('PRAGMA foreign_keys = ON');
@@ -108,44 +110,35 @@ test('leaves an old JSON file untouched and rolls back a failed SQLite transacti
   const legacyFile = join(directory, 'db.json');
   const file = join(directory, 'db.sqlite');
   await writeFile(legacyFile, '{broken');
-  await openStore(file, empty);
+  await openRepository(file, empty);
   assert.equal(await readFile(legacyFile, 'utf8'), '{broken');
-  const adapter = new SQLiteAdapter(file);
-  await assert.rejects(adapter.write({ ...structuredClone(empty), members: [member, member] }, empty));
-  assert.deepEqual(await adapter.read(), empty);
-});
-
-test('does not replace an existing database without its previous state', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-sqlite-guard-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const file = join(directory, 'db.sqlite');
-  const initial = { ...structuredClone(empty), members: [member] };
-  await openStore(file, initial);
-  const adapter = new SQLiteAdapter(file);
-
-  await assert.rejects(adapter.write(empty), /Previous store state is required/);
-  assert.deepEqual(await adapter.read(), initial);
+  const repository = await openRepository(file, empty);
+  await assert.rejects(repository.write({}, (queries) => {
+    queries.catalog.insertNamed({ kind: 'members', record: member });
+    queries.catalog.insertNamed({ kind: 'members', record: member });
+  }));
+  assert.deepEqual(repository.snapshot(), empty);
 });
 
 test('rejects a record whose foreign keys do not exist and keeps committed data intact', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-sqlite-foreign-key-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  const store = await openStore(file, empty);
-  await assert.rejects(store.write({}, (data) => {
-    data.semesterCourses.push({
+  const store = await openRepository(file, empty);
+  await assert.rejects(store.write({}, (queries) => {
+    queries.catalog.insertSemesterCourse({ record: {
       id: 'semester-course-1', semesterId: 'missing-semester', courseId: 'missing-course', capacity: 1,
       createdAt: '2026-09-25T00:00:00.000Z', updatedAt: '2026-09-25T00:00:00.000Z',
-    });
+    } });
   }), /FOREIGN KEY/);
-  assert.deepEqual((await openStore(file, empty)).read(), empty);
+  assert.deepEqual((await openRepository(file, empty)).snapshot(), empty);
 });
 
 test('reopens a maximum-size import with every row and cell in order', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-import-scale-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const data = structuredClone(empty);
   data.importBatches.push({
     id: 'large-import', kind: 'APPLICATIONS', templateVersion: '1', fileHash: 'hash',

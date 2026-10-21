@@ -13,7 +13,9 @@ import {
 } from '../excel/workbooks.ts';
 import { applyBatchCandidate, evaluateEnrollmentImport } from './enrollments.ts';
 import { applyContext } from './import-context.ts';
-import type { Store, DatabaseState } from '../storage/store.ts';
+import type { Repository } from '../repository/database.ts';
+import type { ImportContext } from '../repository/imports.ts';
+import type { ImportBatchRecord } from '../domain/records.ts';
 
 export type ImportMode = 'MERGE_KEEP_EXISTING' | 'REPLACE_APPLICATION';
 export type ApplicationStatus = 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
@@ -86,7 +88,7 @@ type Dependencies = {
   limits?: Partial<WorkbookLimits>;
   previewTtlMs?: number;
 };
-type ImportBatch = DatabaseState['importBatches'][number];
+type ImportBatch = ImportBatchRecord;
 
 export class ImportPreviewNotFoundError extends Error {
   constructor() {
@@ -103,12 +105,12 @@ export class ImportBatchNotFoundError extends Error {
 }
 
 export class ImportPreviewService {
-  readonly #store: Store;
+  readonly #repository: Repository;
   readonly #dependencies: Dependencies & { previewTtlMs: number };
   readonly #previews = new Map<string, ImportPreview>();
 
-  constructor(store: Store, dependencies: Dependencies) {
-    this.#store = store;
+  constructor(repository: Repository, dependencies: Dependencies) {
+    this.#repository = repository;
     this.#dependencies = { ...dependencies, previewTtlMs: dependencies.previewTtlMs ?? 15 * 60 * 1000 };
   }
 
@@ -126,7 +128,7 @@ export class ImportPreviewService {
     const templateVersion = validateMetadata(workbook, input.kind);
     const rawRows = extractRawRows(workbook, input.kind);
     return this.#remember(buildPreview(
-      this.#store.read(),
+      this.#repository.read((queries) => queries.imports.getContext()),
       input.kind,
       templateVersion,
       rawRows,
@@ -143,7 +145,7 @@ export class ImportPreviewService {
       this.#previews.delete(previewId);
       throw new ImportPreviewNotFoundError();
     }
-    return this.#store.write({}, (data) => {
+    return this.#repository.write({}, (queries) => {
       const batch: ImportBatch = {
         id: this.#dependencies.id(),
         kind: preview.kind,
@@ -155,13 +157,13 @@ export class ImportPreviewService {
         resolutions: [],
         receipt: null,
       };
-      importBatches(data).push(batch);
+      queries.imports.saveBatch({ record: batch });
       return structuredClone(batch);
     });
   }
 
   getStaged(id: string): ImportBatch {
-    const batch = this.#store.getImportBatch(id);
+    const batch = this.#repository.read((queries) => queries.imports.getBatch({ id }));
     if (!batch || batch.status !== 'STAGED') throw new ImportBatchNotFoundError();
     return structuredClone(batch);
   }
@@ -169,7 +171,7 @@ export class ImportPreviewService {
   repreviewStaged(id: string): ImportPreview {
     const batch = this.getStaged(id);
     return this.#remember(buildPreview(
-      this.#store.read(),
+      this.#repository.read((queries) => queries.imports.getContext()),
       batch.kind,
       batch.templateVersion,
       batch.rawRows,
@@ -205,7 +207,7 @@ export class ImportPreviewService {
 }
 
 const buildPreview = (
-  data: DatabaseState,
+  data: ImportContext,
   kind: ImportKind,
   templateVersion: string,
   rawRows: RawRow[],
@@ -234,7 +236,7 @@ const buildPreview = (
   };
 };
 
-const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: ImportMode) => {
+const analyzeApplications = (data: ImportContext, rawRows: RawRow[], mode: ImportMode) => {
   const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강신청');
   const issues: ImportIssue[] = [];
   const seen = new Set<string>();
@@ -344,7 +346,7 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   };
 };
 
-const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
+const analyzeEnrollments = (data: ImportContext, rawRows: RawRow[]) => {
   const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강이력');
   const issues: ImportIssue[] = [];
   const contextChanges = contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '개설강좌'), 'SEMESTER_COURSE', issues, 'ENROLLMENTS');
@@ -462,13 +464,13 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   };
 };
 
-const analyzeContext = (data: DatabaseState, rawRows: RawRow[], issues: ImportIssue[]): ImportContextChange[] => [
+const analyzeContext = (data: ImportContext, rawRows: RawRow[], issues: ImportIssue[]): ImportContextChange[] => [
   ...contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '학기'), 'SEMESTER', issues),
   ...contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '개설강좌'), 'SEMESTER_COURSE', issues),
 ];
 
 const contextCandidates = (
-  data: DatabaseState,
+  data: ImportContext,
   rows: RawRow[],
   entity: ImportContextChange['entity'],
   issues: ImportIssue[],
@@ -539,7 +541,7 @@ const contextCandidates = (
 };
 
 const contextValue = (
-  data: DatabaseState,
+  data: ImportContext,
   entity: ImportContextChange['entity'],
   semesterName: string,
   courseName?: string,
@@ -613,10 +615,10 @@ const requiredRowIssue = (code: string, message: string, row: RawRow, column: st
 });
 
 const findApplication = (
-  data: DatabaseState,
+  data: ImportContext,
   semesterName: string,
   memberName: string,
-): DatabaseState['applications'][number] | undefined => {
+): ImportContext['applications'][number] | undefined => {
   const semester = data.semesters.find((item) => item.nameKey === nameKey(semesterName));
   const member = data.members.find((item) => item.nameKey === nameKey(memberName));
   return semester && member
@@ -625,8 +627,8 @@ const findApplication = (
 };
 
 const applicationMatches = (
-  data: DatabaseState,
-  application: DatabaseState['applications'][number],
+  data: ImportContext,
+  application: ImportContext['applications'][number],
   candidate: ApplicationCandidate,
 ): boolean => {
   if (
@@ -646,7 +648,7 @@ const applicationMatches = (
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 };
 
-const findEnrollment = (data: DatabaseState, semesterName: string, memberName: string): { courseName: string; ministry: string | null } | null => {
+const findEnrollment = (data: ImportContext, semesterName: string, memberName: string): { courseName: string; ministry: string | null } | null => {
   const semester = data.semesters.find((item) => item.nameKey === nameKey(semesterName));
   const member = data.members.find((item) => item.nameKey === nameKey(memberName));
   if (!semester || !member) return null;
@@ -662,8 +664,8 @@ const findEnrollment = (data: DatabaseState, semesterName: string, memberName: s
 };
 
 const removedCourseNames = (
-  data: DatabaseState,
-  application: DatabaseState['applications'][number],
+  data: ImportContext,
+  application: ImportContext['applications'][number],
   candidate: ApplicationCandidate,
 ): string[] => {
   const expected = new Set(candidate.choices.map(({ courseName }) => nameKey(courseName)));
@@ -685,4 +687,3 @@ const warningDigest = (issues: ImportIssue[]): string => createHash('sha256')
 
 const clean = (value: string | null | undefined): string => typeof value === 'string' ? value.trim() : '';
 const nameKey = (value: string | null | undefined): string => clean(value).normalize('NFC');
-const importBatches = (data: DatabaseState): ImportBatch[] => data.importBatches as unknown as ImportBatch[];

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { DatabaseState } from '../storage/store.ts';
+import type { DatabaseState } from '../domain/records.ts';
 import type { AllocationSnapshot, PolicySettings } from './engine.ts';
 
 type Named = { id: string; name: string };

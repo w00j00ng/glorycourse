@@ -3,15 +3,20 @@ import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { fileExists, readStoreFromDatabase, writeStoreToDatabase } from './sqlite.ts';
+import { fileExists } from './database-file.ts';
 import { checkSqliteIntegrity, createSqliteSnapshot } from './sqlite-snapshot.ts';
-import type { DatabaseState } from './store.ts';
+import type { DatabaseState } from '../domain/records.ts';
 import { assertValidStore } from './validate-store.ts';
 
 type SqlFile = { name: string; checksum: string };
 type History = SqlFile & { version: number };
 type Migration = History & { sql: string; down: SqlFile & { sql: string }; legacy?: History };
 type State = { version: number; dirty: boolean; legacy: boolean };
+type SnapshotIO = {
+  read(db: DatabaseSync): DatabaseState;
+  write(db: DatabaseSync, data: DatabaseState): void;
+};
+
 type Options = {
   directory?: string;
   backupDirectory?: string;
@@ -117,8 +122,8 @@ const checkState = (db: DatabaseSync, state: State, migrations: Migration[], all
 
 export const migrateDatabase = async (
   file: string,
-  initial?: DatabaseState,
-  options: Options = {},
+  initial: DatabaseState | undefined,
+  options: Options & { snapshot: SnapshotIO },
 ): Promise<{ applied: string[]; backupFile?: string }> => {
   const migrations = await loadMigrations(options.directory ?? defaultDirectory);
   let state: State = { version: 0, dirty: false, legacy: false };
@@ -188,10 +193,10 @@ export const migrateDatabase = async (
         options.onProgress?.(`자료 형식을 갱신하고 있습니다: ${migration.name}`);
         db.exec(migration.sql);
       }
-      if (fresh) writeStoreToDatabase(db, initial!);
+      if (fresh) options.snapshot.write(db, initial!);
       else if (target !== 0 && options.rotateEpoch !== false) db.prepare('UPDATE store_meta SET store_epoch = ? WHERE id = 1').run(randomUUID());
       checkSqliteIntegrity(db);
-      if (!down) assertValidStore(readStoreFromDatabase(db));
+      if (!down) assertValidStore(options.snapshot.read(db));
       db.prepare('UPDATE schema_migrations SET dirty = 0').run();
       db.exec('COMMIT');
     } catch (error) {

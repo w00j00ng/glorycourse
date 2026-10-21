@@ -7,6 +7,8 @@ import test from 'node:test';
 import ExcelJS from '@excel.js/exceljs';
 import JSZip from '@excel.js/jszip';
 
+import { createTestRepository } from '../helpers/repository.mjs';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 import {
   WorkbookValidationError,
   createImportTemplate,
@@ -15,7 +17,6 @@ import {
 } from '../../backend/src/excel/workbooks.ts';
 import { ApplicationService } from '../../backend/src/services/applications.ts';
 import { ImportPreviewService } from '../../backend/src/services/import-preview.ts';
-import { Store, openStore } from '../../backend/src/storage/store.ts';
 
 const emptyStore = () => ({
   meta: { storeEpoch: 'epoch-1', storeRevision: 0 },
@@ -149,7 +150,7 @@ test('refuses to export unresolved or out-of-range preferences instead of droppi
 });
 
 test('previews student rows after adding fourth and fifth columns, preserving optional preference gaps', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   const request = [
     ['2026 봄', '한 강좌', 1, '기초'],
@@ -163,7 +164,7 @@ test('previews student rows after adding fourth and fifth columns, preserving op
     [['기초', 1], ['합창', 2], ['심화', 3], ['발성', 4], ['연기', 5]],
     [['기초', 1], ['발성', 4], ['연기', 5]],
   ];
-  const before = store.read();
+  const before = store.snapshot();
   const preview = await service.preview({ filename: 'wide.xlsx', kind: 'APPLICATIONS',
     bytes: await workbookWithRows('APPLICATIONS', request) });
   assert.equal(preview.sourceRowCount, 4);
@@ -172,11 +173,11 @@ test('previews student rows after adding fourth and fifth columns, preserving op
     [courseName, preference]
   ))), expected);
   assert.ok(!preview.issues.some(({ code }) => code.startsWith('PREFERENCE_')));
-  assert.deepEqual(store.read(), before);
+  assert.deepEqual(store.snapshot(), before);
 });
 
 test('reads and preserves a user-added fourth column without requiring a fifth column', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   const request = [['2026 봄', '홍길동', 1, '기초', null, null, '심화']];
   const expected = [['기초', 1], ['심화', 4]];
@@ -205,9 +206,9 @@ test('the staged-row parser reads all rank columns and blocks ranks beyond the c
   initial.importBatches.push({ id: 'staged', kind: 'APPLICATIONS', templateVersion: '2', fileHash: 'hash',
     importedAt: '2026-09-22T00:00:00.000Z', status: 'STAGED',
     rawRows: [{ sheet: '수강신청', row: 2, cells: request }], resolutions: [], receipt: null });
-  const store = await Store.open(new MemoryAdapter(initial), emptyStore());
+  const store = await createTestRepository(initial);
   const service = serviceFor(store);
-  const before = store.read();
+  const before = store.snapshot();
   const preview = service.repreviewStaged('staged');
   assert.deepEqual(preview.applications[0].choices.map(({ courseName, preference }) => [courseName, preference]), [
     ['기초', 1], ['심화', 2], ['합창', 3], ['발성', 4], ['연기', 5], ['추가', 6],
@@ -216,11 +217,11 @@ test('the staged-row parser reads all rank columns and blocks ranks beyond the c
     code === 'APPLICATION_CHOICE_LIMIT' && severity === 'ERROR' && blockingStages.includes('IMPORT_COMMIT')
   )));
   await assert.rejects(service.exportStagedOriginal('staged'), WorkbookValidationError);
-  assert.deepEqual(store.read(), before);
+  assert.deepEqual(store.snapshot(), before);
 });
 
 test('rejects the old application layout and any sixth preference column', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   for (const [headers, row] of [
     [['학기명', '회원명', '신청순서', '강좌명', '희망순위'], ['2026 봄', '홍길동', 1, '기초', 1]],
@@ -234,11 +235,11 @@ test('rejects the old application layout and any sixth preference column', async
     await assert.rejects(service.preview({ filename: 'invalid.xlsx', kind: 'APPLICATIONS',
       bytes: Buffer.from(await workbook.xlsx.writeBuffer()) }), WorkbookValidationError);
   }
-  assert.deepEqual(store.read(), emptyStore());
+  assert.deepEqual(store.snapshot(), emptyStore());
 });
 
 test('preserves raw order cells and reports application quality without mutating the store', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('APPLICATIONS', [
     ['2026 봄', '홍길동', '15', '기초', '심화'],
@@ -246,11 +247,11 @@ test('preserves raw order cells and reports application quality without mutating
     ['2026 봄', '김문자', 'abc', '기초'],
     ['2026 봄', '김영', '0015', '기초'],
   ]);
-  const before = store.read();
+  const before = store.snapshot();
 
   const preview = await service.preview({ filename: 'applications.xlsx', bytes, kind: 'APPLICATIONS' });
 
-  assert.deepEqual(store.read(), before);
+  assert.deepEqual(store.snapshot(), before);
   assert.equal(preview.sourceRowCount, 4);
   assert.equal(preview.rawRows.at(-1).cells['신청순서'], '0015');
   assert.deepEqual(
@@ -270,7 +271,7 @@ test('preserves raw order cells and reports application quality without mutating
 });
 
 test('reports repeated course columns and repeated student rows as blocking errors', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('APPLICATIONS', [
     ['2026 봄', '홍길동', '15', '기초', ' 기초 '],
@@ -288,7 +289,7 @@ test('reports repeated course columns and repeated student rows as blocking erro
 });
 
 test('distinguishes an identical application row from a conflicting current record', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   let id = 0;
   const applications = new ApplicationService(store, {
     id: () => `existing-id-${++id}`,
@@ -324,7 +325,7 @@ test('distinguishes an identical application row from a conflicting current reco
 });
 
 test('rejects formulas, external hyperlinks, and expanded-size excess with cell details', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   const formulaWorkbook = new ExcelJS.Workbook();
   await formulaWorkbook.xlsx.load(await createImportTemplate('APPLICATIONS'));
@@ -360,27 +361,27 @@ test('rejects formulas, external hyperlinks, and expanded-size excess with cell 
     (error) => error instanceof WorkbookValidationError
       && error.issues.some(({ code }) => code === 'EXPANDED_SIZE_LIMIT'),
   );
-  assert.deepEqual(store.read(), emptyStore());
+  assert.deepEqual(store.snapshot(), emptyStore());
 });
 
 test('stages only raw rows, survives restart, and re-previews an original export', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-import-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataFile = join(directory, 'db.sqlite');
-  const store = await openStore(dataFile, emptyStore());
+  const store = await openRepository(dataFile, emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('APPLICATIONS', [
     ['2026 봄', '홍길동', '0015', '기초', null, null, null, '심화'],
   ]);
 
   const preview = await service.preview({ filename: 'applications.xlsx', bytes, kind: 'APPLICATIONS' });
-  assert.equal(store.read().importBatches.length, 0);
+  assert.equal(store.snapshot().importBatches.length, 0);
   const staged = await service.stage(preview.previewId);
   assert.equal(staged.templateVersion, '2');
-  assert.equal(store.read().applications.length, 0);
-  assert.equal(store.read().members.length, 0);
+  assert.equal(store.snapshot().applications.length, 0);
+  assert.equal(store.snapshot().members.length, 0);
 
-  const reopened = await openStore(dataFile, emptyStore());
+  const reopened = await openRepository(dataFile, emptyStore());
   const restarted = serviceFor(reopened);
   assert.equal(restarted.getStaged(staged.id).rawRows[0].cells['신청순서'], '0015');
   const currentPreview = restarted.repreviewStaged(staged.id);
@@ -401,7 +402,7 @@ test('staging an empty legacy workbook preserves its version and legacy headers 
     { kind: 'ENROLLMENTS', sheet: '수강이력', headers: ['학기명', '회원명', '강좌명', '관리자 메모'] },
   ];
   for (const { kind, sheet, headers } of cases) {
-    const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+    const store = await createTestRepository(emptyStore());
     const service = serviceFor(store);
     const bytes = await workbookWithRows(kind, []);
     const preview = await service.preview({ filename: '기존 빈 양식.xlsx', bytes, kind });
@@ -415,7 +416,7 @@ test('staging an empty legacy workbook preserves its version and legacy headers 
 });
 
 test('reports two enrollment rows for one member and semester as a blocking conflict', async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   const service = serviceFor(store);
   const bytes = await workbookWithRows('ENROLLMENTS', [
     ['2026 봄', '홍길동', '기초'],
@@ -428,19 +429,5 @@ test('reports two enrollment rows for one member and semester as a blocking conf
   assert.ok(preview.issues.some(({ code, severity }) => (
     code === 'DUPLICATE_SEMESTER_ENROLLMENT' && severity === 'ERROR'
   )));
-  assert.deepEqual(store.read(), emptyStore());
+  assert.deepEqual(store.snapshot(), emptyStore());
 });
-
-class MemoryAdapter {
-  constructor(data) {
-    this.data = structuredClone(data);
-  }
-
-  async read() {
-    return structuredClone(this.data);
-  }
-
-  async write(data) {
-    this.data = structuredClone(data);
-  }
-}

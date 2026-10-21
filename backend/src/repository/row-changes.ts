@@ -6,20 +6,17 @@ type Value = string | number | null;
 type RecordKey = { id: string } | { idempotencyKey: string };
 const keyOf = (item: RecordKey): string => 'id' in item ? item.id : item.idempotencyKey;
 
-// All identifiers come from the fixed SQL mappings in relational-store.ts.
-export const prepareRow = (db: DatabaseSync, table: string, columnList: string) => {
-  const columns = columnList.split(',').map((column) => column.trim());
-  const key = columns[0];
-  const insert = db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
-  const read = db.prepare(`SELECT ${columns.join(',')} FROM ${table} WHERE ${key} = ?`);
-  const update = db.prepare(`UPDATE ${table} SET ${columns.slice(1).map((column) => `${column} = ?`).join(',')} WHERE ${key} = ?`);
+export const prepareRow = (db: DatabaseSync, table: string, sql: { insert: string; read: string; update: string }) => {
+  const insert = db.prepare(sql.insert);
+  const read = db.prepare(sql.read);
+  const update = db.prepare(sql.update);
   const written = new Set<Value>();
   return { run: (...values: Value[]): void => {
     if (written.has(values[0])) throw new Error(`Duplicate ${table} key`);
     written.add(values[0]);
     const stored = read.get(values[0]);
     if (!stored) { insert.run(...values); return; }
-    if (columns.some((column, index) => stored[column] !== values[index])) {
+    if (Object.values(stored).some((value, index) => value !== values[index])) {
       update.run(...values.slice(1), values[0]);
     }
   } };

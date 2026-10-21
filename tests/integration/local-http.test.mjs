@@ -4,13 +4,14 @@ import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { seedRepository } from '../helpers/repository.mjs';
 
 import ExcelJS from '@excel.js/exceljs';
 
 import { exportApplicationRows } from '../../backend/src/excel/workbooks.ts';
 import { startLocalServer } from '../../backend/src/server.ts';
 import { InstanceAlreadyRunningError } from '../../backend/src/storage/instance-lock.ts';
-import { StoreRecoveryRequiredError } from '../../backend/src/storage/store.ts';
+import { StoreRecoveryRequiredError } from '../../backend/src/domain/errors.ts';
 
 test('serves local files and allows a protected same-origin write without external services', async (t) => {
   const workspace = await localWorkspace(t);
@@ -52,6 +53,31 @@ test('serves local files and allows a protected same-origin write without extern
     headers: { 'X-Glorycourse-Session': token },
   });
   assert.deepEqual(JSON.parse(state.text), { members: ['홍길동'] });
+});
+
+test('keeps GET and HEAD handlers read-only while accepting a protected POST save', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({
+    dataDirectory: workspace.data, staticDirectory: workspace.static,
+    apiHandler: async (request, { repository }) => {
+      await repository.write({}, (queries) => {
+        queries.catalog.insertNamed({ kind: 'members', record: named({ id: 'saved', name: '저장된 회원' }) });
+      });
+      return { status: 201, json: { saved: true } };
+    },
+  });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token };
+  const before = runtime.repository.snapshot();
+  for (const method of ['GET', 'HEAD']) {
+    assert.equal((await call(runtime.origin, '/api/v1/test/save', { method, headers })).status, 500);
+    assert.deepEqual(runtime.repository.snapshot(), before);
+  }
+  assert.equal((await call(runtime.origin, '/api/v1/test/save', { method: 'POST', headers })).status, 201);
+  assert.deepEqual(runtime.repository.read((queries) => queries.catalog.listNamed({ kind: 'members' })).map(({ name }) => name), ['저장된 회원']);
 });
 
 test('rejects forged Host, external Origin, missing tokens, and multipart forms before mutation', async (t) => {
@@ -106,13 +132,13 @@ test('rejects forged Host, external Origin, missing tokens, and multipart forms 
 
   assert.deepEqual(responses.map(({ status }) => status), [403, 403, 403, 403, 403, 403]);
   assert.equal(handlerCalls, 0);
-  assert.equal(runtime.store.read().members.length, 0);
+  assert.equal(runtime.repository.snapshot().members.length, 0);
 
   const getMutation = await call(runtime.origin, '/api/v1/test/write', {
     headers: { 'X-Glorycourse-Session': session.token },
   });
   assert.equal(getMutation.status, 405);
-  assert.equal(runtime.store.read().members.length, 0);
+  assert.equal(runtime.repository.snapshot().members.length, 0);
 });
 
 test('returns a readable size error for a streaming upload and accepts the next request', async (t) => {
@@ -142,7 +168,7 @@ test('returns a readable size error for a streaming upload and accepts the next 
   });
   assert.equal(result.status, 413);
   assert.equal(result.body.code, 'PAYLOAD_TOO_LARGE');
-  assert.equal(runtime.store.read().members.length, 0);
+  assert.equal(runtime.repository.snapshot().members.length, 0);
   assert.equal((await call(runtime.origin, '/')).status, 200);
 });
 
@@ -155,7 +181,7 @@ test('rejects non-object JSON as a client error without changing stored data', a
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
-  const before = runtime.store.read();
+  const before = runtime.repository.snapshot();
   for (const path of ['/allocation-drafts', '/allocation-drafts/missing/finalize-preview', '/enrollments/preview', '/semesters', '/applications', '/imports/missing/stage']) {
     for (const input of [null, [], '잘못된 입력', 1, true]) {
       const response = await call(runtime.origin, `/api/v1${path}`, {
@@ -175,7 +201,7 @@ test('rejects non-object JSON as a client error without changing stored data', a
     });
     assert.equal(response.status, 422, `policySettings: ${JSON.stringify(policySettings)}`);
   }
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
 });
 
 test('persists local data across restart, invalidates the old session, and keeps a single writer', async (t) => {
@@ -259,7 +285,7 @@ test('maps recovery failures to a safe 503 response and enforces the upload limi
     body: JSON.stringify({ name: '123456789' }),
   });
   assert.equal(tooLarge.status, 413);
-  assert.equal(runtime.store.read().members.length, 0);
+  assert.equal(runtime.repository.snapshot().members.length, 0);
 });
 
 test('manages catalog and application records through the protected API and keeps them after restart', async (t) => {
@@ -495,7 +521,7 @@ test('previews, stages, rechecks, and applies an xlsx import through the protect
   const preview = JSON.parse(previewResponse.text);
   assert.equal(preview.sourceRowCount, 1);
   assert.equal(preview.insertCandidates, 1);
-  assert.equal(runtime.store.read().applications.length, 0);
+  assert.equal(runtime.repository.snapshot().applications.length, 0);
 
   const stagedResponse = await call(runtime.origin, `/api/v1/imports/${preview.previewId}/stage`, {
     method: 'POST',
@@ -509,7 +535,7 @@ test('previews, stages, rechecks, and applies an xlsx import through the protect
   assert.equal(stagedResponse.status, 201);
   const staged = JSON.parse(stagedResponse.text);
   assert.equal(staged.status, 'STAGED');
-  assert.equal(runtime.store.read().applications.length, 0);
+  assert.equal(runtime.repository.snapshot().applications.length, 0);
 
   const refreshedResponse = await call(runtime.origin, `/api/v1/import-batches/${staged.id}/preview`, {
     method: 'POST',
@@ -603,7 +629,7 @@ test('creates and edits a draft, then replays finalization after the draft is re
   });
   assert.equal(automaticAddition.status, 422);
   assert.match(JSON.parse(automaticAddition.text).issues[0].message, /수동 초안/);
-  assert.equal(runtime.store.read().allocationDraftItems.length, 1);
+  assert.equal(runtime.repository.snapshot().allocationDraftItems.length, 1);
   const archiveAttempt = await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}/archive`, {
     method: 'POST', headers, body: JSON.stringify({ expectedDraftRevision: 0 }),
   });
@@ -708,9 +734,9 @@ test('creates and edits a draft, then replays finalization after the draft is re
     { headers: { 'X-Glorycourse-Session': restartedSession.token } })).text);
   assert.equal(currentReport.enrollmentReportIsCurrent, true);
   await assert.rejects(readdir(join(workspace.data, 'backups')), { code: 'ENOENT' });
-  assert.equal(runtime.store.read().allocationDrafts.length, 0);
-  assert.equal(runtime.store.read().allocationDraftItems.length, 0);
-  assert.equal(runtime.store.read().enrollments.length, 1);
+  assert.equal(runtime.repository.snapshot().allocationDrafts.length, 0);
+  assert.equal(runtime.repository.snapshot().allocationDraftItems.length, 0);
+  assert.equal(runtime.repository.snapshot().enrollments.length, 1);
 });
 
 test('moves a semester through the API and shows the new order in the catalog', async (t) => {
@@ -817,7 +843,7 @@ test('exports application semester and course settings with filtered students an
     method: 'POST', headers, body: JSON.stringify({ items: requests }),
   });
   assert.equal(created.status, 201);
-  const before = runtime.store.read();
+  const before = runtime.repository.snapshot();
   let completeBytes;
   for (const [query, expectedMembers, expectedSemesters, expectedCourses] of [
     ['page=1&limit=1', ['나 회원', '가 회원', '다 회원'], [['2026 봄', 5], ['2026 가을', 2]], [
@@ -841,7 +867,7 @@ test('exports application semester and course settings with filtered students an
     assert.deepEqual(values('학기'), expectedSemesters, query);
     assert.deepEqual(values('개설강좌'), expectedCourses, query);
   }
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
 
   const restoredWorkspace = await localWorkspace(t);
   const restored = await startLocalServer({ dataDirectory: restoredWorkspace.data, staticDirectory: restoredWorkspace.static, port: 0 });
@@ -866,7 +892,7 @@ test('exports application semester and course settings with filtered students an
   assert.equal(committed.status, 200);
   assert.equal(JSON.parse(committed.text).inserted, 3);
   for (const semester of semesters.slice(0, 2)) {
-    const restoredSemester = restored.store.read().semesters.find(({ name }) => name === semester.semester.name);
+    const restoredSemester = restored.repository.snapshot().semesters.find(({ name }) => name === semester.semester.name);
     assert.equal(restoredSemester.order, semester.order);
     const response = await call(restored.origin, `/api/v1/semesters/${restoredSemester.id}/context`, { headers: restoredHeaders });
     assert.deepEqual(JSON.parse(response.text).semesterCourses.map(({ courseName, capacity }) => ({ courseName, capacity })),
@@ -899,8 +925,8 @@ test('sorts filtered enrollment history before pagination and exports the same o
       acknowledgedWarningDigest: preview.warningDigest }),
   });
   assert.equal(created.status, 201);
-  await runtime.store.write({}, (data) => { data.semesters.find(({ name }) => name === '나 학기').order = null; });
-  const before = runtime.store.read();
+  await seedRepository(runtime.repository, (data) => { data.semesters.find(({ name }) => name === '나 학기').order = null; });
+  const before = runtime.repository.snapshot();
   const key = ({ semesterName, memberName, courseName }) => [semesterName, memberName, courseName];
   for (const [sort, expected] of [
     ['', [0, 1, 2, 3, 4]], ['NAME_ASC', [3, 1, 0, 2, 4]], ['NAME_DESC', [4, 2, 0, 3, 1]],
@@ -928,7 +954,7 @@ test('sorts filtered enrollment history before pagination and exports the same o
     assert.equal(invalid.status, 400);
     assert.equal(JSON.parse(invalid.text).message, '수강이력 정렬 기준이 올바르지 않습니다.');
   }
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
 });
 
 test('registers multiple applications and reviewed enrollments atomically through the protected API', async (t) => {
@@ -952,11 +978,11 @@ test('registers multiple applications and reviewed enrollments atomically throug
   const worksheet = workbook.getWorksheet('수강신청');
   assert.equal(worksheet.actualRowCount, 2);
   assert.equal(worksheet.getCell('B2').value, '가');
-  const before = runtime.store.read();
+  const before = runtime.repository.snapshot();
   const failed = await post('/api/v1/applications/batch', { items: [application('다'), application('가')] });
   assert.equal(failed.status, 409);
   assert.equal(JSON.parse(failed.text).issues[0].detail.rowNumber, 2);
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
   const invalid = await post('/api/v1/applications/batch', { items: [null] });
   assert.equal(invalid.status, 422);
   const preview = await post('/api/v1/enrollments/batch/preview', {
@@ -964,7 +990,7 @@ test('registers multiple applications and reviewed enrollments atomically throug
   });
   assert.equal(preview.status, 200);
   const review = JSON.parse(preview.text);
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
   const committed = await post('/api/v1/enrollments/batch', {
     preparedActionToken: review.preparedActionToken,
     acknowledgedWarningDigest: review.warningDigest,
@@ -972,8 +998,8 @@ test('registers multiple applications and reviewed enrollments atomically throug
   });
   assert.equal(committed.status, 201);
   assert.equal(JSON.parse(committed.text).items.length, 2);
-  assert.equal(runtime.store.read().enrollments.length, 2);
-  const semesterId = runtime.store.read().semesters[0].id;
+  assert.equal(runtime.repository.snapshot().enrollments.length, 2);
+  const semesterId = runtime.repository.snapshot().semesters[0].id;
   const deletionPath = `/api/v1/semesters/${semesterId}/enrollments`;
   const deletionPreview = JSON.parse((await call(runtime.origin, deletionPath, { headers })).text);
   assert.equal(deletionPreview.count, 2);
@@ -987,8 +1013,8 @@ test('registers multiple applications and reviewed enrollments atomically throug
   const deleted = await call(runtime.origin, deletionPath, { method: 'DELETE', headers, body: deletionBody });
   assert.equal(deleted.status, 200);
   assert.deepEqual(JSON.parse(deleted.text), { deletedCount: 2 });
-  assert.equal(runtime.store.read().enrollments.length, 0);
-  assert.equal(runtime.store.read().applications.length, 2);
+  assert.equal(runtime.repository.snapshot().enrollments.length, 0);
+  assert.equal(runtime.repository.snapshot().applications.length, 2);
 });
 
 test('exports distinct course capacities and enrollment notes within the selected report scope', async (t) => {
@@ -1009,7 +1035,7 @@ test('exports distinct course capacities and enrollment notes within the selecte
     preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest,
   }) })).status, 201);
   const note = '자료 보관\n<img src=x onerror=alert(1)>';
-  await runtime.store.write({}, (data) => {
+  await seedRepository(runtime.repository, (data) => {
     const capacities = { 창세기: 20, 마가복음: 0, '미정 강좌': null };
     for (const offering of data.semesterCourses) offering.capacity = capacities[data.courses.find(({ id }) => id === offering.courseId).name];
     data.enrollments[0].exceptionAcknowledgement = { note, warningDigest: 'recorded', acknowledgedAt: '2028-01-01T00:00:00.000Z' };
@@ -1044,22 +1070,23 @@ test('removes the manual backup and restore API without changing stored data', a
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
   const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token };
-  const before = runtime.store.read();
+  const before = runtime.repository.snapshot();
   for (const [path, method] of [['/backups', 'GET'], ['/backups', 'POST'], ['/restores/preview', 'POST'], ['/restores', 'POST'], ['/backup-folder', 'GET']]) {
     assert.equal((await call(runtime.origin, `/api/v1${path}`, { method, headers })).status, 404, `${method} ${path}`);
   }
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
 });
 
-const testApi = async (request, { store }) => {
+const testApi = async (request, { repository }) => {
   if (request.method === 'GET' && request.path === '/api/v1/test/state') {
-    return { status: 200, json: { members: store.read().members.map(({ name }) => name) } };
+    return { status: 200, json: { members: repository.read((queries) => queries.catalog.listNamed({ kind: 'members' })).map(({ name }) => name) } };
   }
   if (request.path === '/api/v1/test/write') {
     if (request.method !== 'POST') return { status: 405, json: error('METHOD_NOT_ALLOWED', 'Method not allowed') };
     const input = JSON.parse(request.body.toString('utf8'));
-    await store.write({}, (data) => {
-      data.members.push(named({ id: `member-${data.members.length + 1}`, name: input.name }));
+    await repository.write({}, (queries) => {
+      const count = queries.catalog.listNamed({ kind: 'members' }).length;
+      queries.catalog.insertNamed({ kind: 'members', record: named({ id: `member-${count + 1}`, name: input.name }) });
     });
     return { status: 201, json: { created: input.name } };
   }
@@ -1088,35 +1115,35 @@ test('previews semester application deletion and requires matching confirmation 
   const previewResponse = await call(runtime.origin, `${path}?memberName=회원1&page=2&limit=1`, { headers });
   assert.equal(previewResponse.status, 200);
   const preview = JSON.parse(previewResponse.text);
-  assert.deepEqual(preview, { semesterName: '삭제 학기', count: 2, ...runtime.store.version() });
+  assert.deepEqual(preview, { semesterName: '삭제 학기', count: 2, ...runtime.repository.version() });
   const deleteRequest = { confirmationName: preview.semesterName, expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch };
   await create('삭제 학기', '회원4', 3);
-  let before = runtime.store.read();
+  let before = runtime.repository.snapshot();
   const stale = await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify(deleteRequest) });
   assert.equal(stale.status, 409);
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
   const current = JSON.parse((await call(runtime.origin, path, { headers })).text);
   const currentRequest = { confirmationName: current.semesterName, expectedRevision: current.storeRevision, expectedEpoch: current.storeEpoch };
   for (const [body, expected] of [[null, 400], [{ ...currentRequest, confirmationName: '다른 학기' }, 422],
     [{ ...currentRequest, expectedEpoch: 'old-epoch' }, 409]]) {
     const response = await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify(body) });
     assert.equal(response.status, expected);
-    assert.deepEqual(runtime.store.read(), before);
+    assert.deepEqual(runtime.repository.snapshot(), before);
   }
   assert.equal((await call(runtime.origin, path, { method: 'PUT', headers })).status, 405);
   assert.equal((await call(runtime.origin, '/api/v1/semesters/missing/applications', { headers })).status, 404);
   const deleted = await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify(currentRequest) });
   assert.equal(deleted.status, 200);
   assert.deepEqual(JSON.parse(deleted.text), { deletedCount: 3 });
-  assert.deepEqual(runtime.store.read().applications.map(({ id }) => id), [retained.id]);
-  assert.deepEqual(runtime.store.read().applicationChoices.map(({ applicationId }) => applicationId), [retained.id]);
-  before = runtime.store.read();
+  assert.deepEqual(runtime.repository.snapshot().applications.map(({ id }) => id), [retained.id]);
+  assert.deepEqual(runtime.repository.snapshot().applicationChoices.map(({ applicationId }) => applicationId), [retained.id]);
+  before = runtime.repository.snapshot();
   const empty = JSON.parse((await call(runtime.origin, path, { headers })).text);
   assert.equal(empty.count, 0);
   assert.equal((await call(runtime.origin, path, { method: 'DELETE', headers, body: JSON.stringify({
     confirmationName: empty.semesterName, expectedRevision: empty.storeRevision, expectedEpoch: empty.storeEpoch,
   }) })).status, 422);
-  assert.deepEqual(runtime.store.read(), before);
+  assert.deepEqual(runtime.repository.snapshot(), before);
 });
 
 const localWorkspace = async (t) => {

@@ -1,4 +1,5 @@
-import type { DatabaseState, ImportResolutionRecord as Resolution, NamedRecord as Named, SemesterCourseRecord as SemesterCourse, SemesterRecord as Semester } from '../storage/store.ts';
+import type { ImportContext } from '../repository/imports.ts';
+import type { ImportResolutionRecord as Resolution, NamedRecord as Named, SemesterCourseRecord as SemesterCourse, SemesterRecord as Semester } from '../domain/records.ts';
 import type { ImportContextChange } from './import-preview.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 
@@ -10,7 +11,7 @@ export class ImportCommitConflictError extends Error {
 }
 
 export const applyContext = (
-  data: DatabaseState,
+  data: ImportContext,
   changes: ImportContextChange[],
   resolutions: Resolution[],
   now: string,
@@ -67,7 +68,7 @@ export const resolveNamed = (items: Named[], name: string, now: string, id: () =
   return created;
 };
 
-export const resolveSemester = (data: DatabaseState, name: string, now: string, id: () => string): Semester => {
+export const resolveSemester = (data: ImportContext, name: string, now: string, id: () => string): Semester => {
   const existing = semesters(data).find(({ nameKey: key }) => key === nameKey(name));
   if (existing) return existing;
   const created: Semester = {
@@ -80,7 +81,7 @@ export const resolveSemester = (data: DatabaseState, name: string, now: string, 
 };
 
 export const resolveSemesterCourse = (
-  data: DatabaseState,
+  data: ImportContext,
   semesterId: string,
   courseId: string,
   now: string,
@@ -99,6 +100,6 @@ export const bumpSemester = (semester: Semester, now: string): void => {
 };
 
 const nameKey = (value: string): string => value.trim().normalize('NFC');
-const semesters = (data: DatabaseState): Semester[] => data.semesters;
-const courses = (data: DatabaseState): Named[] => data.courses;
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
+const semesters = (data: ImportContext): Semester[] => data.semesters;
+const courses = (data: ImportContext): Named[] => data.courses;
+const semesterCourses = (data: ImportContext): SemesterCourse[] => data.semesterCourses;

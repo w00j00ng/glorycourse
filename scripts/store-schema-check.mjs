@@ -7,7 +7,7 @@ import ts from 'typescript';
 const root = resolve(import.meta.dirname, '..');
 const config = ts.readConfigFile(resolve(root, 'tsconfig.json'), ts.sys.readFile);
 const options = ts.parseJsonConfigFileContent(config.config, ts.sys, root).options;
-const sourceFile = resolve(root, 'backend/src/storage/store.ts');
+const sourceFile = resolve(root, 'backend/src/domain/records.ts');
 const program = ts.createProgram([sourceFile], options);
 const checker = program.getTypeChecker();
 const source = program.getSourceFile(sourceFile);

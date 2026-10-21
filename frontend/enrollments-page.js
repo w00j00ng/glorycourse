@@ -1,7 +1,7 @@
 import { currentSemester } from './dashboard-view.js';
 import { reportFilename } from './download-name.js';
 
-/** @typedef {import('../backend/src/services/enrollments.ts').EnrollmentView} EnrollmentRow */
+/** @typedef {import('../backend/src/domain/query-models.ts').EnrollmentView} EnrollmentRow */
 /** @typedef {ReturnType<import('../backend/src/services/enrollments.ts').EnrollmentService['preview']>} EnrollmentPreview */
 /** @typedef {{ semesterId: string, finalized: boolean, enrollmentReportIsCurrent: boolean }} EnrollmentReport */
 /**

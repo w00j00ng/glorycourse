@@ -1,7 +1,7 @@
 import { templateFilename } from './download-name.js';
 
 /** @typedef {import('../backend/src/services/applications.ts').ApplicationInput['choices'][number]} ApplicationChoice */
-/** @typedef {import('../backend/src/services/applications.ts').ApplicationView} ApplicationRow */
+/** @typedef {import('../backend/src/domain/query-models.ts').ApplicationView} ApplicationRow */
 /**
  * @param {{
  *   state: { semesters: { id: string, name: string }[], applications: ApplicationRow[], pagination: { application: { total: number } } },

@@ -1,8 +1,8 @@
 import { issueText } from './issue-view.js';
 import { draftFinalSelection } from './draft-view.js';
 
-/** @typedef {Pick<import('../backend/src/storage/store.ts').AllocationDraftRecord, 'id' | 'semesterId' | 'revision' | 'mode' | 'policyId' | 'policyVersion' | 'updatedAt'>} DraftSummary */
-/** @typedef {import('../backend/src/storage/store.ts').AllocationDraftItemRecord} DraftItem */
+/** @typedef {Pick<import('../backend/src/domain/records.ts').AllocationDraftRecord, 'id' | 'semesterId' | 'revision' | 'mode' | 'policyId' | 'policyVersion' | 'updatedAt'>} DraftSummary */
+/** @typedef {import('../backend/src/domain/records.ts').AllocationDraftItemRecord} DraftItem */
 /** @typedef {{ policyId: string, policyVersion: string, name: string, description: string, settings: unknown }} DraftPolicy */
 /**
  * @param {{

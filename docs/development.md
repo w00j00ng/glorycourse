@@ -12,10 +12,12 @@
 | --- | --- |
 | `backend/src/api/` | HTTP 라우팅, 요청 처리, 세션과 오류 응답 |
 | `backend/src/services/` | 신청·이력·배정·이관의 업무 규칙 |
+| `backend/src/bootstrap/` | 마이그레이션·스냅샷 SQL·Repository 초기화의 조합 |
+| `backend/src/repository/` | 이름 있는 업무 SQL, 결과 매핑, 읽기·쓰기 트랜잭션과 충돌·복구 처리 |
 | `backend/src/allocation/` | 배정 입력 스냅샷과 계산 엔진 |
 | `backend/src/excel/` | XLSX 양식·현황 생성과 업로드 검증 |
-| `backend/src/storage/` | 저장 직렬화, 잠금, SQLite 안전 사본과 마이그레이션 |
-| `backend/src/storage/queries/` | 업무 자료를 명시 컬럼과 자식 테이블로 읽고 쓰는 SQL 구현 |
+| `backend/src/domain/` | 공용 레코드·조회 View·Filter·정렬 타입과 충돌·검증·복구 오류 |
+| `backend/src/storage/` | 프로세스 잠금, SQLite 안전 사본·마이그레이션, 파일·스냅샷 검증 |
 | `frontend/` | 화면, 메뉴, 도움말, 대시보드 판단과 다운로드 파일명 |
 | `schema/migrations/` | Unix timestamp up/down SQL, manifest와 기존 이력 호환 metadata |
 | `schema/migration_target/schema.sql` | 모든 migration을 적용한 현재 SQLite 전체 DDL |
@@ -24,7 +26,11 @@
 | `tests/` | 사용자 관점 기능·계약·저장·운영 테스트 |
 | `scripts/` | 실행기, 배포 패키지, migration manifest, 커버리지 보고서 |
 
-업무 SQL은 `storage/queries/`에서 관리하며 마이그레이션·안전 사본 검사 등 저장 장치 관리용 SQL은 해당 `storage/` 모듈에 있다. 실제 DB 자료를 JSON 문서로 저장하지 않는다. HTTP 요청·검증 스키마·배포 설정의 JSON 사용은 별개다.
+업무 SQL은 `repository/`의 업무별 TypeScript 파일에서 직접 확인할 수 있다. 서비스는 타입이 있는 인자를 repository 함수에 전달하며 SQL이나 전체 `DatabaseState`를 조회·변경하지 않는다. 마이그레이션·안전 사본 검사 등 저장 장치 관리용 SQL은 해당 `storage/` 모듈에 있다. 실제 DB 자료를 JSON 문서로 저장하지 않는다. HTTP 요청·검증 스키마·배포 설정의 JSON 사용은 별개다.
+
+기본 서버는 `bootstrap/database.ts`의 `openRepository()`로 SQLite 파일을 열고 같은 repository를 라우터와 서비스에 주입한다. bootstrap은 storage 마이그레이션에 repository의 스냅샷 읽기·쓰기 함수를 전달한다. 초기화와 up 후 전체 검증은 같은 DDL 트랜잭션에서 처리하며, 실패하면 업무 자료를 롤백하고 dirty 상태를 유지한다. storage는 repository·services를 import하지 않고 repository는 services·bootstrap을 import하지 않는다. 공용 조회 타입은 `domain/query-models.ts`에서 가져온다. 일반 조회는 SQL로 현재 자료를 읽으며 업무 상태 전체를 메모리에 계속 보관하지 않는다. 한 응답에 필요한 여러 조회는 같은 읽기 트랜잭션에서 처리한다. 쓰기는 직렬화된 `BEGIN IMMEDIATE` 트랜잭션에서 버전 검사, 업무 SQL, 전체 revision 증가를 함께 커밋한다. 커밋 응답이 불확실하면 버전과 SQLite `data_version`을 확인하고, 판단할 수 없으면 후속 쓰기를 차단한다.
+
+목록의 문자 그대로 검색은 `instr`로 처리한다. 한국어·영문 혼합 정렬의 기존 `localeCompare('ko')` 결과는 repository에서 보존하며 정렬 뒤 페이지를 나눈다. 배정·Excel 검토는 repository가 읽은 업무별 자료로 순수 계산을 수행한다. 따라서 모든 조회가 페이지 크기만큼만 읽는다고 해석하지 않는다. Store·SQLiteAdapter와 SQL 재노출 호환 경로는 제거했다. 사용자 정의 서버 핸들러도 `context.repository`의 이름 있는 쿼리를 사용한다. GET·HEAD 핸들러에는 `read()`·`version()`만 제공하고, 읽기 트랜잭션에서도 SQLite 쓰기를 차단한다. 서버 반환값은 `repository`를 제공하며 `store`는 제공하지 않는다.
 
 ## 실행과 종료
 
@@ -71,13 +77,13 @@ DB 스키마는 `schema/migrations/<10자리 Unix seconds>_description.up.sql`�
 
 전체 테이블·인덱스와 제약은 [migration target](../schema/migration_target/schema.sql)에서 확인한다. `npm run migrations:manifest`는 up을 메모리 SQLite에 순서대로 적용하고 manifest와 최종 DDL을 생성한다. 기존 metadata의 모든 항목을 런타임과 같은 버전·파일명·checksum 기준으로 검사하고, 대응 SQL이 없는 여분 항목도 거절한다. 기존 이력을 보존한 채 새 up/down 쌍을 추가할 수 있다. 모든 down을 역순으로 실행해 이전 객체·컬럼 목록 복원과 FK 위반 여부도 검사한다. 이 역검사는 CHECK·인덱스 등의 정의 전체나 삭제한 자료의 복원까지 보장하지 않는다. `npm run migrations:check`는 같은 검사를 수행하며 생성 파일을 변경하지 않고 manifest·target의 불일치를 거절한다. `verify`·패키징에도 포함된다. target은 자료·상태 행이 없는 생성 파일이며 직접 편집하지 않는다. 서버의 DB 업데이트는 개별 migration을 사용한다.
 
-`store-schema.json`은 자동 생성되지 않는 수기 논리 계약이다. `validate-store.ts`가 실행 시 Ajv로 전체 후보·변경 행·up 후 자료를 검증한다. `npm run schema:check`는 실제 TypeScript `DatabaseState`와 필드·필수 여부·원시 타입·nullable·enum/const·배열·중첩 객체 구조를 비교하고 불일치를 거절하며, `verify`와 패키징에 포함된다. `$ref`·`oneOf`·타입 없는 `allOf`에 구조 키워드를 함께 지정하거나, `type` 옆의 `allOf`가 조건부 업무 규칙 외에 구조를 제한하면 거절한다. 선언 없는 `required`, 정규화한 선택지가 중복·부분 중첩되는 `oneOf`, `enum`·`const` 동시 지정도 거절한다. 배열은 일반 `items` 또는 `prefixItems`·`items: false`의 고정 tuple을 비교하며 두 방식을 혼합하면 거절한다. `anyOf`·`not`은 지원하지 않으며 설명 같은 주석 속성은 허용한다. 문자열 길이·숫자 범위·조건부 업무 제약·추가 속성 허용 규칙은 타입 대조 범위가 아니므로 Ajv와 기능 테스트로 확인한다. SQL 컬럼과 중첩 논리 자료는 일대일 구조가 아니며, 실제 SQLite 저장 왕복·migration 자료 보존 검사로 대응 관계를 검증한다.
+`store-schema.json`은 자동 생성되지 않는 수기 논리 계약이다. `storage/validate-store.ts`가 실행 시 Ajv로 초기·복구 후보와 up 후 전체 자료를 검증하고, `repository/validation.ts`가 일반 저장의 변경 행을 검증한다. `npm run schema:check`는 실제 TypeScript `DatabaseState`와 필드·필수 여부·원시 타입·nullable·enum/const·배열·중첩 객체 구조를 비교하고 불일치를 거절하며, `verify`와 패키징에 포함된다. `$ref`·`oneOf`·타입 없는 `allOf`에 구조 키워드를 함께 지정하거나, `type` 옆의 `allOf`가 조건부 업무 규칙 외에 구조를 제한하면 거절한다. 선언 없는 `required`, 정규화한 선택지가 중복·부분 중첩되는 `oneOf`, `enum`·`const` 동시 지정도 거절한다. 배열은 일반 `items` 또는 `prefixItems`·`items: false`의 고정 tuple을 비교하며 두 방식을 혼합하면 거절한다. `anyOf`·`not`은 지원하지 않으며 설명 같은 주석 속성은 허용한다. 문자열 길이·숫자 범위·조건부 업무 제약·추가 속성 허용 규칙은 타입 대조 범위가 아니므로 Ajv와 기능 테스트로 확인한다. SQL 컬럼과 중첩 논리 자료는 일대일 구조가 아니며, 실제 SQLite 저장 왕복·migration 자료 보존 검사로 대응 관계를 검증한다.
 
-일반 저장은 변경된 경로만 복사하고 변경된 행과 메타데이터를 검증한 뒤, 직전 상태와 다른 행만 INSERT·UPDATE·DELETE한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. `backend/src/storage/queries/`에서 SQL을 관리하며, 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성은 빈 테이블에 삽입한다. `Store.read()`는 전체 복제 없이 깊이 동결된 스냅샷을 반환하며, 임시 변경이 필요한 미리보기는 별도 copy-on-write 후보를 사용한다. 수정된 컬렉션의 배열 복사·행 탐색은 자료량에 비례할 수 있다.
+일반 저장은 repository에서 변경할 행을 검증하고 명시적인 INSERT·UPDATE·DELETE를 실행한다. Excel 원본, 배정 스냅샷과 자동 사유 등 자식 자료는 해당 내용이 달라질 때만 교체한다. 저장 버전 확인부터 연관 행 변경까지 한 트랜잭션으로 처리한다. 초기 생성은 빈 테이블에 삽입한다. `Repository.snapshot()`·`restore()`와 전체 상태 SQL 매핑은 초기 검증·마이그레이션·내부 복구에만 사용한다. 내부 복구는 후보 전체 검증, 예상 버전 확인, 안전 사본 콜백, 변경 행 저장을 수행한다. 복구 COMMIT의 응답이 불확실하면 실제 전체 자료를 후보·이전 상태와 대조하며, 버전이 같아도 저장 전 실패와 저장 후 응답 유실을 구분한다. 기능 테스트도 실제 임시 SQLite를 사용하며 전체 상태 변경 헬퍼는 테스트 자료 준비에만 사용한다. 임시 변경이 필요한 미리보기는 분리된 업무 자료로 계산하며, 해당 자료의 배열 복사·행 탐색은 자료량에 비례할 수 있다.
 
 1. 기존 최대 버전보다 큰 Unix 초 timestamp로 `.up.sql`·`.down.sql` 쌍을 추가한다. 배포한 쌍과 고정된 기존 metadata를 수정하거나 삭제하지 않는다.
 2. SQL은 UTF-8 BOM 없이 LF 줄바꿈으로 작성한다. 트랜잭션은 실행기가 관리하므로 `BEGIN`·`COMMIT`이나 `schema_migrations` 직접 변경문을 넣지 않는다.
-3. `store.ts`, `store-schema.json`, `storage/queries/`와 필요한 API 계약을 함께 갱신한다. 반복 값은 자식 테이블, 단일 값은 개별 컬럼으로 저장한다.
+3. `domain/records.ts`, `store-schema.json`, `repository/`와 필요한 API 계약을 함께 갱신한다. 반복 값은 자식 테이블, 단일 값은 개별 컬럼으로 저장한다.
 4. `npm run migrations:manifest`로 manifest와 target을 함께 갱신한 뒤 새 DB 생성·기존 DB 업그레이드·명시적 down/up·실패의 dirty 영속화·업데이트 안전 사본을 검증하고 `npm run verify`를 실행한다.
 
 자동 down은 수행하지 않는다. 서버를 종료한 시험 DB에 명시적인 목표를 지정한다. 다음 명령은 `1791158400`에서 `1791072000`으로 내려 소속 컬럼 이름을 되돌린다. CLI는 서버와 같은 자료 폴더 잠금을 사용하며 실행 중인 서버가 있으면 거절한다.
@@ -101,7 +107,7 @@ npm run migrations:down -- .data/db.sqlite 1791072000
 
 수강신청·수강이력 현황 Excel을 보관하고 각 화면의 Excel 업로드로 재등록한다. 신청 현황은 조회된 신청 학기의 순서와 전체 개설강좌·정원을 포함하며 미정은 공란이다. 이력 양식 버전 `3`은 학생 소속·선택 메모와 별도 개설강좌 시트의 정원을 보존하며, 소속 열이 없는 버전 `2`도 읽는다. `미정`은 null 정원으로 읽으며 정원 충돌은 명시적 선택을 요구한다. 같은 이력은 기존 메모를 유지하며 소속이 다르면 충돌로 표시한다. 배정초안·시스템 기록은 Excel에 포함하지 않는다.
 
-수동 백업·복원 UI/API와 `services/recovery.ts`·`storage/backup.ts`는 제거했다. 역사적 DB 필드와 기존 파일을 유지하므로 이 기능 제거를 위한 migration은 필요하지 않다. SQL migration 전의 안전 사본은 `sqlite-snapshot.ts`를 통해 계속 생성·검증한다. 내부 `Store.restore()`와 어댑터의 복구 처리는 남아 있으며 사용자 복원 기능을 제공하지 않는다.
+수동 백업·복원 UI/API와 `services/recovery.ts`·`storage/backup.ts`는 제거했다. 역사적 DB 필드와 기존 파일을 유지하므로 이 기능 제거를 위한 migration은 필요하지 않다. SQL migration 전의 안전 사본은 `sqlite-snapshot.ts`를 통해 계속 생성·검증한다. 내부 `Repository.restore()`의 복구 처리는 유지하며 사용자 복원 기능을 제공하지 않는다. Store·SQLiteAdapter의 호환 구현은 제거했다.
 
 이력 검토 준비 토큰은 기본 5분, 배정 확정 검토는 10분, Excel 검토는 15분 후 만료된다. 프로세스 재시작이나 검토 후 자료 변경으로도 반영이 거절될 수 있으므로 새로 검토한다. 화면의 **입력 경고 무시**는 확인 창과 안내·경고 표시만 생략하고 서버의 오류·충돌·digest 검증은 유지한다.
 

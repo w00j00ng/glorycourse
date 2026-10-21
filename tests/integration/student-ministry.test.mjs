@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import ExcelJS from '@excel.js/exceljs';
 
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 import { createImportTemplate, exportApplicationRows, exportRawRows } from '../../backend/src/excel/workbooks.ts';
 import { ApplicationService } from '../../backend/src/services/applications.ts';
 import { DraftService } from '../../backend/src/services/drafts.ts';
@@ -12,7 +13,6 @@ import { EnrollmentService } from '../../backend/src/services/enrollments.ts';
 import { FinalizationService } from '../../backend/src/services/finalization.ts';
 import { ImportPreviewService } from '../../backend/src/services/import-preview.ts';
 import { ImportCommitService } from '../../backend/src/services/import-commit.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const policy = { policyId: 'policy', policyVersion: '1', policySettings: {
@@ -22,7 +22,7 @@ const setup = async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'glorycourse-ministry-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'db.sqlite');
-  const store = await openStore(file, empty);
+  const store = await openRepository(file, empty);
   let sequence = 0;
   const dependencies = { id: () => `ministry-${++sequence}`, now: () => new Date('2026-10-04T00:00:00Z'), seed: () => 'seed', secret: '0123456789abcdef0123456789abcdef' };
   return { file, store, dependencies, applications: new ApplicationService(store, dependencies),
@@ -73,8 +73,8 @@ test('a generated draft keeps its ministry and transfers its edited value to his
     acknowledgementNote: '', idempotencyKey: 'finalize-ministry' });
   const next = await applications.create(application('2026 가을', '새 소속'));
   assert.equal(next.memberId, saved.memberId);
-  assert.equal(store.read().members.some((member) => 'ministry' in member), false);
-  const reopened = await openStore(context.file, empty);
+  assert.equal(store.snapshot().members.some((member) => 'ministry' in member), false);
+  const reopened = await openRepository(context.file, empty);
   assert.equal(new EnrollmentService(reopened, context.dependencies).list()[0].ministry, '대학부');
   assert.deepEqual(new ApplicationService(reopened, context.dependencies).list().map(({ ministry }) => ministry).sort(), ['새 소속', '장년부'].sort());
 });
@@ -154,7 +154,7 @@ test('staged current templates preserve ministry text and version after restart 
     const preview = await previews.preview({ filename: '신규.xlsx', bytes: Buffer.from(await workbook.xlsx.writeBuffer()), kind });
     const staged = await previews.stage(preview.previewId);
     assert.equal(staged.templateVersion, '3');
-    const reopened = await openStore(file, empty);
+    const reopened = await openRepository(file, empty);
     const restarted = new ImportPreviewService(reopened, dependencies);
     const reviewed = restarted.repreviewStaged(staged.id);
     assert.equal(reviewed[candidates][0].ministry, row[2].trim());
@@ -163,8 +163,8 @@ test('staged current templates preserve ministry text and version after restart 
     await new ImportCommitService(reopened, restarted, dependencies).commit({ previewId: reviewed.previewId,
       idempotencyKey: `stage-${kind}`, storeRevision: reviewed.storeRevision, storeEpoch: reviewed.storeEpoch,
       warningDigest: reviewed.warningDigest, resolutions: [] });
-    assert.equal(reopened.read()[candidates][0].ministry, row[2].trim());
-    assert.equal(reopened.getImportBatch(staged.id).templateVersion, '3');
+    assert.equal(reopened.snapshot()[candidates][0].ministry, row[2].trim());
+    assert.equal(reopened.read((queries) => queries.imports.getBatch({ id: staged.id })).templateVersion, '3');
   }
 });
 

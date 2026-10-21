@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { inspectMigrationHistory, migrateDatabase } from '../../backend/src/storage/migrations.ts';
+import { inspectMigrationHistory } from '../../backend/src/storage/migrations.ts';
+import { migrateDatabase } from '../../backend/src/bootstrap/database.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const preserved = JSON.parse(await readFile(new URL('../../schema/migrations/legacy-manifest.json', import.meta.url), 'utf8'));

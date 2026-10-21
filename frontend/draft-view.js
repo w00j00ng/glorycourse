@@ -1,5 +1,5 @@
 /**
- * @typedef {import('../backend/src/storage/store.ts').AllocationDraftItemRecord} DraftItem
+ * @typedef {import('../backend/src/domain/records.ts').AllocationDraftItemRecord} DraftItem
  * @typedef {Pick<import('../backend/src/allocation/engine.ts').AllocationSnapshot, 'applications' | 'choices' | 'semesterCourses'>} DraftSnapshot
  */
 

@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { buildAllocationSnapshot } from '../../backend/src/allocation/snapshot.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const timestamp = '2026-09-26T00:00:00.000Z';
@@ -63,12 +63,6 @@ const mixedRecords = (count) => {
   return data;
 };
 
-const editMember = (store, edit) => store.write({}, (data) => {
-  data.members[0].name = `수정 회원 ${edit}`;
-  data.members[0].nameKey = `수정 회원 ${edit}`;
-  data.members[0].updatedAt = `2026-09-26T00:00:0${edit}.000Z`;
-});
-
 // Count SQLite row changes, including foreign-key cascades, outside the timed samples.
 const changedRowsFor = async (action) => {
   const close = DatabaseSync.prototype.close;
@@ -83,32 +77,32 @@ const changedRowsFor = async (action) => {
 };
 
 for (const members of [1_000, 10_000]) {
-  test(`persists one member edit without rewriting mixed records for ${members} members`, async (context) => {
-    const directory = await mkdtemp(join(tmpdir(), 'glorycourse-storage-scale-'));
+  test(`SQL repository preserves mixed records when editing one of ${members} members`, async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), 'glorycourse-repository-scale-'));
     context.after(() => rm(directory, { recursive: true, force: true }));
     const initial = mixedRecords(members);
-    const file = join(directory, 'data.sqlite');
-    const store = await openStore(file, initial);
-    const samples = [];
-    for (let edit = 1; edit <= 3; edit++) {
+    const file = join(directory, 'db.sqlite');
+    const repository = await openRepository(file, initial);
+    const request = { id: 'member-0', name: '수정 회원', nameKey: '수정 회원', updatedAt: '2026-10-21T00:00:00.000Z' };
+    let elapsed;
+    const changedRows = await changedRowsFor(async () => {
       const started = performance.now();
-      await editMember(store, edit);
-      samples.push(performance.now() - started);
-    }
-    const changedRows = await changedRowsFor(() => editMember(store, 4));
+      await repository.write({}, (queries) => {
+        const current = queries.catalog.getMember({ id: request.id });
+        queries.catalog.updateNamed({ kind: 'members', record: { ...current, ...request } });
+      });
+      elapsed = performance.now() - started;
+    });
     const expected = structuredClone(initial);
-    expected.meta.storeRevision += 4;
-    expected.members[0] = {
-      ...expected.members[0], name: '수정 회원 4', nameKey: '수정 회원 4', updatedAt: '2026-09-26T00:00:04.000Z',
-    };
-    assert.deepEqual(store.read(), expected, 'only the member and store revision change');
-    assert.deepEqual((await openStore(file, empty)).read(), expected, 'restart retains every record and snapshot');
-    const medianMs = [...samples].sort((left, right) => left - right)[1];
-    assert.ok(medianMs < 60_000, `one member edit took ${Math.round(medianMs)} ms`);
-    context.diagnostic(JSON.stringify({
-      scenario: 'one-member-edit', members, medianMs: Math.round(medianMs * 10) / 10,
-      samplesMs: samples.map(Math.round), changedRows,
-    }));
-    assert.ok(changedRows <= 4, `one member edit changed ${changedRows} SQLite rows`);
+    Object.assign(expected.members[0], request);
+    expected.meta.storeRevision += 1;
+    const reopened = await openRepository(file, empty);
+    try {
+      assert.deepEqual(reopened.snapshot(), expected);
+      assert.equal(changedRows, 2, 'only the member and store revision are persisted');
+      assert.ok(elapsed < 60_000, `one SQL edit took ${Math.round(elapsed)} ms`);
+      context.diagnostic(JSON.stringify({ scenario: 'repository-one-member-edit', members,
+        elapsedMs: Math.round(elapsed * 10) / 10, changedRows }));
+    } finally { reopened.close(); repository.close(); }
   });
 }

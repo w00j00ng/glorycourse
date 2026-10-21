@@ -7,13 +7,20 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { inspectMigrationHistory, migrateDatabase } from '../../backend/src/storage/migrations.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
-import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
-import { writeStoreToDatabase } from '../../backend/src/storage/sqlite.ts';
+import { inspectMigrationHistory } from '../../backend/src/storage/migrations.ts';
+import { migrateDatabase } from '../../backend/src/bootstrap/database.ts';
+import { migrateDatabase as migrateWithSnapshot } from '../../backend/src/storage/migrations.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
+import { readRelationalStore, writeRelationalStore } from '../../backend/src/repository/relational-store.ts';
 import { acquireInstanceLock } from '../../backend/src/storage/instance-lock.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
+
+const readDatabase = (file) => {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try { return readRelationalStore(db); }
+  finally { db.close(); }
+};
 const current = JSON.parse(await readFile(new URL('../../schema/migrations/manifest.json', import.meta.url), 'utf8'));
 const target = current.targetVersion;
 const hash = (text) => createHash('sha256').update(text).digest('hex');
@@ -44,7 +51,7 @@ const customMigrations = async (directory, up, down) => {
 
 test('startup stores exactly one version-dirty row and repeats without executing DDL', async (t) => {
   const { file } = await temporary(t);
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     assert.deepEqual(db.prepare('PRAGMA table_info(schema_migrations)').all().map(({ name }) => name), ['version', 'dirty']);
@@ -67,21 +74,21 @@ test('dirty, unknown, future, duplicate and zero-version business databases bloc
   ];
   for (const input of cases) {
     const { file } = await temporary(t);
-    await openStore(file, empty);
+    await openRepository(file, empty);
     const db = new DatabaseSync(file);
     try {
       db.prepare('UPDATE schema_migrations SET version = ?, dirty = ?').run(input.version, input.dirty);
       if (input.duplicate) db.prepare('INSERT INTO schema_migrations VALUES (?, 0)').run(target - 86_400);
     } finally { db.close(); }
     const before = await readFile(file);
-    await assert.rejects(openStore(file, empty), input.message);
+    await assert.rejects(openRepository(file, empty), input.message);
     assert.deepEqual(await readFile(file), before);
   }
 });
 
 test('failed DDL rolls back the batch but keeps dirty on disk and blocks the next startup', async (t) => {
   const { directory, file } = await temporary(t);
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const { destination, version } = await customMigrations(directory,
     'CREATE INDEX temporary_members_index ON members(position);\nINSERT INTO missing_table VALUES (1);\n',
     'DROP INDEX temporary_members_index;\n');
@@ -90,7 +97,7 @@ test('failed DDL rolls back the batch but keeps dirty on disk and blocks the nex
   const db = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE name = 'temporary_members_index'").get().count, 0); }
   finally { db.close(); }
-  assert.deepEqual(await new SQLiteAdapter(file).read(), empty);
+  assert.deepEqual(readDatabase(file), empty);
   const before = await readFile(file);
   await assert.rejects(migrateDatabase(file, empty, { directory: destination }), /dirty/i);
   assert.deepEqual(await readFile(file), before);
@@ -104,7 +111,7 @@ test('malformed migration state rejects text and null dirty values without chang
   ];
   for (const input of cases) {
     const { file } = await temporary(t);
-    await openStore(file, empty);
+    await openRepository(file, empty);
     const db = new DatabaseSync(file);
     try {
       db.exec('DROP TABLE schema_migrations; CREATE TABLE schema_migrations (version INTEGER, dirty TEXT)');
@@ -112,7 +119,7 @@ test('malformed migration state rejects text and null dirty values without chang
     } finally { db.close(); }
     const before = await readFile(file);
     await assert.rejects(inspectMigrationHistory(file), /valid row|state columns/i);
-    await assert.rejects(openStore(file, empty), /valid row|state columns/i);
+    await assert.rejects(openRepository(file, empty), /valid row|state columns/i);
     assert.deepEqual(await readFile(file), before);
   }
 });
@@ -131,7 +138,7 @@ test('failed fresh initialization leaves only its dirty state and blocks automat
 test('explicit down preserves renamed ministries, permits their loss, and supports down to zero then up', async (t) => {
   const { file } = await temporary(t);
   const original = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
-  await openStore(file, original);
+  await openRepository(file, original);
   const renamed = await migrateDatabase(file, undefined, { targetVersion: 1791072000 });
   assert.deepEqual(renamed.applied, ['1791158400_rename_student_ministry.down.sql']);
   assert.deepEqual(state(file), { version: 1791072000, dirty: 0 });
@@ -139,21 +146,21 @@ test('explicit down preserves renamed ministries, permits their loss, and suppor
   try { assert.equal(db.prepare('SELECT affiliation FROM applications').get().affiliation, original.applications[0].ministry); }
   finally { db.close(); }
   await migrateDatabase(file, empty);
-  assert.deepEqual((await openStore(file, empty)).read().applications, original.applications);
+  assert.deepEqual((await openRepository(file, empty)).snapshot().applications, original.applications);
   await migrateDatabase(file, undefined, { targetVersion: 1790336872 });
   await migrateDatabase(file, empty);
-  assert.equal((await openStore(file, empty)).read().applications[0].ministry, null);
+  assert.equal((await openRepository(file, empty)).snapshot().applications[0].ministry, null);
   await migrateDatabase(file, undefined, { targetVersion: 0 });
   assert.deepEqual(state(file), { version: 0, dirty: 0 });
   const cleared = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(cleared.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = 'table' AND name <> 'schema_migrations'").get().count, 0); }
   finally { cleared.close(); }
-  assert.deepEqual((await openStore(file, empty)).read(), empty);
+  assert.deepEqual((await openRepository(file, empty)).snapshot(), empty);
 });
 
 test('failed down rolls back destructive SQL while its requested version stays dirty', async (t) => {
   const { directory, file } = await temporary(t);
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const { destination, version } = await customMigrations(directory,
     'CREATE TABLE temporary_data (value TEXT);\nINSERT INTO temporary_data VALUES (\'keep\');\n',
     'DROP TABLE temporary_data;\nINSERT INTO missing_table VALUES (1);\n');
@@ -188,7 +195,7 @@ test('legacy history is verified before conversion even when business DDL is alr
         db.exec(sql);
         db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)').run(entry.version, entry.name, entry.checksum, '2026-10-05T00:00:00.000Z', '0.2.2');
       }
-      writeStoreToDatabase(db, original);
+      writeRelationalStore(db, original);
       if (input.sql) db.exec(input.sql);
     } finally { db.close(); }
     const before = await readFile(file);
@@ -196,7 +203,7 @@ test('legacy history is verified before conversion even when business DDL is alr
       const result = await migrateDatabase(file);
       assert.deepEqual(result.applied, []);
       assert.deepEqual(state(file), { version: target, dirty: 0 });
-      assert.deepEqual(await new SQLiteAdapter(file).read(), original);
+      assert.deepEqual(readDatabase(file), original);
       const backup = new DatabaseSync(result.backupFile, { readOnly: true });
       try { assert.equal(backup.prepare('SELECT count(*) AS count FROM schema_migrations').get().count, legacy.migrations.length); }
       finally { backup.close(); }
@@ -209,7 +216,7 @@ test('legacy history is verified before conversion even when business DDL is alr
 
 test('down command rejects an active server or an unknown target and performs an explicit stopped-DB down', async (t) => {
   const { directory, file } = await temporary(t);
-  await openStore(file, empty);
+  await openRepository(file, empty);
   const run = (destination) => spawnSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning',
     resolve('scripts/migrations-down.mjs'), file, String(destination)], { encoding: 'utf8' });
   const lock = await acquireInstanceLock(directory);
@@ -228,3 +235,27 @@ test('down command rejects an active server or an unknown target and performs an
   assert.equal(result.status, 0, result.error?.message ?? result.stderr);
   assert.deepEqual(state(file), { version: 1791072000, dirty: 0 });
 });
+
+for (const stage of ['read', 'write']) {
+  test(`snapshot ${stage} failure rolls back migration data and keeps recovery required`, async (t) => {
+    const { file } = await temporary(t);
+    const failure = new Error(`snapshot ${stage} failed`);
+    const snapshot = {
+      read: (db) => {
+        if (stage === 'read') throw failure;
+        return readRelationalStore(db);
+      },
+      write: (db, data) => {
+        writeRelationalStore(db, data);
+        if (stage === 'write') throw failure;
+      },
+    };
+    await assert.rejects(migrateWithSnapshot(file, empty, { snapshot }), failure);
+    assert.deepEqual(state(file), { version: target, dirty: 1 });
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE name = 'members'").get().count, 0);
+    } finally { db.close(); }
+    await assert.rejects(openRepository(file, empty), /dirty/i);
+  });
+}

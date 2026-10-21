@@ -2,17 +2,18 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { produce } from 'immer';
 
 import {
-  StoreEpochConflictError,
-  StoreRevisionConflictError,
   type EnrollmentRecord as Enrollment,
   type NamedRecord as Named,
   type SemesterCourseRecord as SemesterCourse,
   type SemesterRecord as Semester,
-  type Store,
-} from '../storage/store.ts';
+} from '../domain/records.ts';
+import { StoreEpochConflictError, StoreRevisionConflictError } from '../domain/errors.ts';
+import type { EnrollmentListFilters, EnrollmentView } from '../domain/query-models.ts';
+import type { Repository } from '../repository/database.ts';
+import type { EnrollmentContext } from '../repository/enrollments.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 
-type EnrollmentData = ReturnType<Store['enrollmentData']>;
+type EnrollmentData = EnrollmentContext;
 type Action = 'CREATE' | 'UPDATE' | 'DELETE';
 export type Acknowledgement = NonNullable<Enrollment['exceptionAcknowledgement']>;
 type PreviewInput = {
@@ -45,24 +46,6 @@ type TokenPayload = {
 };
 type BatchInput = Pick<PreviewInput, 'semesterName' | 'memberName' | 'courseName' | 'ministry'>;
 type BatchTokenPayload = Omit<TokenPayload, 'input'> & { kind: 'BATCH_CREATE'; inputs: BatchInput[] };
-
-export type EnrollmentView = Pick<Enrollment,
-  'id' | 'semesterCourseId' | 'memberId' | 'ministry' | 'exceptionAcknowledgement' | 'revision'
-> & {
-  semesterName: string;
-  courseName: string;
-  memberName: string;
-};
-
-export const ENROLLMENT_SORTS = ['NAME_ASC', 'NAME_DESC', 'COURSE_ASC', 'COURSE_DESC', 'SEMESTER_ASC', 'SEMESTER_DESC'] as const;
-export type EnrollmentSort = (typeof ENROLLMENT_SORTS)[number];
-
-export type EnrollmentListFilters = {
-  memberName?: string;
-  semesterId?: string;
-  courseId?: string;
-  sort?: EnrollmentSort;
-};
 
 export class EnrollmentValidationError extends Error {
   constructor(message: string) {
@@ -112,13 +95,13 @@ export class EnrollmentStaleError extends Error {
 type Dependencies = { id: () => string; now: () => Date; secret: string | Uint8Array; ttlMs?: number };
 
 export class EnrollmentService {
-  private readonly store: Store;
+  private readonly repository: Repository;
   private readonly dependencies: Required<Omit<Dependencies, 'secret'>> & { secret: Buffer };
 
-  constructor(store: Store, dependencies: Dependencies) {
+  constructor(repository: Repository, dependencies: Dependencies) {
     const secret = Buffer.from(dependencies.secret);
     if (secret.byteLength < 32) throw new EnrollmentValidationError('Prepared action secret is too short');
-    this.store = store;
+    this.repository = repository;
     this.dependencies = {
       id: dependencies.id,
       now: dependencies.now,
@@ -129,7 +112,7 @@ export class EnrollmentService {
 
   preview(input: PreviewInput) {
     const clean = validateInput(input);
-    const data = this.store.enrollmentData();
+    const data = this.repository.read((queries) => queries.enrollments.getContext());
     validateTarget(data, clean);
     if (input.action === 'UPDATE' && input.ministry === undefined) {
       clean.ministry = enrollments(data).find((item) => item.id === clean.enrollmentId)!.ministry;
@@ -159,7 +142,7 @@ export class EnrollmentService {
 
   previewMany(inputs: BatchInput[]) {
     const clean = validateBatchInput(inputs);
-    const data = this.store.enrollmentData();
+    const data = this.repository.read((queries) => queries.enrollments.getContext());
     let issues: EnrollmentIssue[] = [];
     produce(data, (candidate) => {
       issues = applyBatchCandidate(candidate, clean, this.dependencies.now().toISOString(), randomUUID).issues;
@@ -185,7 +168,9 @@ export class EnrollmentService {
     const payload = verifyBatch(input.preparedActionToken, this.dependencies.secret);
     if (this.dependencies.now().getTime() >= Date.parse(payload.expiresAt)) throw new EnrollmentTokenError();
     try {
-      return await this.store.write({ expectedRevision: payload.storeRevision }, (data) => {
+      return await this.repository.write({ expectedRevision: payload.storeRevision, expectedEpoch: payload.storeEpoch }, (queries) => {
+        const data = queries.enrollments.getContext();
+        const previous = structuredClone(data);
         if (data.meta.storeEpoch !== payload.storeEpoch) throw new EnrollmentStaleError();
         const now = this.dependencies.now().toISOString();
         const { items, issues } = applyBatchCandidate(data, payload.inputs, now, this.dependencies.id);
@@ -202,10 +187,11 @@ export class EnrollmentService {
           enrollments(data).find(({ id }) => id === item.id)!.exceptionAcknowledgement = acknowledgement;
           item.exceptionAcknowledgement = acknowledgement;
         });
+        queries.enrollments.applyCandidate({ previous, candidate: data });
         return items;
       });
     } catch (error) {
-      if (error instanceof StoreRevisionConflictError) throw new EnrollmentStaleError();
+      if (error instanceof StoreRevisionConflictError || error instanceof StoreEpochConflictError) throw new EnrollmentStaleError();
       throw error;
     }
   }
@@ -226,14 +212,16 @@ export class EnrollmentService {
     if (this.dependencies.now().getTime() >= Date.parse(payload.expiresAt)) {
       throw new EnrollmentTokenError();
     }
-    const current = this.store.version();
+    const current = this.repository.version();
     if (
       current.storeEpoch !== payload.storeEpoch
       || current.storeRevision !== payload.storeRevision
     ) throw new EnrollmentStaleError();
 
     try {
-      return await this.store.write({ expectedRevision: payload.storeRevision }, (data) => {
+      return await this.repository.write({ expectedRevision: payload.storeRevision, expectedEpoch: payload.storeEpoch }, (queries) => {
+        const data = queries.enrollments.getContext();
+        const previous = structuredClone(data);
         if (data.meta.storeEpoch !== payload.storeEpoch) throw new EnrollmentStaleError();
         validateTarget(data, payload.input);
         const issues = enrollmentIssues(data, payload.input);
@@ -259,62 +247,33 @@ export class EnrollmentService {
           this.dependencies.id,
         );
         initializeEnrollmentCourseCapacities(data, existingCourseIds);
+        queries.enrollments.applyCandidate({ previous, candidate: data });
         return result;
       });
     } catch (error) {
-      if (error instanceof StoreRevisionConflictError) throw new EnrollmentStaleError();
+      if (error instanceof StoreRevisionConflictError || error instanceof StoreEpochConflictError) throw new EnrollmentStaleError();
       throw error;
     }
   }
 
   get(id: string): EnrollmentView {
-    const data = this.store.enrollmentData();
-    const enrollment = enrollments(data).find((item) => item.id === id);
+    const enrollment = this.repository.read((queries) => queries.enrollments.getView({ id }));
     if (!enrollment) throw new EnrollmentNotFoundError();
-    return enrollmentView(data, enrollment);
+    return enrollment;
   }
 
   list(filters: EnrollmentListFilters = {}): EnrollmentView[] {
-    const data = this.store.enrollmentData();
-    const memberName = filters.memberName?.trim().normalize('NFC');
-    const items = enrollments(data).filter((enrollment) => {
-      const semesterCourse = semesterCourses(data).find(({ id }) => id === enrollment.semesterCourseId);
-      return semesterCourse
-        && (!filters.semesterId || semesterCourse.semesterId === filters.semesterId)
-        && (!filters.courseId || semesterCourse.courseId === filters.courseId)
-        && (!memberName || members(data).find(({ id }) => id === enrollment.memberId)?.nameKey.includes(memberName));
-    }).map((enrollment) => enrollmentView(data, enrollment));
-    if (!filters.sort) return items;
-    const semesterOrders = new Map(semesters(data).map(({ name, order }) => [name, order]));
-    return items.sort((left, right) => {
-      const leftOrder = semesterOrders.get(left.semesterName) ?? null;
-      const rightOrder = semesterOrders.get(right.semesterName) ?? null;
-      const semesterDifference = leftOrder === rightOrder ? 0
-        : leftOrder === null ? 1 : rightOrder === null ? -1 : rightOrder - leftOrder;
-      const nameDifference = left.memberName.localeCompare(right.memberName, 'ko');
-      const courseDifference = left.courseName.localeCompare(right.courseName, 'ko');
-      const selectedDifference = filters.sort === 'SEMESTER_ASC'
-        ? (leftOrder !== null && rightOrder !== null ? -semesterDifference : semesterDifference)
-        : filters.sort === 'SEMESTER_DESC' ? semesterDifference
-          : filters.sort === 'NAME_ASC' ? nameDifference
-            : filters.sort === 'NAME_DESC' ? -nameDifference
-              : filters.sort === 'COURSE_DESC' ? -courseDifference : courseDifference;
-      return selectedDifference || semesterDifference || nameDifference || courseDifference || left.id.localeCompare(right.id);
-    });
+    return this.repository.read((queries) => queries.enrollments.list(filters));
+  }
+
+  listPage(filters: EnrollmentListFilters & { page: number; limit: number }) {
+    return this.repository.read((queries) => queries.enrollments.listPage(filters));
   }
 
   previewSemesterDeletion(semesterId: string) {
-    const data = this.store.enrollmentData();
-    const semester = semesters(data).find(({ id }) => id === semesterId);
-    if (!semester) throw new EnrollmentNotFoundError();
-    const courseIds = new Set(semesterCourses(data)
-      .filter((course) => course.semesterId === semesterId).map(({ id }) => id));
-    return {
-      semesterName: semester.name,
-      count: enrollments(data).filter(({ semesterCourseId }) => courseIds.has(semesterCourseId)).length,
-      storeRevision: data.meta.storeRevision,
-      storeEpoch: data.meta.storeEpoch,
-    };
+    const summary = this.repository.read((queries) => queries.enrollments.semesterSummary({ semesterId }));
+    if (!summary) throw new EnrollmentNotFoundError();
+    return summary;
   }
 
   async deleteSemester(semesterId: string, input: {
@@ -326,20 +285,16 @@ export class EnrollmentService {
       throw new EnrollmentValidationError('학기 전체 삭제 요청이 올바르지 않습니다.');
     }
     try {
-      return await this.store.write({
+      return await this.repository.write({
         expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch,
-      }, (data) => {
-        const semester = semesters(data).find(({ id }) => id === semesterId);
-        if (!semester) throw new EnrollmentNotFoundError();
-        if (semester.name !== input.confirmationName) {
+      }, (queries) => {
+        const summary = queries.enrollments.semesterSummary({ semesterId });
+        if (!summary) throw new EnrollmentNotFoundError();
+        if (summary.semesterName !== input.confirmationName) {
           throw new EnrollmentValidationError('삭제할 학기명을 정확히 입력하세요.');
         }
-        const courseIds = new Set(semesterCourses(data)
-          .filter((course) => course.semesterId === semesterId).map(({ id }) => id));
-        const remaining = enrollments(data).filter(({ semesterCourseId }) => !courseIds.has(semesterCourseId));
-        const deletedCount = data.enrollments.length - remaining.length;
-        if (deletedCount === 0) throw new EnrollmentValidationError('선택한 학기에 삭제할 수강이력이 없습니다.');
-        data.enrollments = remaining;
+        if (summary.count === 0) throw new EnrollmentValidationError('선택한 학기에 삭제할 수강이력이 없습니다.');
+        const deletedCount = queries.enrollments.deleteSemester({ semesterId });
         return { deletedCount };
       });
     } catch (error) {
