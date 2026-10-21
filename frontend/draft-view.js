@@ -6,6 +6,9 @@
 /** @param {string} code */
 export const reasonLabel = (code) => (/** @type {Record<string, string>} */ ({
   PREFERENCE_ALLOCATED: '희망 배정',
+  RETAKE_PREFERENCE_ALLOCATED: '재수강 희망 배정',
+  DUPLICATE_CHOICE_SKIPPED: '같은 강좌 중복 희망 건너뜀',
+  ALLOCATED_TO_HIGHER_PRIORITY: '우선 단계 배정으로 미검토',
   ALREADY_TAKEN: '과거 수강',
   CAPACITY_FULL: '당시 정원 경쟁 탈락',
   ALLOCATED_TO_HIGHER_PREFERENCE: '상위 희망 배정으로 미검토',
@@ -28,13 +31,13 @@ export const draftApplicationSummaries = (snapshot) => {
   /** @type {Map<string, DraftSnapshot['choices']>} */
   const choicesByApplication = new Map(snapshot.applications.map(({ id }) => [id, []]));
   for (const choice of snapshot.choices) choicesByApplication.get(choice.applicationId)?.push(choice);
-  return new Map(snapshot.applications.map(({ id, applicationOrder }) => {
+  return new Map(snapshot.applications.map(({ id, applicationOrder, applicantNote }) => {
     const choices = (choicesByApplication.get(id) ?? [])
       .sort((left, right) => (left.preference ?? Infinity) - (right.preference ?? Infinity))
       .map(({ preference, semesterCourseId }) => (
         `${preference === null ? '순위 미정:' : `${preference}.`} ${courseNames.get(semesterCourseId) ?? '강좌 미정'}`
       )).join(' · ');
-    return [id, { applicationOrder, choices: choices || '희망 강좌 없음' }];
+    return [id, { applicationOrder, choices: choices || '희망 강좌 없음', applicantNote: applicantNote ?? null }];
   }));
 };
 

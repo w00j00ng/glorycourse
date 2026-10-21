@@ -174,6 +174,131 @@ test('an administrator keeps student ministries separate for each application, d
   await expect(page.locator('#application-rows tr').filter({ hasText: '다음 학기' })).toContainText('대학부');
 });
 
+test('an administrator preserves applicant notes and repeated ranks while reviewing retake priority', async ({ page, app }) => {
+  const note = '<b>신청자 요청</b>\n둘째 줄';
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#new-enrollment').click();
+  await page.locator('#enrollment-form [data-input-warnings-toggle]').check();
+  const history = page.locator('#enrollment-entry-rows > fieldset');
+  await history.locator('[name="semesterName"]').fill('이전 학기');
+  await history.locator('[name="memberName"]').fill('재수강 회원');
+  await history.locator('[name="newCourseName"]').fill('창세기');
+  await page.locator('#enrollment-form [type="submit"]').click();
+
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('#new-semester').click();
+  await page.locator('#semester-create-form [name="name"]').fill('메모 학기');
+  await page.locator('#semester-create-form [type="submit"]').click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#catalog-semester').selectOption({ label: '메모 학기' });
+  await page.locator('#add-catalog-course').click();
+  await page.locator('#catalog-add-form [name="courses"]').fill('창세기, 1');
+  await page.locator('#catalog-add-form [type="submit"]').click();
+  await page.locator('#catalog-form [type="submit"]').click();
+
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await page.locator('#new-application').click();
+  await page.locator('#add-application-entry').click();
+  for (const [index, memberName, rank] of [[0, '재수강 회원', '1'], [1, '미수강 회원', '2']]) {
+    const entry = page.locator('#application-entry-rows > fieldset').nth(index);
+    await entry.locator('[name="semesterName"]').fill('메모 학기');
+    await entry.locator('[name="memberName"]').fill(memberName);
+    await entry.locator('[name="applicationOrder"]').fill(String(index + 1));
+    await entry.locator('[name="courseName"]').fill('창세기');
+    await entry.locator('[name="preference"]').fill(rank);
+    if (index === 0) {
+      await entry.getByRole('textbox', { name: '신청자 메모' }).fill(`  ${note}  `);
+      await expect(entry.locator('[name="applicantNote"]')).toHaveAttribute('maxlength', '2000');
+      await entry.locator('.add-choice').click();
+      await entry.locator('[name="courseName"]').nth(1).fill('창세기');
+      await entry.locator('[name="preference"]').nth(1).fill('3');
+    }
+  }
+  await page.locator('#application-form [type="submit"]').click();
+  const retakeRow = page.locator('#application-rows tr').filter({ hasText: '재수강 회원' });
+  await expect(retakeRow.locator('.application-note')).toHaveText(note);
+  await expect(retakeRow.locator('.application-note b')).toHaveCount(0);
+  await expect(retakeRow.locator('.application-warnings')).toContainText('창세기 · 1·3순위');
+  await page.reload();
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await retakeRow.getByRole('button', { name: '수정', exact: true }).click();
+  await expect(page.locator('[name="applicantNote"]')).toHaveValue(note);
+  await expect(page.locator('#application-entry-rows [name="preference"]').nth(0)).toHaveValue('1');
+  await expect(page.locator('#application-entry-rows [name="preference"]').nth(1)).toHaveValue('3');
+  await page.locator('#application-dialog .close-dialog').first().click();
+
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#application-export').click()]);
+  const buffer = await readFile(await download.path());
+  page.once('dialog', (dialog) => { void dialog.accept('메모 학기'); });
+  await page.locator('#delete-semester-applications').click();
+  await expect(page.locator('#application-rows tr')).toHaveCount(0);
+  await page.locator('#applications-view .import-open').click();
+  await page.getByRole('checkbox', { name: '입력 경고 무시' }).check();
+  await page.locator('#import-form [name="file"]').setInputFiles({ name: '신청현황.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer });
+  await page.locator('#import-preview-action [type="submit"]').click();
+  await page.getByRole('checkbox', { name: '입력 경고 무시' }).uncheck();
+  const importRetakeWarnings = page.locator('#import-issues li[data-severity="WARNING"]');
+  await expect(importRetakeWarnings).toHaveCount(2);
+  for (const warning of await importRetakeWarnings.all()) {
+    await expect(warning).toContainText('재수강 회원 · 창세기 · 1·3순위');
+    await expect(warning).toBeVisible();
+  }
+  await page.getByRole('checkbox', { name: '입력 경고 무시' }).check();
+  await page.locator('#commit-import').click();
+  await expect(page.locator('#import-preview-status')).toContainText('반영됨');
+  await page.locator('#import-dialog .close-dialog').first().click();
+  await expect(retakeRow.locator('.application-note')).toHaveText(note);
+
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  await page.locator('#new-draft').click();
+  await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: '메모 학기' });
+  await page.locator('#draft-create-form [type="submit"]').click();
+  const retakeResult = page.locator('#draft-item-rows tr').filter({ hasText: '재수강 회원' });
+  const normalResult = page.locator('#draft-item-rows tr').filter({ hasText: '미수강 회원' });
+  await expect(retakeResult.getByRole('combobox', { name: '재수강 회원 최종 배정' })).toHaveValue('');
+  await expect(normalResult.getByRole('combobox', { name: '미수강 회원 최종 배정' })).not.toHaveValue('');
+  await expect(retakeResult.locator('.application-note')).toHaveText(`신청자 메모: ${note}`);
+  await expect(page.locator('#draft-issues')).toContainText('재수강 회원 · 창세기 · 1·3순위');
+  await page.locator('#draft-dialog .close-dialog').first().click();
+  await page.getByRole('button', { name: '수강신청', exact: true }).click();
+  await retakeRow.getByRole('button', { name: '수정', exact: true }).click();
+  await page.locator('[name="applicantNote"]').fill('변경된 신청자 메모');
+  await page.locator('#application-form [type="submit"]').click();
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  await page.locator('#draft-rows').getByRole('button', { name: '검토', exact: true }).click();
+  await expect(page.locator('#draft-stale')).toBeVisible();
+  await expect(retakeResult.locator('.application-note')).toHaveText(`신청자 메모: ${note}`);
+  await page.locator('#draft-dialog .close-dialog').first().click();
+  await page.getByRole('button', { name: '학기·강좌 관리', exact: true }).click();
+  await page.locator('[data-catalog-tab="courses"]').click();
+  await page.locator('#catalog-semester').selectOption({ label: '메모 학기' });
+  await page.locator('#catalog-course-rows [name="capacity"]').fill('2');
+  await page.locator('#catalog-form [type="submit"]').click();
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  await page.locator('#new-draft').click();
+  await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: '메모 학기' });
+  await page.locator('#draft-create-form [type="submit"]').click();
+  await expect(normalResult.getByRole('combobox', { name: '미수강 회원 최종 배정' })).not.toHaveValue('');
+  await expect(retakeResult.getByRole('combobox', { name: '재수강 회원 최종 배정' })).not.toHaveValue('');
+  await expect(retakeResult.locator('summary')).toHaveText('재수강 희망 배정');
+  await expect(retakeResult.locator('.application-note')).toHaveText('신청자 메모: 변경된 신청자 메모');
+  await page.locator('#draft-dialog .close-dialog').first().click();
+  await page.getByRole('button', { name: '수강이력', exact: true }).click();
+  await page.locator('#new-enrollment').click();
+  await page.locator('#enrollment-form [data-input-warnings-toggle]').check();
+  await history.locator('[name="semesterName"]').fill('메모 학기');
+  await history.locator('[name="memberName"]').fill('재수강 회원');
+  await history.locator('[name="courseId"]').selectOption({ label: '창세기' });
+  await page.locator('#enrollment-form [type="submit"]').click();
+  await expect(page.locator('#enrollment-dialog')).toBeHidden();
+  await page.getByRole('button', { name: '배정초안', exact: true }).click();
+  await page.locator('#new-draft').click();
+  await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: '메모 학기' });
+  await page.locator('#draft-create-form [type="submit"]').click();
+  await expect(retakeResult).toHaveCount(0);
+  await expect(page.locator('#draft-issues')).toContainText('재수강 회원 · 창세기 · 1·3순위');
+});
+
 test('an administrator toggles button help across pages and newly rendered controls', async ({ page, app }) => {
   const helpToggle = page.getByRole('checkbox', { name: '버튼 도움말 표시', exact: true });
   await expect(helpToggle).toBeChecked();
@@ -720,7 +845,7 @@ test('an administrator reviews a completed application template before importing
   ]);
   const completed = await app.completeApplicationTemplate(await readFile(await download.path()));
   expect([completed.semesterName, completed.courseName, completed.capacity]).toEqual(['양식 학기', '창세기', 2]);
-  expect(completed.headers).toEqual(['학기명', '회원명', '학생 소속', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌']);
+  expect(completed.headers).toEqual(['학기명', '회원명', '학생 소속', '신청순서', '신청자 메모', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌']);
 
   await page.locator('#applications-view .import-open').click();
   await page.locator('#import-form [name="file"]').setInputFiles({

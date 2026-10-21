@@ -1,5 +1,5 @@
 {
-  "targetVersion": 1791158400,
+  "targetVersion": 1792540800,
   "migrations": [
     {
       "version": 1790294400,
@@ -62,6 +62,15 @@
       "down": {
         "name": "1791158400_rename_student_ministry.down.sql",
         "checksum": "86a9f9bc96a68f533e95f5e30475dacce1a8436c986ec5b97b01438d19613542"
+      }
+    },
+    {
+      "version": 1792540800,
+      "name": "1792540800_application_notes_repeated_choices.up.sql",
+      "checksum": "90aad6b3681b59a8b3c2a80a4f312bd46cee8b62548a7a764880a95b3e47a039",
+      "down": {
+        "name": "1792540800_application_notes_repeated_choices.down.sql",
+        "checksum": "f50ae43d1da100156021e0951570e575abccb875bf0b57a4729ad1dbf77d15e8"
       }
     }
   ]

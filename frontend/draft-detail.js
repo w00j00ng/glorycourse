@@ -8,6 +8,7 @@ import {
   reasonLabel,
   sortDraftItems,
 } from './draft-view.js';
+import { issueText } from './issue-view.js';
 
 /** @typedef {import('../backend/src/services/drafts.ts').DraftDetail} DraftDetail */
 /** @typedef {import('../backend/src/domain/records.ts').AllocationDraftItemRecord} DraftItem */
@@ -158,6 +159,12 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       orderCell.className = 'draft-order';
       const applicationCell = cell(application?.choices ?? '신청 없음');
       applicationCell.className = 'choices';
+      if (application?.applicantNote) {
+        const note = document.createElement('p');
+        note.className = 'application-note';
+        note.textContent = `신청자 메모: ${application.applicantNote}`;
+        applicationCell.append(note);
+      }
       const ministryCell = cell(item.ministry ?? '—');
       const ministry = document.createElement('input');
       if (!readonly) {
@@ -226,6 +233,13 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     byId('draft-readonly').hidden = !readonly;
     byId('draft-readonly').textContent = `${detail.draft.status} · 읽기 전용`;
     byId('preview-finalization').hidden = readonly;
+    const members = new Map(detail.applicationSnapshot.applications.map(({ memberId, memberName }) => [memberId, memberName]));
+    byId('draft-issues').replaceChildren(...detail.issues.map((issue) => {
+      const line = document.createElement('li');
+      line.textContent = issueText(issue, { memberName: members.get(issue.memberId) });
+      return line;
+    }));
+    byId('draft-issues-panel').hidden = detail.issues.length === 0;
     renderItems();
     if (!byId('draft-dialog').open) byId('draft-dialog').showModal();
   };

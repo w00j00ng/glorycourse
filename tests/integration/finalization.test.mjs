@@ -313,7 +313,7 @@ const fixture = () => ({
     stamped({ id: 'sc-a', semesterId: 'semester-1', courseId: 'course-a', capacity: 1 }),
     stamped({ id: 'sc-b', semesterId: 'semester-1', courseId: 'course-b', capacity: 1 }),
   ],
-  applications: [stamped({
+  applications: [stamped({ applicantNote: null,
     id: 'application-1', semesterId: 'semester-1', memberId: 'member-1', ministry: null, applicationOrder: 1,
     applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null, revision: 0,
   })],

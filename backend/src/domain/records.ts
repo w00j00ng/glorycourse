@@ -10,6 +10,7 @@ export type SemesterCourseRecord = Timestamped & {
   capacity: number | null;
 };
 export type ApplicationRecord = Timestamped & {
+  applicantNote: string | null;
   id: string;
   semesterId: string;
   memberId: string;

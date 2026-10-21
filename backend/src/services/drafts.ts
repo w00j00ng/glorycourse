@@ -18,6 +18,7 @@ import { nextSemesterOrder } from './semester-order.ts';
 import type { Repository } from '../repository/database.ts';
 import type { AllocationContext, DraftSummaryRecord } from '../repository/allocation-drafts.ts';
 import type { QuerySession } from '../repository/queries.ts';
+import { snapshotApplicationWarnings, type ApplicationWarning } from '../domain/application-warnings.ts';
 
 type DraftStatus = 'DRAFT' | 'FINALIZED' | 'ARCHIVED';
 type DraftMode = 'AUTO' | 'MANUAL';
@@ -68,7 +69,7 @@ export type DraftDetail = {
   courseSummary: ReturnType<typeof summarizeCourses>;
   isStale: boolean;
   inputChanges: InputChange[];
-  issues: { code: string; message: string; severity: 'WARNING' }[];
+  issues: ApplicationWarning[];
 };
 
 export class DraftNotFoundError extends Error {
@@ -194,7 +195,8 @@ export class DraftService {
         }),
         existingEnrollments: structuredClone(draft.inputSnapshot.existingEnrollments),
         currentEnrolledMembers: queries.allocation.currentEnrolledMembers({ semesterId: draft.semesterId }),
-        courseSummary: summarizeCourses(draft.inputSnapshot, items), isStale, inputChanges, issues: [],
+        courseSummary: summarizeCourses(draft.inputSnapshot, items), isStale, inputChanges,
+        issues: snapshotApplicationWarnings(draft.inputSnapshot),
       };
     });
   }

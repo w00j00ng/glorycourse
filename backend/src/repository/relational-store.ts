@@ -76,7 +76,7 @@ export const readRelationalStore = (db: DatabaseSync): DatabaseState => {
     import_batch_id AS importBatchId, sheet, row_number AS row FROM application_choice_source_refs
     ORDER BY application_choice_id, position`));
   const applications = all<Application>(db, `SELECT id, semester_id AS semesterId, member_id AS memberId,
-    ministry,
+    ministry, applicant_note AS applicantNote,
     application_order AS applicationOrder, application_order_status AS applicationOrderStatus,
     order_resolution AS orderResolution, order_resolution_note AS orderResolutionNote, revision,
     created_at AS createdAt, updated_at AS updatedAt FROM applications ORDER BY position`);
@@ -171,7 +171,7 @@ export const readDrafts = (db: DatabaseSync, draftId: string | null = null): { d
     FROM allocation_snapshot_semester_courses WHERE (? IS NULL OR allocation_draft_id = ?)
     ORDER BY allocation_draft_id, position`, draftId, draftId));
   const snapshotApplications = group(all<WithParent<Snapshot['applications'][number]>>(db, `SELECT allocation_draft_id AS parentId,
-    application_id AS id, member_id AS memberId, member_name AS memberName, ministry,
+    application_id AS id, member_id AS memberId, member_name AS memberName, ministry, applicant_note AS applicantNote,
     application_order AS applicationOrder, application_order_status AS applicationOrderStatus
     FROM allocation_snapshot_applications WHERE (? IS NULL OR allocation_draft_id = ?)
     ORDER BY allocation_draft_id, position`, draftId, draftId));
@@ -291,8 +291,7 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
     prepareChanges(db, 'allocation_drafts', data.allocationDrafts, previous.allocationDrafts);
     prepareChanges(db, 'finalization_receipts', data.finalizationReceipts, previous.finalizationReceipts,
       [['receipt_id', (item) => item.receipt.receiptId]]);
-    prepareChanges(db, 'application_choices', data.applicationChoices, previous.applicationChoices,
-      [['application_id', (item) => JSON.stringify([item.applicationId, item.semesterCourseId])]]);
+    prepareChanges(db, 'application_choices', data.applicationChoices, previous.applicationChoices);
     prepareChanges(db, 'applications', data.applications, previous.applications,
       [['semester_id', (item) => JSON.stringify([item.semesterId, item.memberId])]]);
     prepareChanges(db, 'import_batches', data.importBatches, previous.importBatches);
@@ -394,16 +393,16 @@ export const writeRelationalStore = (db: DatabaseSync, data: DatabaseState, prev
   writeImportBatches(db, data.importBatches, previous?.importBatches);
 
   const applicationInsert = prepareRow(db, 'applications', {
-    insert: `INSERT INTO applications (id, position, semester_id, member_id, application_order, application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at, ministry)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    read: `SELECT id, position, semester_id, member_id, application_order, application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at, ministry
+    insert: `INSERT INTO applications (id, position, semester_id, member_id, application_order, application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at, ministry, applicant_note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    read: `SELECT id, position, semester_id, member_id, application_order, application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at, ministry, applicant_note
       FROM applications WHERE id = ?`,
-    update: `UPDATE applications SET position = ?, semester_id = ?, member_id = ?, application_order = ?, application_order_status = ?, order_resolution = ?, order_resolution_note = ?, revision = ?, created_at = ?, updated_at = ?, ministry = ?
+    update: `UPDATE applications SET position = ?, semester_id = ?, member_id = ?, application_order = ?, application_order_status = ?, order_resolution = ?, order_resolution_note = ?, revision = ?, created_at = ?, updated_at = ?, ministry = ?, applicant_note = ?
       WHERE id = ?`,
   });
   changedRecords(data.applications, previous?.applications).forEach(({ item, position }) => applicationInsert.run(
     item.id, position, item.semesterId, item.memberId, item.applicationOrder, item.applicationOrderStatus,
-    item.orderResolution, item.orderResolutionNote, item.revision, item.createdAt, item.updatedAt, item.ministry,
+    item.orderResolution, item.orderResolutionNote, item.revision, item.createdAt, item.updatedAt, item.ministry, item.applicantNote ?? null,
   ));
   const choiceInsert = prepareRow(db, 'application_choices', {
     insert: `INSERT INTO application_choices (id, position, application_id, semester_course_id, preference, created_at, updated_at)
@@ -521,7 +520,7 @@ export const writeDrafts = (
     VALUES (?, ?, ?, ?, ?, ?)`);
   const snapshotApplicationInsert = db.prepare(`INSERT INTO allocation_snapshot_applications
     (allocation_draft_id, position, application_id, member_id, member_name, application_order,
-      application_order_status, ministry) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+      application_order_status, ministry, applicant_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const snapshotChoiceInsert = db.prepare(`INSERT INTO allocation_snapshot_choices
     (allocation_draft_id, position, choice_id, application_id, semester_course_id, preference)
     VALUES (?, ?, ?, ?, ?, ?)`);
@@ -562,7 +561,7 @@ export const writeDrafts = (
     if (replaceChildren(db, 'allocation_snapshot_applications', 'allocation_draft_id', draft.id,
       before?.inputSnapshot.applications, draft.inputSnapshot.applications)) draft.inputSnapshot.applications.forEach((item, itemPosition) => snapshotApplicationInsert.run(
       draft.id, itemPosition, item.id, item.memberId, item.memberName,
-      item.applicationOrder, item.applicationOrderStatus, item.ministry,
+      item.applicationOrder, item.applicationOrderStatus, item.ministry, item.applicantNote ?? null,
     ));
     if (replaceChildren(db, 'allocation_snapshot_choices', 'allocation_draft_id', draft.id,
       before?.inputSnapshot.choices, draft.inputSnapshot.choices)) draft.inputSnapshot.choices.forEach((item, itemPosition) => snapshotChoiceInsert.run(

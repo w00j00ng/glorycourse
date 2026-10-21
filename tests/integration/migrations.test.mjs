@@ -122,8 +122,8 @@ test('upgrades v0.2.2 ministries without losing values or making an unchanged dr
     } finally { db.close(); }
     const before = history(file);
     const result = await migrateDatabase(file);
-    assert.deepEqual(result.applied, ['1791158400_rename_student_ministry.up.sql']);
-    assert.deepEqual(history(file), [{ version: 1791158400, dirty: 0 }]);
+    assert.deepEqual(result.applied, baseNames.filter((name) => Number(name.slice(0, 10)) > 1791072000));
+    assert.deepEqual(history(file), [{ version: Number(baseNames.at(-1).slice(0, 10)), dirty: 0 }]);
     assert.deepEqual(history(result.backupFile), before);
     const upgraded = await openRepository(file, empty);
     const data = upgraded.snapshot();

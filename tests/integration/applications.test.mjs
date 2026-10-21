@@ -103,6 +103,89 @@ test('rejects invalid direct input without leaving resolved master records', asy
   assert.deepEqual(store.snapshot(), emptyStore());
 });
 
+test('an administrator preserves applicant notes and repeated ranked choices while editing an application', async () => {
+  const { service, store } = await openService();
+  const request = {
+    semesterName: '2026 봄', memberName: '메모 신청자', applicationOrder: 1,
+    applicantNote: '  첫 줄\n<script>일반 텍스트</script>  ',
+    choices: [
+      { courseName: '기초', preference: 1 },
+      { courseName: '기초', preference: 2 },
+      { courseName: '심화', preference: 3 },
+    ],
+  };
+  let saved = await service.create(request);
+  assert.equal(saved.applicantNote, '첫 줄\n<script>일반 텍스트</script>');
+  assert.deepEqual(saved.choices.map(({ courseName, preference }) => ({ courseName, preference })), request.choices);
+  assert.equal(service.getSemesterContext(saved.semesterId).semesterCourses.find(({ courseName }) => courseName === '기초').applicationCount, 1);
+  const { applicantNote: _note, ...withoutNote } = request;
+  const cases = [
+    { patch: withoutNote, expected: saved.applicantNote },
+    { patch: { ...request, applicantNote: null }, expected: null },
+    { patch: { ...request, applicantNote: '메모'.repeat(1000) }, expected: '메모'.repeat(1000) },
+    { patch: { ...request, applicantNote: '  ' }, expected: null },
+  ];
+  for (const { patch, expected } of cases) {
+    saved = await service.update(saved.id, { ...patch, expectedRevision: saved.revision });
+    assert.equal(service.get(saved.id).applicantNote, expected);
+    assert.equal(store.snapshot().applications[0].applicantNote, expected);
+  }
+  for (const applicantNote of ['가'.repeat(2001), 42, {}]) {
+    const before = store.snapshot();
+    await assert.rejects(service.update(saved.id, { ...request, applicantNote, expectedRevision: saved.revision }), ApplicationValidationError);
+    assert.deepEqual(store.snapshot(), before);
+  }
+  await assert.rejects(service.update(saved.id, { ...request, expectedRevision: saved.revision - 1 }), RevisionConflictError);
+});
+
+test('application warnings follow earlier course history and stay visible in filtered pages without blocking edits', async () => {
+  const { service, store } = await openService();
+  const request = {
+    semesterName: '대상', memberName: '재수강 신청자', applicationOrder: 1,
+    choices: [
+      { courseName: '과거 강의', preference: 1 }, { courseName: '과거 강의', preference: 2 },
+      { courseName: '미래 강의', preference: 3 }, { courseName: '순서 미정 강의', preference: 4 },
+    ],
+  };
+  const saved = await service.create(request);
+  await seedRepository(store, (data) => {
+    data.semesters[0].order = 2;
+    const stamp = { createdAt: data.applications[0].createdAt, updatedAt: data.applications[0].updatedAt };
+    for (const [id, order, name] of [['earlier', 1, '과거 강의'], ['future', 3, '미래 강의'], ['unknown', null, '순서 미정 강의']]) {
+      data.semesters.push({ id, name: id, nameKey: id, order, allocationInputRevision: 0, ...stamp });
+      const courseId = data.courses.find((course) => course.name === name).id;
+      data.semesterCourses.push({ id: `sc-${id}`, semesterId: id, courseId, capacity: 2, ...stamp });
+      data.enrollments.push({ id: `e-${id}`, semesterCourseId: `sc-${id}`, memberId: saved.memberId,
+        ministry: null, exceptionAcknowledgement: null, revision: 0, ...stamp });
+    }
+  });
+  const expected = [
+    { code: 'RETAKE', courseName: '과거 강의', preferences: [1, 2] },
+    { code: 'SEMESTER_ORDER_UNRESOLVED', courseName: '순서 미정 강의', preferences: [4] },
+  ];
+  const projection = (row) => row.warnings.map(({ code, courseName, preferences }) => ({ code, courseName, preferences })).sort((left, right) => left.preferences[0] - right.preferences[0]);
+  assert.deepEqual(projection(service.get(saved.id)), expected);
+  assert.deepEqual(projection(service.listPage({ page: 1, limit: 1, memberName: '재수강' }).items[0]), expected);
+  const edited = await service.update(saved.id, { ...request, applicantNote: '경고 확인 후에도 신청 허용', expectedRevision: saved.revision });
+  assert.deepEqual(projection(edited), expected);
+  await seedRepository(store, (data) => { data.enrollments = data.enrollments.filter(({ id }) => id !== 'e-earlier'); });
+  assert.deepEqual(projection(service.get(saved.id)), expected.slice(1));
+});
+
+test('an existing enrollment in the same unordered semester is not reported as unknown past history', async () => {
+  const { service, store } = await openService();
+  const saved = await service.create({ semesterName: '순서 미정', memberName: '현재 수강자', applicationOrder: 1,
+    choices: [{ courseName: '같은 강의', preference: 1 }] });
+  await seedRepository(store, (data) => {
+    data.semesters[0].order = null;
+    data.enrollments.push({ id: 'same-semester', semesterCourseId: saved.choices[0].semesterCourseId,
+      memberId: saved.memberId, ministry: null, exceptionAcknowledgement: null, revision: 0,
+      createdAt: data.applications[0].createdAt, updatedAt: data.applications[0].updatedAt });
+  });
+  assert.deepEqual(service.get(saved.id).warnings, []);
+  assert.deepEqual(service.list({ semesterId: saved.semesterId })[0].warnings, []);
+});
+
 test('accepts up to five preferences and atomically rejects a sixth in all input paths', async () => {
   const { service, store } = await openService();
   const request = (count) => ({
@@ -472,6 +555,7 @@ test('deletes every application and choice in one semester while preserving hist
   const before = store.snapshot();
   const preview = service.previewSemesterApplicationDeletion(spring.semesterId);
   assert.deepEqual(preview, { semesterName: '2026 봄', count: 2, ...store.version() });
+  const fallBeforeDeletion = service.get(fall.id);
 
   const result = await service.deleteSemesterApplications(spring.semesterId, {
     confirmationName: preview.semesterName, expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch,
@@ -479,7 +563,7 @@ test('deletes every application and choice in one semester while preserving hist
 
   assert.deepEqual(result, { deletedCount: 2 });
   assert.deepEqual(service.list({ semesterId: spring.semesterId }), []);
-  assert.deepEqual(service.get(fall.id), fall);
+  assert.deepEqual(service.get(fall.id), fallBeforeDeletion);
   const after = store.snapshot();
   assert.deepEqual(after.applicationChoices, before.applicationChoices.filter(({ applicationId }) => applicationId === fall.id));
   for (const key of ['members', 'courses', 'semesterCourses', 'enrollments', 'allocationDrafts', 'allocationDraftItems']) {

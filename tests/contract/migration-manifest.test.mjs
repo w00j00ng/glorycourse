@@ -9,6 +9,8 @@ import { inspectMigrationHistory } from '../../backend/src/storage/migrations.ts
 import { migrateDatabase } from '../../backend/src/bootstrap/database.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
+const current = JSON.parse(await readFile(new URL('../../schema/migrations/manifest.json', import.meta.url), 'utf8'));
+const futureVersion = current.targetVersion + 86400;
 const preserved = JSON.parse(await readFile(new URL('../../schema/migrations/legacy-manifest.json', import.meta.url), 'utf8'));
 
 test('generator and runtime agree on legacy metadata rejection and allow future up/down pairs', async () => {
@@ -42,8 +44,8 @@ test('generator and runtime agree on legacy metadata rejection and allow future 
       input.change(legacy);
       await writeFile(join(migrations, 'legacy-manifest.json'), JSON.stringify(legacy));
       if (input.future) {
-        await writeFile(join(migrations, '1791244800_future.up.sql'), 'CREATE TABLE future_data (value TEXT) STRICT;\n');
-        await writeFile(join(migrations, '1791244800_future.down.sql'), 'DROP TABLE future_data;\n');
+        await writeFile(join(migrations, `${futureVersion}_future.up.sql`), 'CREATE TABLE future_data (value TEXT) STRICT;\n');
+        await writeFile(join(migrations, `${futureVersion}_future.down.sql`), 'DROP TABLE future_data;\n');
       }
       const result = spawnSync(process.execPath, [script], { encoding: 'utf8' });
       assert.equal(result.status, input.valid ? 0 : 1, `${input.name}: ${result.error?.message ?? result.stderr}`);
@@ -51,7 +53,7 @@ test('generator and runtime agree on legacy metadata rejection and allow future 
         const check = spawnSync(process.execPath, [script, '--check'], { encoding: 'utf8' });
         assert.equal(check.status, 0, `${input.name}: ${check.error?.message ?? check.stderr}`);
         assert.deepEqual(await inspectMigrationHistory(file, migrations), {
-          databaseVersion: '1791158400', dirty: false, pending: input.future ? 1 : 0,
+          databaseVersion: String(current.targetVersion), dirty: false, pending: input.future ? 1 : 0,
         }, input.name);
       } else {
         assert.match(result.stderr, /legacy/i, input.name);

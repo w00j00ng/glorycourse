@@ -104,7 +104,9 @@ down은 서버 종료 후 명시적 CLI로 수행하며 자동 실행하지 않�
 
 ## C-10 engineVersion
 
-첫 배정 엔진 버전은 `1.0.0`으로 시작한다. replay는 저장된 inputSnapshot·policyVersion·policySettings·seed와 정확히 같은 engineVersion 구현이 있을 때만 재현으로 표시한다. 지원하지 않는 버전은 명시적으로 재현 불가를 반환하며 live 자료로 대신 계산하지 않는다.
+새 배정 엔진 버전은 `2.0.0`이다. 전체 신청자에 대해 미수강 희망, 재수강 희망, 미수강·비희망 대체 배정을 순서대로 수행한다. 각 희망 단계에서는 기존 정책의 신규·순위 우선 비교와 seed를 사용한다. 같은 강좌를 여러 순위에 입력하면 원본은 모두 보존하고 가장 높은 순위만 평가한다. 나머지는 `DUPLICATE_CHOICE_SKIPPED`, 앞선 단계에서 이미 배정되면 `ALLOCATED_TO_HIGHER_PRIORITY`, 재수강 희망에 배정되면 `RETAKE_PREFERENCE_ALLOCATED`를 기록한다.
+
+기존 `1.0.0` 초안은 원래 스냅샷·자동 결과·사유를 유지하며 조회·수정·확정할 수 있다. replay는 저장된 inputSnapshot·policyVersion·policySettings·seed와 정확히 같은 engineVersion 구현이 있을 때만 재현으로 표시한다. 현재 구현은 `1.0.0` replay를 명시적으로 재현 불가로 반환하며 live 자료나 새 엔진으로 대신 계산하지 않는다.
 
 ## JSON Schema 밖의 불변조건
 
@@ -137,7 +139,7 @@ down은 서버 종료 후 명시적 CLI로 수행하며 자동 실행하지 않�
 
 ## C-13 Excel 양식과 현황
 
-신청 양식 `GET /applications/template`은 `semesterId`를 요구한다. 선택 학기의 이름·순서를 `학기`, 해당 학기의 강좌명·정원을 `개설강좌` 시트에 포함한다. 강좌가 없으면 빈 시트이며 이전 학기 자료로 자동 대체하지 않는다. 신청은 학기·회원당 한 행이며 기본 양식에는 선택 입력인 `학생 소속`과 `1순위 강좌`부터 `4순위 강좌`까지 제공한다. 사용자가 오른쪽에 `5순위 강좌` 열을 추가할 수 있으며 빈 순위는 건너뛴다. 파서는 순위 열을 반복 처리하고 `MAX_CHOICES_PER_APPLICATION = 5` 상수로 최대 개수와 순위를 제약한다. 2~5순위는 선택 사항이며 희망 강좌는 최소 1개다. 직접 입력·API·자동 배정도 선택지와 순위를 최대 5개로 제한한다. 신청·이력 기본 양식 버전은 모두 `3` (`TEMPLATE_VERSIONS`)이며 소속 열이 없는 버전 `2`도 지원한다. 보관·반영 기록에는 원본 양식 버전을 유지하고 신청 현황과 보관 원본에는 필요한 순위 열을 포함한다.
+신청 양식 `GET /applications/template`은 `semesterId`를 요구한다. 선택 학기의 이름·순서를 `학기`, 해당 학기의 강좌명·정원을 `개설강좌` 시트에 포함한다. 강좌가 없으면 빈 시트이며 이전 학기 자료로 자동 대체하지 않는다. 신청은 학기·회원당 한 행이며 기본 열 순서는 `학기명·회원명·학생 소속·신청순서·신청자 메모·1순위 강좌·2순위 강좌·3순위 강좌·4순위 강좌`다. 사용자가 오른쪽에 `5순위 강좌` 열을 추가할 수 있으며 빈 순위와 반복 강좌의 원래 순위는 유지한다. 같은 순위 중복은 거절한다. 파서는 순위 열을 반복 처리하고 `MAX_CHOICES_PER_APPLICATION = 5` 상수로 최대 개수와 순위를 제약한다. 2~5순위는 선택 사항이며 희망 강좌는 최소 1개다. 직접 입력·API·자동 배정도 선택지와 순위를 최대 5개로 제한한다. 신청 기본 양식은 `4`, 이력은 `3` (`TEMPLATE_VERSIONS`)이며 신청은 기존 `2`·`3`, 이력은 `2`도 지원한다. 보관·반영 기록과 원본 재내보내기는 원본 버전·열 유무·필요한 순위 열을 유지한다.
 
 학생 소속의 시점별 저장과 수정 규칙은 [C-14](#c-14-학생-소속의-시점별-보관)를 따른다.
 
@@ -159,7 +161,7 @@ down은 서버 종료 후 명시적 CLI로 수행하며 자동 실행하지 않�
 | `allocation_draft_items` | 신청에서 복사하거나 수동 추가·수정한 초안 항목의 소속 |
 | `enrollments` | 확정한 초안 항목에서 복사하거나 직접·Excel 입력한 이력의 소속 |
 
-[소속 추가 up](../schema/migrations/1791072000_add_student_affiliation.up.sql)은 위 다섯 테이블에 nullable 컬럼을 추가한다. [명칭 변경 up](../schema/migrations/1791158400_rename_student_ministry.up.sql)은 기존 컬럼을 `ministry`로 바꾸며 저장된 값·null·스냅샷을 유지한다. 현재 DB 목표 버전은 `1791158400`이다. up/down 전환에서 기존 파일명을 바꾸되 소속 관련 up의 내용·checksum은 보존하며, 원래 파일명·checksum은 고정된 기존 metadata와 업데이트 전 안전 사본에 남긴다.
+[소속 추가 up](../schema/migrations/1791072000_add_student_affiliation.up.sql)은 위 다섯 테이블에 nullable 컬럼을 추가한다. [명칭 변경 up](../schema/migrations/1791158400_rename_student_ministry.up.sql)은 기존 컬럼을 `ministry`로 바꾸며 저장된 값·null·스냅샷을 유지한다. 현재 DB 목표 버전은 신청자 메모·반복 희망을 추가한 `1792540800`이다. up/down 전환에서 기존 파일명을 바꾸되 소속 관련 up의 내용·checksum은 보존하며, 원래 파일명·checksum은 고정된 기존 metadata와 업데이트 전 안전 사본에 남긴다.
 
 fingerprint 직렬화는 v0.2.2의 내부 키 `affiliation`을 유지하고 null 값을 생략한다. 이 키는 해시 호환 형식이며 저장·API 필드명은 `ministry`다. 명칭 변경만으로 기존 초안을 stale 처리하지 않으며 실제 소속 변경은 계속 감지한다.
 
@@ -170,3 +172,11 @@ fingerprint 직렬화는 v0.2.2의 내부 키 `affiliation`을 유지하고 null
 초안 항목의 자동 복원은 최종 결정·강좌를 저장된 자동 결과로 되돌리고 관리자 변경 사유를 지운다. 해당 항목의 소속은 유지하며 생성 당시 신청 소속으로 되돌리지 않는다.
 
 Excel은 소속 없는 버전 `2`를 공란으로 읽는다. 기존 신청과 소속만 달라도 충돌이며 명시적 파일 신청 교체에서 파일의 소속을 반영한다. 기존 이력과 소속이 다르면 `ENROLLMENT_MINISTRY_CONFLICT`로 전체 반영을 막고 이력 화면에서 수정하도록 안내한다. 같은 이력·소속의 재업로드는 기존 이력·메모를 유지한다.
+
+## 신청자 메모와 반복 희망
+
+신청별 `applicantNote`는 선택 입력인 nullable 문자열이며 최대 2,000자다. 앞뒤 공백을 제거하고 내부 줄바꿈을 유지한다. SQL의 `applications.applicant_note`와 `allocation_snapshot_applications.applicant_note`에 각각 저장하며 관리자 확정 사유·이력 메모로 복사하지 않는다. 생성 요청의 생략·공란은 null, 수정 요청의 생략은 기존 값 유지, 명시적 null·공란은 삭제다. Excel `신청자 메모` 열이 없으면 import candidate에서 필드를 생략해 교체 시 기존 메모를 유지하고, 열이 있는 공란은 null로 반영한다. 메모만 달라도 신청 충돌로 검토한다.
+
+초안은 생성 당시 메모를 보관하며 신청 메모 변경을 stale 검사에 포함한다. fingerprint는 null·생략 메모를 제외해 기존 메모 없는 초안과 호환하고, 실제 메모 변경은 감지한다. 조회 응답의 `warnings`와 초안 상세 `issues`는 `{code, message, severity: WARNING, memberId, semesterCourseId, courseName, preferences}` 형식의 비차단 경고다. 과거 학기 수강은 `RETAKE`, 관련 학기 순서를 판단할 수 없으면 `SEMESTER_ORDER_UNRESOLVED`를 강좌별로 반환하고 반복 희망의 순위를 함께 표시한다. 기존 배정 확정 경고 승인·관리자 메모 절차는 유지한다.
+
+같은 강좌의 서로 다른 순위 입력을 허용하도록 live 선택의 강좌 중복 UNIQUE 제약만 제거하고 입력된 선택 ID·순위·출처를 보존한다. [down](../schema/migrations/1792540800_application_notes_repeated_choices.down.sql)은 반복 강좌가 있으면 제약 복원에 실패하고 전체 업무 DDL을 롤백한다. 중복 행을 자동 삭제하거나 순위를 바꾸지 않으며 자료를 보존하고 dirty 상태의 복구를 요구한다. 반복 강좌가 없을 때의 명시적 down은 신청·스냅샷의 메모 컬럼을 제거하므로 실행 전에 안전 사본을 확인한다.

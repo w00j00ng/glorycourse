@@ -6,9 +6,9 @@ import { issueText } from './issue-view.js';
  *   previewId: string, storeRevision: number, storeEpoch: string, warningDigest: string,
  *   sourceRowCount: number, insertCandidates: number, identicalRows: number, conflicts: number, expiresAt: string,
  *   issues: { code: string, severity: 'ERROR' | 'WARNING' | 'INFO', message: string,
- *     blockingStages: string[], source?: { sheet?: string, row?: number, column?: string } }[],
- *   applications: { semesterName: string, memberName: string, ministry: string | null, applicationOrder: number | null,
- *     applicationOrderStatus: string, choices: { courseName: string, preference: number | null }[] }[],
+ *     blockingStages: string[], source?: { sheet?: string, row?: number, column?: string }, detail?: { preferences?: number[] } }[],
+ *   applications: { semesterName: string, memberName: string, ministry: string | null, applicantNote?: string | null, applicationOrder: number | null,
+ *     applicationOrderStatus: string, choices: { courseName: string, preference: number | null, sourceRefs: { sheet: string, row: number }[] }[] }[],
  *   enrollments: { semesterName: string, memberName: string, ministry: string | null, courseName: string }[],
  *   contextChanges: { entity: string, status: string, semesterName: string, courseName?: string,
  *     field: string, fileValue: number | null }[],
@@ -65,6 +65,12 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
         : candidate.courseName || '강좌 미정');
       card.title = `${title.textContent} · ${detail.textContent}`;
       card.append(title, detail);
+      if ('choices' in candidate) {
+        const note = document.createElement('small');
+        note.textContent = `신청자 메모: ${candidate.applicantNote === undefined ? '기존 메모 유지' : candidate.applicantNote ?? '—'}`;
+        note.style.whiteSpace = 'pre-wrap';
+        card.append(note);
+      }
       return card;
     }));
   };
@@ -152,6 +158,16 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     byId('import-identical-count').textContent = String(preview.identicalRows);
     byId('import-conflict-count').textContent = String(preview.conflicts);
     byId('import-preview-status').textContent = `아직 저장되지 않음 · ${new Date(preview.expiresAt).toLocaleTimeString()}까지 유효`;
+    /** @type {Map<string, { memberName: string, courseName: string }>} */
+    const applicationSources = new Map();
+    for (const application of preview.applications) {
+      for (const choice of application.choices) {
+        for (const source of choice.sourceRefs) {
+          applicationSources.set(JSON.stringify([source.sheet, source.row, `${choice.preference}순위 강좌`]),
+            { memberName: application.memberName, courseName: choice.courseName });
+        }
+      }
+    }
     byId('import-issues').replaceChildren(...(
       preview.issues.length ? preview.issues : [{ code: 'NO_ISSUES', severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]
     ).map((issue) => {
@@ -159,7 +175,9 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       item.dataset.severity = issue.severity;
       const text = document.createElement('span');
       text.className = 'import-issue-text';
-      text.textContent = text.title = issueText(issue);
+      const source = 'source' in issue ? issue.source : undefined;
+      text.textContent = text.title = issueText(issue,
+        applicationSources.get(JSON.stringify([source?.sheet, source?.row, source?.column])));
       item.append(text);
       if (issue.severity === 'INFO') {
         item.classList.add('information');
@@ -191,7 +209,10 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     let applied = false;
     try {
       let invalidOrder = '';
-      const note = await reviewWarnings(preview);
+      const review = preview.kind === 'APPLICATIONS' ? { ...preview, issues: preview.issues.filter((issue) => (
+        !(['RETAKE', 'SEMESTER_ORDER_UNRESOLVED'].includes(issue.code) && issue.blockingStages.length === 0)
+      )) } : preview;
+      const note = await reviewWarnings(review);
       if (note === null || state.importPreview !== preview) return;
       /** @type {Record<string, unknown>[]} */
       const resolutions = preview.kind === 'ENROLLMENTS'

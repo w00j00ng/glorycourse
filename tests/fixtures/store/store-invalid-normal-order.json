@@ -10,7 +10,7 @@
     "memberId": "member-1",
     "ministry": null,
     "applicationOrder": null,
-    "applicationOrderStatus": "NORMAL",
+    "applicationOrderStatus": "NORMAL", "applicantNote": null,
     "orderResolution": "SOURCE_AGREED",
     "orderResolutionNote": null,
     "revision": 0,

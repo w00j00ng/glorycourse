@@ -1,8 +1,10 @@
+import type { ApplicationWarning } from './application-warnings.ts';
 import type { ApplicationChoiceRecord, ApplicationRecord, EnrollmentRecord } from './records.ts';
 
 export type ApplicationView = Pick<ApplicationRecord,
-  'id' | 'semesterId' | 'memberId' | 'ministry' | 'applicationOrder' | 'applicationOrderStatus' | 'orderResolution' | 'revision'
+  'id' | 'semesterId' | 'memberId' | 'ministry' | 'applicantNote' | 'applicationOrder' | 'applicationOrderStatus' | 'orderResolution' | 'revision'
 > & {
+  warnings: ApplicationWarning[];
   semesterName: string;
   memberName: string;
   choices: (Pick<ApplicationChoiceRecord, 'id' | 'semesterCourseId' | 'preference'> & { courseName: string })[];

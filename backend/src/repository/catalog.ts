@@ -204,7 +204,7 @@ export class CatalogQueries {
       FROM semester_courses AS sc
       JOIN courses AS c ON c.id = sc.course_id
       LEFT JOIN (
-        SELECT ac.semester_course_id, COUNT(*) AS application_count FROM application_choices AS ac
+        SELECT ac.semester_course_id, COUNT(DISTINCT ac.application_id) AS application_count FROM application_choices AS ac
         JOIN semester_courses AS target ON target.id = ac.semester_course_id
         WHERE target.semester_id = ? GROUP BY ac.semester_course_id
       ) AS a ON a.semester_course_id = sc.id

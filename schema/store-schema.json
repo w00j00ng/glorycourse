@@ -129,8 +129,9 @@
     "application": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "semesterId", "memberId", "ministry", "applicationOrder", "applicationOrderStatus", "orderResolution", "orderResolutionNote", "revision", "createdAt", "updatedAt"],
+      "required": ["applicantNote", "id", "semesterId", "memberId", "ministry", "applicationOrder", "applicationOrderStatus", "orderResolution", "orderResolutionNote", "revision", "createdAt", "updatedAt"],
       "properties": {
+        "applicantNote": { "type": ["string", "null"], "maxLength": 2000 },
         "id": { "$ref": "#/$defs/id" },
         "semesterId": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
@@ -243,8 +244,9 @@
     "snapshotApplication": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "memberId", "memberName", "ministry", "applicationOrder", "applicationOrderStatus"],
+      "required": ["applicantNote", "id", "memberId", "memberName", "ministry", "applicationOrder", "applicationOrderStatus"],
       "properties": {
+        "applicantNote": { "type": ["string", "null"], "maxLength": 2000 },
         "id": { "$ref": "#/$defs/id" },
         "memberId": { "$ref": "#/$defs/id" },
         "memberName": { "type": "string", "minLength": 1, "maxLength": 200 },

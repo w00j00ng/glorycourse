@@ -7,6 +7,7 @@ import {
   MAX_ALLOCATION_APPLICANTS,
   allocate,
 } from '../../backend/src/allocation/engine.ts';
+import { allocationFingerprint, allocationInputChanges } from '../../backend/src/allocation/snapshot.ts';
 
 const policy = (preferenceMode = 'NEW_FIRST') => ({
   preferenceMode,
@@ -90,6 +91,155 @@ test('distinguishes new-first from rank-first preference allocation', () => {
   assert.equal(tied.items.find(({ autoDecision }) => autoDecision === 'SELECTED').memberId, expectedWinner);
 });
 
+test('allocates all untaken desires, then retakes, then untaken fallback in both policies', () => {
+  const requests = [
+    {
+      name: 'an untaken fourth choice wins against a first-choice retake',
+      courses: [course('A', 1)],
+      applications: [application('retake', 1, [['A', 1]]), application('untaken', 2, [['A', 4]])],
+      past: [past('retake', 'course-A')],
+      expected: [['retake', null, 'NO_FALLBACK_COURSE'], ['untaken', 'A', 'PREFERENCE_ALLOCATED']],
+    },
+    {
+      name: 'an applicant gets their untaken second choice before their first-choice retake',
+      courses: [course('A', 1), course('B', 1)],
+      applications: [application('member', 1, [['A', 1], ['B', 2]])],
+      past: [past('member', 'course-A')],
+      expected: [['member', 'B', 'PREFERENCE_ALLOCATED']],
+      expectedAttempts: [['A', 1, 'NOT_EVALUATED', 'ALLOCATED_TO_HIGHER_PRIORITY'], ['B', 2, 'SELECTED', 'PREFERENCE_ALLOCATED']],
+    },
+    {
+      name: 'a desired retake wins before another applicant gets the course by fallback',
+      courses: [course('A', 1), course('P', 0)],
+      applications: [application('retake', 2, [['A', 1]]), application('fallback', 1, [['P', 1]])],
+      past: [past('retake', 'course-A')],
+      expected: [['fallback', null, 'NO_FALLBACK_COURSE'], ['retake', 'A', 'RETAKE_PREFERENCE_ALLOCATED']],
+    },
+    {
+      name: 'a future enrollment does not turn the desired course into a retake',
+      courses: [course('A', 1)],
+      applications: [application('future', 1, [['A', 1]])],
+      past: [past('future', 'course-A', 3)],
+      expected: [['future', 'A', 'PREFERENCE_ALLOCATED']],
+    },
+  ];
+  for (const mode of ['NEW_FIRST', 'RANK_FIRST']) {
+    for (const request of requests) {
+      const result = allocate(snapshot(request), policy(mode), 'stage-seed');
+      assert.deepEqual(result.items.map(({ memberId, autoSemesterCourseId, autoReasonCode }) => (
+        [memberId, autoSemesterCourseId, autoReasonCode]
+      )), request.expected, `${mode}: ${request.name}`);
+      if (request.expectedAttempts) {
+        assert.deepEqual(result.items[0].autoReasonDetail.preferenceAttempts.map((attempt) => (
+          [attempt.semesterCourseId, attempt.preference, attempt.decision, attempt.reasonCode]
+        )), request.expectedAttempts, `${mode}: ${request.name}`);
+      }
+    }
+  }
+  assert.equal(allocate(snapshot(requests[0]), policy(), 'version-seed').engineVersion, '2.0.0');
+});
+
+test('preserves duplicate choices and ranks while granting one competition entry per course', () => {
+  for (const mode of ['NEW_FIRST', 'RANK_FIRST']) {
+    for (const capacity of [0, 1]) {
+      for (const seed of ['duplicate-1', 'duplicate-2', 'duplicate-3']) {
+        const request = {
+          courses: [course('A', capacity), course('B', 2)],
+          applications: [
+            application('member', 1, [['A', 1], ['A', 2], ['B', 3]]),
+            application('competitor', 1, [['A', 1], ['B', 2]]),
+          ],
+        };
+        const input = snapshot(request);
+        const before = structuredClone(input);
+        const deduplicated = structuredClone(input);
+        deduplicated.choices = deduplicated.choices.filter(({ id }) => id !== 'choice-member-1');
+        const result = allocate(input, policy(mode), seed);
+        const expected = allocate(deduplicated, policy(mode), seed);
+        assert.deepEqual(result.items.map(({ memberId, autoSemesterCourseId }) => [memberId, autoSemesterCourseId]),
+          expected.items.map(({ memberId, autoSemesterCourseId }) => [memberId, autoSemesterCourseId]));
+        const attempts = itemFor(result, 'member').autoReasonDetail.preferenceAttempts;
+        assert.deepEqual(attempts.map(({ preference }) => preference), [1, 2, 3]);
+        assert.equal(attempts[1].reasonCode, 'DUPLICATE_CHOICE_SKIPPED');
+        assert.equal(attempts[1].decision, 'NOT_EVALUATED');
+        if (capacity === 0) assert.equal(attempts[2].decision, 'SELECTED');
+        const permuted = structuredClone(input);
+        permuted.applications.reverse();
+        permuted.choices.reverse();
+        permuted.semesterCourses.reverse();
+        assert.deepEqual(allocate(permuted, policy(mode), seed), result);
+        assert.deepEqual(input, before);
+      }
+    }
+  }
+});
+
+test('retake competition keeps numeric order and the existing seeded student tie without duplicate lottery weight', () => {
+  for (const mode of ['NEW_FIRST', 'RANK_FIRST']) {
+    for (const orders of [[10, 2], [1, 1]]) {
+      for (const seed of ['retake-tie-1', 'retake-tie-2']) {
+        const input = snapshot({
+          courses: [course('A', 1)],
+          applications: [application('A', orders[0], [['A', 1], ['A', 2]]), application('B', orders[1], [['A', 1]])],
+          past: [past('A', 'course-A'), past('B', 'course-A')],
+        });
+        const expectedWinner = orders[0] === orders[1]
+          ? Buffer.compare(studentKey(seed, 'preference-student', 'A'), studentKey(seed, 'preference-student', 'B')) < 0 ? 'A' : 'B'
+          : 'B';
+        const result = allocate(input, policy(mode), seed);
+        assert.equal(result.items.find(({ autoDecision }) => autoDecision === 'SELECTED').memberId, expectedWinner);
+        assert.equal(itemFor(result, expectedWinner).autoReasonCode, 'RETAKE_PREFERENCE_ALLOCATED');
+        assert.equal(itemFor(result, 'A').autoReasonDetail.preferenceAttempts[1].reasonCode, 'DUPLICATE_CHOICE_SKIPPED');
+        const permuted = structuredClone(input);
+        permuted.applications.reverse();
+        permuted.choices.reverse();
+        permuted.relevantPastEnrollments.reverse();
+        assert.deepEqual(allocate(permuted, policy(mode), seed), result);
+      }
+    }
+  }
+});
+
+test('includes applicant notes in semantic changes while retaining legacy null-note fingerprints', () => {
+  const input = snapshot({ courses: [course('A', 1)], applications: [application('member', 1, [['A', 1]])] });
+  const fingerprintPolicy = { policyId: 'policy', policyVersion: '1', settings: policy() };
+  const legacyFingerprint = allocationFingerprint(input, fingerprintPolicy);
+  const nullNote = structuredClone(input);
+  nullNote.applications[0].applicantNote = null;
+  assert.equal(allocationFingerprint(nullNote, fingerprintPolicy), legacyFingerprint);
+  const annotated = structuredClone(input);
+  annotated.applications[0].applicantNote = '오전 수업을 희망합니다';
+  assert.notEqual(allocationFingerprint(annotated, fingerprintPolicy), legacyFingerprint);
+  assert.deepEqual(allocationInputChanges(input, annotated), [{ code: 'APPLICATIONS_CHANGED' }]);
+});
+
+test('warns once per repeated course using only earlier history and reports unresolved matching order', async () => {
+  const { applicationWarnings } = await import('../../backend/src/domain/application-warnings.ts');
+  const choices = [
+    { semesterCourseId: 'A', courseId: 'course-A', courseName: '기초', preference: 1 },
+    { semesterCourseId: 'A', courseId: 'course-A', courseName: '기초', preference: 3 },
+    { semesterCourseId: 'B', courseId: 'course-B', courseName: '심화', preference: 2 },
+  ];
+  const requests = [
+    { semesterOrder: 2, history: [{ courseId: 'course-A', semesterOrder: 1 }], expected: [['RETAKE', 'A', [1, 3]]] },
+    { semesterOrder: 2, history: [{ courseId: 'course-A', semesterOrder: 3 }], expected: [] },
+    { semesterOrder: 2, history: [{ courseId: 'course-A', semesterOrder: 2 }], expected: [] },
+    { semesterOrder: 2, history: [{ courseId: 'course-A', semesterOrder: null }], expected: [['SEMESTER_ORDER_UNRESOLVED', 'A', [1, 3]]] },
+    { semesterOrder: null, history: [{ courseId: 'course-A', semesterOrder: 1 }], expected: [['SEMESTER_ORDER_UNRESOLVED', 'A', [1, 3]]] },
+    { semesterOrder: 2, history: [{ courseId: 'unrelated', semesterOrder: null }], expected: [] },
+  ];
+  for (const request of requests) {
+    const warnings = applicationWarnings({ memberId: 'member', choices, ...request });
+    assert.deepEqual(warnings.map(({ code, semesterCourseId, preferences }) => [code, semesterCourseId, preferences]), request.expected);
+    for (const warning of warnings) {
+      assert.equal(warning.memberId, 'member');
+      assert.equal(warning.severity, 'WARNING');
+      assert.equal(warning.courseName, '기초');
+      assert.match(warning.message, /1.*3/);
+    }
+  }
+});
+
 test('uses numeric application order for both preferred and fallback course competition', () => {
   const orders = [10, 1, 20, 2, 11];
   const cases = [
@@ -134,7 +284,7 @@ test('uses an augmenting path for fallback and distinguishes no candidate from c
     applications: [
       application('A', 1, [['P', 1]]),
       application('B', 2, [['P', 1]]),
-      application('C', 3, [['P', 1], ['X', 2]]),
+      application('C', 3, [['P', 1]]),
     ],
     past: [past('A', 'unrelated'), past('B', 'unrelated'), past('C', 'course-X')],
   });
@@ -174,7 +324,7 @@ test('reserves current enrollments and records capacity and retake reasons', () 
     reasonCode: 'ALREADY_ENROLLED',
   }]);
   assert.equal(itemFor(result, 'A').autoReasonDetail.preferenceAttempts[0].reasonCode, 'CAPACITY_FULL');
-  assert.equal(itemFor(result, 'B').autoReasonDetail.preferenceAttempts[0].reasonCode, 'ALREADY_TAKEN');
+  assert.equal(itemFor(result, 'B').autoReasonDetail.preferenceAttempts[0].reasonCode, 'CAPACITY_FULL');
   assert.ok(itemFor(result, 'B').autoReasonDetail.fallback.stageCandidateSemesterCourseIds.includes('Y'));
   assert.deepEqual(
     result.courseSummary.find(({ semesterCourseId }) => semesterCourseId === 'X'),
@@ -208,8 +358,8 @@ test('never moves preference or current-enrollment assignments during fallback',
   assert.equal(itemFor(preferenceFixed, 'B').autoReasonCode, 'NO_FALLBACK_COURSE');
 
   const existingFixed = allocate(snapshot({
-    courses: [course('X', 1)],
-    applications: [],
+    courses: [course('X', 1), course('Y', 1)],
+    applications: [application('C', 1, [['Y', 1]])],
     existing: [
       { id: 'existing-1', memberId: 'C', memberName: 'C', semesterCourseId: 'X' },
       { id: 'existing-2', memberId: 'D', memberName: 'D', semesterCourseId: 'X' },
@@ -251,6 +401,10 @@ test('rejects unresolved inputs and applicant counts over the published limit', 
   for (const [choices, expected] of [
     [[...fiveChoices, ['C6', 6]], 'APPLICATION_CHOICE_LIMIT'],
     [[['C6', 6]], 'PREFERENCE_UNRESOLVED'],
+    [[['C1', 1], ['C1', 1]], 'PREFERENCE_UNRESOLVED'],
+    [[['C1', 1], ['C2', 1]], 'PREFERENCE_UNRESOLVED'],
+    [[['C1', 0]], 'PREFERENCE_UNRESOLVED'],
+    [[['C1', null]], 'PREFERENCE_UNRESOLVED'],
   ]) {
     const request = snapshot({ courses, applications: [application('A', 1, choices)] });
     assert.throws(() => allocate(request, policy(), 'sixth-seed'), (error) => (

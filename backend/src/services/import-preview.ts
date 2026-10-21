@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
+import { applicationWarnings } from '../domain/application-warnings.ts';
 import {
   extractRawRows,
   exportRawRows,
@@ -33,6 +34,7 @@ export type ApplicationCandidate = {
   semesterName: string;
   memberName: string;
   ministry: string | null;
+  applicantNote?: string | null;
   applicationOrder: number | null;
   applicationOrderStatus: ApplicationStatus;
   choices: Array<{
@@ -237,7 +239,7 @@ const buildPreview = (
 };
 
 const analyzeApplications = (data: ImportContext, rawRows: RawRow[], mode: ImportMode) => {
-  const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강신청');
+  const sourceRows = rawRows.filter(({ sheet, row }) => sheet === '수강신청' && row > 1);
   const issues: ImportIssue[] = [];
   const seen = new Set<string>();
   for (const row of sourceRows) {
@@ -272,7 +274,8 @@ const analyzeApplications = (data: ImportContext, rawRows: RawRow[], mode: Impor
       || candidate.choices.some(({ preference }) => preference === null)
       || !candidate.semesterName
       || !candidate.memberName
-      || (candidate.ministry?.length ?? 0) > 200;
+      || (candidate.ministry?.length ?? 0) > 200
+      || (candidate.applicantNote?.length ?? 0) > 2000;
     const existing = findApplication(data, candidate.semesterName, candidate.memberName);
     candidate.removedCourseNames = existing && mode === 'REPLACE_APPLICATION'
       ? removedCourseNames(data, existing, candidate)
@@ -280,6 +283,7 @@ const analyzeApplications = (data: ImportContext, rawRows: RawRow[], mode: Impor
     if (!existing && !qualityConflict) insertCandidates += 1;
     else if (existing && applicationMatches(data, existing, candidate)) identicalRows += candidate.sourceRowCount;
     else conflicts += 1;
+    issues.push(...candidateWarnings(data, candidate, contextChanges));
   }
   return {
     sourceRowCount: sourceRows.length,
@@ -297,6 +301,10 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   const semesterName = clean(first.cells['학기명']);
   const memberName = clean(first.cells['회원명']);
   const ministry = clean(first.cells['학생 소속']) || null;
+  const applicantNote = '신청자 메모' in first.cells ? clean(first.cells['신청자 메모']) || null : undefined;
+  if (applicantNote && applicantNote.length > 2000) issues.push(requiredRowIssue(
+    'APPLICANT_NOTE_TOO_LONG', '신청자 메모는 2000자 이내로 입력하세요.', first, '신청자 메모',
+  ));
   if (ministry && ministry.length > 200) issues.push(requiredRowIssue(
     'MINISTRY_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', first, '학생 소속',
   ));
@@ -315,17 +323,11 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   }
 
   const choices: ApplicationCandidate['choices'] = [];
-  const seenCourses = new Set<string>();
   for (const [column, value] of Object.entries(first.cells)) {
     const match = /^(\d+)순위 강좌$/.exec(column);
     if (!match) continue;
     const courseName = clean(value);
     if (!courseName) continue;
-    const key = nameKey(courseName);
-    if (seenCourses.has(key)) issues.push(requiredRowIssue(
-      'DUPLICATE_CHOICE_COURSE', 'Application course choice is duplicated', first, column,
-    ));
-    seenCourses.add(key);
     choices.push({ courseName, preference: Number(match[1]), sourceRefs: [{ sheet: first.sheet, row: first.row }] });
   }
   if (choices.length > MAX_CHOICES_PER_APPLICATION || choices.some(({ preference }) => (
@@ -338,6 +340,7 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
     semesterName,
     memberName,
     ministry,
+    ...(applicantNote !== undefined ? { applicantNote } : {}),
     applicationOrder,
     applicationOrderStatus,
     choices,
@@ -347,7 +350,7 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
 };
 
 const analyzeEnrollments = (data: ImportContext, rawRows: RawRow[]) => {
-  const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강이력');
+  const sourceRows = rawRows.filter(({ sheet, row }) => sheet === '수강이력' && row > 1);
   const issues: ImportIssue[] = [];
   const contextChanges = contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '개설강좌'), 'SEMESTER_COURSE', issues, 'ENROLLMENTS');
   const candidates = sourceRows.map((row): EnrollmentCandidate => {
@@ -561,7 +564,7 @@ const validateMetadata = (workbook: import('@excel.js/exceljs').Workbook, kind: 
   if (
     !metadata
     || metadata.getCell('A1').text !== 'templateVersion'
-    || !['2', TEMPLATE_VERSIONS[kind]].includes(metadata.getCell('B1').text)
+    || !['2', '3', TEMPLATE_VERSIONS[kind]].includes(metadata.getCell('B1').text)
     || metadata.getCell('A2').text !== 'kind'
     || metadata.getCell('B2').text !== kind
   ) throw new WorkbookValidationError([{
@@ -635,6 +638,7 @@ const applicationMatches = (
     application.applicationOrderStatus !== candidate.applicationOrderStatus
     || application.applicationOrder !== candidate.applicationOrder
     || application.ministry !== candidate.ministry
+    || (candidate.applicantNote !== undefined && application.applicantNote !== candidate.applicantNote)
   ) return false;
   const actual = data.applicationChoices
     .filter((choice) => choice.applicationId === application.id)
@@ -684,6 +688,50 @@ const removedCourseNames = (
 const warningDigest = (issues: ImportIssue[]): string => createHash('sha256')
   .update(JSON.stringify(issues.filter(({ severity }) => severity === 'WARNING')))
   .digest('hex');
+
+const candidateWarnings = (
+  data: ImportContext,
+  candidate: ApplicationCandidate,
+  changes: ImportContextChange[],
+): ImportIssue[] => {
+  const member = data.members.find(({ nameKey: key }) => key === nameKey(candidate.memberName));
+  if (!member) return [];
+  const semester = data.semesters.find(({ nameKey: key }) => key === nameKey(candidate.semesterName));
+  const change = changes.find((change) => change.entity === 'SEMESTER'
+    && nameKey(change.semesterName) === nameKey(candidate.semesterName));
+  const semesterOrders = change?.status === 'NEW' ? [change.fileValue]
+    : change?.status === 'EXISTING_CONFLICT' ? [semester?.order ?? null, change.fileValue]
+      : [semester?.order ?? null];
+  const choices = candidate.choices.flatMap((choice) => {
+    const course = data.courses.find(({ nameKey: key }) => key === nameKey(choice.courseName));
+    if (!course) return [];
+    const semesterCourse = data.semesterCourses.find((item) => item.semesterId === semester?.id && item.courseId === course.id);
+    return [{ semesterCourseId: semesterCourse?.id ?? course.id, courseId: course.id,
+      courseName: course.name, preference: choice.preference }];
+  });
+  const history = data.enrollments.filter(({ memberId }) => memberId === member.id).flatMap((enrollment) => {
+    const course = data.semesterCourses.find(({ id }) => id === enrollment.semesterCourseId);
+    if (!course || course.semesterId === semester?.id) return [];
+    const historySemester = data.semesters.find(({ id }) => id === course.semesterId);
+    const change = changes.find((change) => change.entity === 'SEMESTER'
+      && nameKey(change.semesterName) === historySemester?.nameKey);
+    const orders = change?.status === 'EXISTING_CONFLICT'
+      ? [historySemester?.order ?? null, change.fileValue] : [historySemester?.order ?? null];
+    return orders.map((semesterOrder) => ({ courseId: course.courseId, semesterOrder }));
+  });
+  const warnings = new Map(semesterOrders.flatMap((semesterOrder) => (
+    applicationWarnings({ memberId: member.id, semesterOrder, choices, history })
+  )).map((warning) => [`${warning.code}\0${warning.semesterCourseId}`, warning]));
+  return [...warnings.values()].flatMap((warning) => (
+    candidate.choices.filter(({ courseName }) => nameKey(courseName) === nameKey(warning.courseName)).flatMap((choice) => (
+      choice.sourceRefs.map((source): ImportIssue => ({
+        code: warning.code, message: warning.message, severity: 'WARNING', blockingStages: [], acknowledgementStages: [],
+        subject: { entityType: 'Application', memberId: member.id },
+        source: { ...source, column: `${choice.preference}순위 강좌` }, detail: { preferences: warning.preferences },
+      }))
+    ))
+  ));
+};
 
 const clean = (value: string | null | undefined): string => typeof value === 'string' ? value.trim() : '';
 const nameKey = (value: string | null | undefined): string => clean(value).normalize('NFC');

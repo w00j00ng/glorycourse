@@ -97,7 +97,7 @@ try {
   const semesterId = savedApplication.semesterId;
   assert.equal(savedApplication.ministry, '청년부');
   const templates = [
-    { path: `/applications/template?semesterId=${semesterId}`, sheet: '수강신청', expected: ['학기명', '회원명', '학생 소속', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌'] },
+    { path: `/applications/template?semesterId=${semesterId}`, sheet: '수강신청', expected: ['학기명', '회원명', '학생 소속', '신청순서', '신청자 메모', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌'] },
     { path: '/enrollments/template', sheet: '수강이력', expected: ['학기명', '회원명', '학생 소속', '강좌명', '관리자 메모'] },
   ];
   for (const { path, sheet, expected } of templates) {

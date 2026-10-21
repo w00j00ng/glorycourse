@@ -25,7 +25,7 @@ test('application SQL queries preserve literal case-sensitive search, Korean ord
     ];
     for (const [index, request] of requests.entries()) {
       catalog.insertNamed({ kind: 'members', record: named(`member-${index}`, request.memberName) });
-      applications.insert({ record: { id: `application-${index}`, semesterId: 'semester', memberId: `member-${index}`, ministry: null,
+      applications.insert({ record: { applicantNote: null, id: `application-${index}`, semesterId: 'semester', memberId: `member-${index}`, ministry: null,
         applicationOrder: request.order, applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null,
         revision: 0, createdAt: now, updatedAt: now } });
       applications.insertChoice({ record: { id: `choice-${index}`, applicationId: `application-${index}`, semesterCourseId: 'offering',

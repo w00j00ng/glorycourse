@@ -11,6 +11,7 @@ type Application = {
   semesterId: string;
   memberId: string;
   ministry: string | null;
+  applicantNote: string | null;
   applicationOrder: number | null;
   applicationOrderStatus: 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
 };
@@ -71,6 +72,7 @@ export const buildAllocationSnapshot = (
       memberId: item.memberId,
       memberName: requireById(members, item.memberId, 'Member').name,
       ministry: item.ministry,
+      applicantNote: item.applicantNote ?? null,
       applicationOrder: item.applicationOrder,
       applicationOrderStatus: item.applicationOrderStatus,
     })).sort(byId),
@@ -137,7 +139,7 @@ export const allocationInputChanges = (
   return changes;
 };
 
-// Keep the v0.2.2 hash serialization keys and omit null ministries so existing draft fingerprints stay valid.
+// Keep legacy serialization keys and omit null optional text so existing draft fingerprints stay valid.
 const semanticInput = (snapshot: AllocationSnapshot, policy: FingerprintPolicy) => ({
   semester: semesterInput(snapshot),
   semesterCourses: courseInput(snapshot),
@@ -167,6 +169,7 @@ const applicationInput = (snapshot: AllocationSnapshot) => ({
     applicationOrder: item.applicationOrder,
     applicationOrderStatus: item.applicationOrderStatus,
     affiliation: item.ministry ?? undefined,
+    applicantNote: item.applicantNote ?? undefined,
   })).sort(byId),
   choices: snapshot.choices.map((item) => ({
     id: item.id,

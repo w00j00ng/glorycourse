@@ -4,7 +4,8 @@ import type { ApplicationListFilters, ApplicationView } from '../domain/query-mo
 import type { ApplicationChoiceRecord, ApplicationRecord } from '../domain/records.ts';
 import { validateRecord } from './validation.ts';
 
-type ApplicationRow = Omit<ApplicationView, 'choices'>;
+type ApplicationData = Omit<ApplicationView, 'warnings'>;
+type ApplicationRow = Omit<ApplicationData, 'choices'>;
 
 export class ApplicationQueries {
   private readonly db: DatabaseSync;
@@ -12,7 +13,7 @@ export class ApplicationQueries {
   constructor(db: DatabaseSync) { this.db = db; }
 
   listRecords({ semesterId = null }: { semesterId?: string | null } = {}): ApplicationRecord[] {
-    return this.db.prepare(`SELECT id, semester_id AS semesterId, member_id AS memberId, ministry,
+    return this.db.prepare(`SELECT id, semester_id AS semesterId, member_id AS memberId, ministry, applicant_note AS applicantNote,
       application_order AS applicationOrder, application_order_status AS applicationOrderStatus,
       order_resolution AS orderResolution, order_resolution_note AS orderResolutionNote, revision,
       created_at AS createdAt, updated_at AS updatedAt FROM applications
@@ -36,7 +37,7 @@ export class ApplicationQueries {
   }
 
   get({ id }: { id: string }): ApplicationRecord | undefined {
-    const row = this.db.prepare(`SELECT id, semester_id AS semesterId, member_id AS memberId, ministry,
+    const row = this.db.prepare(`SELECT id, semester_id AS semesterId, member_id AS memberId, ministry, applicant_note AS applicantNote,
       application_order AS applicationOrder, application_order_status AS applicationOrderStatus,
       order_resolution AS orderResolution, order_resolution_note AS orderResolutionNote, revision,
       created_at AS createdAt, updated_at AS updatedAt FROM applications WHERE id = ?`).get(id);
@@ -44,7 +45,7 @@ export class ApplicationQueries {
   }
 
   findBySemesterMember({ semesterId, memberId, excludeId = null }: { semesterId: string; memberId: string; excludeId?: string | null }): ApplicationRecord | undefined {
-    const row = this.db.prepare(`SELECT id, semester_id AS semesterId, member_id AS memberId, ministry,
+    const row = this.db.prepare(`SELECT id, semester_id AS semesterId, member_id AS memberId, ministry, applicant_note AS applicantNote,
       application_order AS applicationOrder, application_order_status AS applicationOrderStatus,
       order_resolution AS orderResolution, order_resolution_note AS orderResolutionNote, revision,
       created_at AS createdAt, updated_at AS updatedAt FROM applications
@@ -53,11 +54,11 @@ export class ApplicationQueries {
     return row ? { ...row } as ApplicationRecord : undefined;
   }
 
-  getView({ id }: { id: string }): ApplicationView | undefined {
+  getView({ id }: { id: string }): ApplicationData | undefined {
     return this.listViews({ id })[0];
   }
 
-  listViews(filters: ApplicationListFilters & { id?: string } = {}): ApplicationView[] {
+  listViews(filters: ApplicationListFilters & { id?: string } = {}): ApplicationData[] {
     return this.#withChoices(this.#listRows(filters));
   }
 
@@ -70,7 +71,7 @@ export class ApplicationQueries {
   #listRows(filters: ApplicationListFilters & { id?: string }): ApplicationRow[] {
     const memberName = filters.memberName?.trim().normalize('NFC') || null;
     const rows = this.db.prepare(`SELECT a.id, a.semester_id AS semesterId, a.member_id AS memberId,
-      s.name AS semesterName, m.name AS memberName, a.ministry, a.application_order AS applicationOrder,
+      s.name AS semesterName, m.name AS memberName, a.ministry, a.applicant_note AS applicantNote, a.application_order AS applicationOrder,
       a.application_order_status AS applicationOrderStatus, a.order_resolution AS orderResolution, a.revision
       FROM applications AS a JOIN semesters AS s ON s.id = a.semester_id JOIN members AS m ON m.id = a.member_id
       WHERE (? IS NULL OR a.id = ?) AND (? IS NULL OR a.semester_id = ?)
@@ -96,7 +97,7 @@ export class ApplicationQueries {
     });
   }
 
-  #withChoices(rows: ApplicationRow[]): ApplicationView[] {
+  #withChoices(rows: ApplicationRow[]): ApplicationData[] {
     const result = rows.map((row) => ({ ...row, choices: [] as ApplicationView['choices'] }));
     if (!result.length) return result;
     const byId = new Map(result.map((row) => [row.id, row]));
@@ -111,24 +112,44 @@ export class ApplicationQueries {
     return result;
   }
 
+  warningContext({ applicationIds }: { applicationIds: string[] }) {
+    const targets = this.db.prepare(`SELECT a.id AS applicationId, a.member_id AS memberId,
+      s.semester_order AS semesterOrder, ac.semester_course_id AS semesterCourseId,
+      sc.course_id AS courseId, c.name AS courseName, ac.preference
+      FROM applications AS a JOIN semesters AS s ON s.id = a.semester_id
+      JOIN application_choices AS ac ON ac.application_id = a.id
+      JOIN semester_courses AS sc ON sc.id = ac.semester_course_id JOIN courses AS c ON c.id = sc.course_id
+      WHERE a.id IN (SELECT value FROM json_each(?)) ORDER BY ac.position`)
+      .all(JSON.stringify(applicationIds)) as {
+        applicationId: string; memberId: string; semesterOrder: number | null;
+        semesterCourseId: string; courseId: string; courseName: string; preference: number | null;
+      }[];
+    const history = this.db.prepare(`SELECT e.member_id AS memberId, sc.course_id AS courseId, sc.semester_id AS semesterId,
+      s.semester_order AS semesterOrder FROM enrollments AS e
+      JOIN semester_courses AS sc ON sc.id = e.semester_course_id JOIN semesters AS s ON s.id = sc.semester_id
+      WHERE e.member_id IN (SELECT member_id FROM applications WHERE id IN (SELECT value FROM json_each(?)))`)
+      .all(JSON.stringify(applicationIds)) as { memberId: string; courseId: string; semesterId: string; semesterOrder: number | null }[];
+    return { targets, history };
+  }
+
   count({ semesterId }: { semesterId: string }): number {
     return this.db.prepare('SELECT COUNT(*) AS count FROM applications WHERE semester_id = ?').get(semesterId)!.count as number;
   }
 
   insert({ record }: { record: ApplicationRecord }): void {
     validateRecord('applications', record);
-    this.db.prepare(`INSERT INTO applications (id, position, semester_id, member_id, ministry, application_order,
+    this.db.prepare(`INSERT INTO applications (id, position, semester_id, member_id, ministry, applicant_note, application_order,
       application_order_status, order_resolution, order_resolution_note, revision, created_at, updated_at)
-      VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM applications), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(record.id, record.semesterId, record.memberId, record.ministry, record.applicationOrder, record.applicationOrderStatus,
+      VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM applications), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(record.id, record.semesterId, record.memberId, record.ministry, record.applicantNote, record.applicationOrder, record.applicationOrderStatus,
         record.orderResolution, record.orderResolutionNote, record.revision, record.createdAt, record.updatedAt);
   }
 
   update({ record }: { record: ApplicationRecord }): void {
     validateRecord('applications', record);
-    this.db.prepare(`UPDATE applications SET semester_id = ?, member_id = ?, ministry = ?, application_order = ?,
+    this.db.prepare(`UPDATE applications SET semester_id = ?, member_id = ?, ministry = ?, applicant_note = ?, application_order = ?,
       application_order_status = ?, order_resolution = ?, order_resolution_note = ?, revision = ?, created_at = ?, updated_at = ? WHERE id = ?`)
-      .run(record.semesterId, record.memberId, record.ministry, record.applicationOrder, record.applicationOrderStatus,
+      .run(record.semesterId, record.memberId, record.ministry, record.applicantNote, record.applicationOrder, record.applicationOrderStatus,
         record.orderResolution, record.orderResolutionNote, record.revision, record.createdAt, record.updatedAt, record.id);
   }
 
@@ -156,7 +177,7 @@ export class ApplicationQueries {
   }
 
   countCourseChoices({ semesterCourseId }: { semesterCourseId: string }): number {
-    return this.db.prepare('SELECT COUNT(*) AS count FROM application_choices WHERE semester_course_id = ?').get(semesterCourseId)!.count as number;
+    return this.db.prepare('SELECT COUNT(DISTINCT application_id) AS count FROM application_choices WHERE semester_course_id = ?').get(semesterCourseId)!.count as number;
   }
 
   removeCourseChoices({ semesterCourseId, now }: { semesterCourseId: string; now: string }): void {

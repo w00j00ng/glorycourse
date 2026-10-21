@@ -8,13 +8,14 @@ import test from 'node:test';
 
 import { buildAllocationSnapshot } from '../../backend/src/allocation/snapshot.ts';
 import { openRepository } from '../../backend/src/bootstrap/database.ts';
+import { ApplicationService } from '../../backend/src/services/applications.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const timestamp = '2026-09-26T00:00:00.000Z';
 const stamped = (record) => ({ ...record, createdAt: timestamp, updatedAt: timestamp });
 const named = (id, name) => stamped({ id, name, nameKey: name });
 
-const mixedRecords = (count) => {
+const mixedRecords = (count, choicesPerApplication = 1) => {
   const data = structuredClone(empty);
   data.semesters = [
     { ...named('current', '현재 학기'), order: 2, allocationInputRevision: 0 },
@@ -25,14 +26,16 @@ const mixedRecords = (count) => {
   data.semesterCourses = data.semesters.flatMap((semester) => data.courses.map((course) => stamped({
     id: `${semester.id}-${course.id}`, semesterId: semester.id, courseId: course.id, capacity: count,
   })));
-  data.applications = data.members.map((member, index) => stamped({
+  data.applications = data.members.map((member, index) => stamped({ applicantNote: null,
     id: `application-${index}`, semesterId: 'current', memberId: member.id, ministry: null, applicationOrder: index + 1,
     applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null, revision: 0,
   }));
-  data.applicationChoices = data.applications.map((application, index) => stamped({
-    id: `choice-${index}`, applicationId: application.id, semesterCourseId: `current-course-${index % 10}`,
-    preference: 1, sourceRefs: [{ importBatchId: 'import', sheet: '신청', row: index + 2 }],
-  }));
+  data.applicationChoices = data.applications.flatMap((application, index) => (
+    Array.from({ length: choicesPerApplication }, (_, rank) => stamped({
+      id: `choice-${index}-${rank}`, applicationId: application.id, semesterCourseId: `current-course-${index % 10}`,
+      preference: rank + 1, sourceRefs: [{ importBatchId: 'import', sheet: '신청', row: index + 2 }],
+    }))
+  ));
   data.enrollments = data.members.map((member, index) => stamped({
     id: `enrollment-${index}`, semesterCourseId: `past-course-${index % 10}`, memberId: member.id, ministry: null,
     exceptionAcknowledgement: null, revision: 0,
@@ -106,3 +109,23 @@ for (const members of [1_000, 10_000]) {
     } finally { reopened.close(); repository.close(); }
   });
 }
+
+test('an administrator filters 10000 applications with five repeated choices without multiplying applicants', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-application-filter-scale-'));
+  const repository = await openRepository(join(directory, 'db.sqlite'), mixedRecords(10_000, 5));
+  context.after(async () => { repository.close(); await rm(directory, { recursive: true, force: true }); });
+  const applications = new ApplicationService(repository, { id: () => 'unused', now: () => new Date(timestamp) });
+  const started = performance.now();
+  const result = applications.listPage({ semesterId: 'current', courseId: 'course-0', page: 1, limit: 50 });
+  const elapsedMs = Math.round((performance.now() - started) * 10) / 10;
+  assert.equal(result.total, 1_000);
+  assert.equal(result.items.length, 50);
+  for (const application of result.items) {
+    assert.deepEqual(application.choices.map(({ preference }) => preference), [1, 2, 3, 4, 5]);
+    assert.deepEqual(application.warnings.map(({ code, preferences }) => ({ code, preferences })),
+      [{ code: 'RETAKE', preferences: [1, 2, 3, 4, 5] }]);
+  }
+  context.diagnostic(JSON.stringify({ scenario: 'repeated-choice-course-filter', applicants: 10_000,
+    choices: 50_000, matchedApplicants: result.total, elapsedMs }));
+  assert.ok(elapsedMs < 10_000, `application course filter took ${elapsedMs} ms`);
+});

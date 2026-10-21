@@ -69,7 +69,7 @@ const applicationWorkbookWithContext = async ({ semesterRows, courseRows, applic
   await workbook.xlsx.load(await createImportTemplate('APPLICATIONS'));
   for (const row of semesterRows) workbook.getWorksheet('학기').addRow(row);
   for (const row of courseRows) workbook.getWorksheet('개설강좌').addRow(row);
-  for (const [semester, member, ...values] of applicationRows) workbook.getWorksheet('수강신청').addRow([semester, member, null, ...values]);
+  for (const [semester, member, order, ...choices] of applicationRows) workbook.getWorksheet('수강신청').addRow([semester, member, null, order, null, ...choices]);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
 
@@ -101,6 +101,110 @@ const commitService = (store, previews, prefix = 'commit') => new ImportCommitSe
   { id: ids(prefix), now },
 );
 
+const applicationNoteWorkbook = async ({ note, order = 1, choices = ['기초'], memberName = '홍길동' }) => {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await createImportTemplate('APPLICATIONS', {
+    semesterName: '2026 봄', semesterOrder: 1,
+    courses: [...new Set(choices)].map((courseName) => ({ courseName, capacity: 10 })),
+  }));
+  workbook.getWorksheet('수강신청').addRow(['2026 봄', memberName, null, order, note, ...choices]);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+};
+
+test('new imports normalize applicant notes and reject oversized notes without side effects', async () => {
+  const cases = [
+    { note: null, expected: null }, { note: '  \n ', expected: null },
+    { note: '  첫 줄\n둘째 줄  ', expected: '첫 줄\n둘째 줄' },
+    { note: '가'.repeat(2000), expected: '가'.repeat(2000) },
+    { note: '가'.repeat(2001), error: 'APPLICANT_NOTE_TOO_LONG' },
+  ];
+  for (const { note, expected, error } of cases) {
+    const store = await createTestRepository(emptyStore());
+    const previews = previewService(store);
+    const commits = commitService(store, previews);
+    const before = store.snapshot();
+    const preview = await previews.preview({ filename: '메모.xlsx', kind: 'APPLICATIONS',
+      bytes: await applicationNoteWorkbook({ note }) });
+    assert.deepEqual(store.snapshot(), before);
+    if (error) {
+      assert.ok(preview.issues.some(({ code, severity, blockingStages, source }) => code === error
+        && severity === 'ERROR' && blockingStages.includes('IMPORT_COMMIT') && source.column === '신청자 메모'));
+      await assert.rejects(commits.commit(requestFor(preview)), ImportCommitConflictError);
+      assert.deepEqual(store.snapshot(), before);
+    } else {
+      const receipt = await commits.commit(requestFor(preview));
+      assert.equal(receipt.inserted, 1);
+      assert.equal(store.snapshot().applications[0].applicantNote, expected);
+      assert.deepEqual(await commits.commit(requestFor(preview)), receipt);
+    }
+  }
+});
+
+test('replacement imports preserve omitted notes and clear only explicitly blank notes', async () => {
+  const cases = [
+    { note: undefined, expected: '기존 메모' },
+    { note: null, expected: null }, { note: ' \n ', expected: null },
+    { note: '  변경\n메모  ', expected: '변경\n메모' },
+  ];
+  for (const { note, expected } of cases) {
+    const store = await createTestRepository(emptyStore());
+    const applications = new ApplicationService(store, { id: ids('existing'), now });
+    const existing = await applications.create({ semesterName: '2026 봄', memberName: '홍길동', applicationOrder: 1,
+      applicantNote: '기존 메모', choices: [{ courseName: '기초', preference: 1 }] });
+    const previews = previewService(store);
+    const commits = commitService(store, previews);
+    const bytes = note === undefined
+      ? await workbookWithRows('APPLICATIONS', [['2026 봄', '홍길동', 1, '심화']])
+      : await applicationNoteWorkbook({ note, choices: ['심화'] });
+    const preview = await previews.preview({ filename: '교체.xlsx', kind: 'APPLICATIONS', mode: 'REPLACE_APPLICATION', bytes });
+    assert.equal(Object.hasOwn(preview.applications[0], 'applicantNote'), note !== undefined);
+    const receipt = await commits.commit(requestFor(preview, 'replace', [{ entity: 'APPLICATION',
+      action: 'REPLACE_APPLICATION', semesterName: '2026 봄', memberName: '홍길동' }]));
+    assert.equal(receipt.updated, 1);
+    assert.equal(applications.list()[0].id, existing.id);
+    assert.equal(applications.list()[0].applicantNote, expected);
+    assert.deepEqual(await commits.commit(requestFor(preview, 'replace', [{ entity: 'APPLICATION',
+      action: 'REPLACE_APPLICATION', semesterName: '2026 봄', memberName: '홍길동' }])), receipt);
+  }
+});
+
+test('note-only changes are conflicts and order confirmation cannot silently discard them', async () => {
+  const store = await createTestRepository(emptyStore());
+  const applications = new ApplicationService(store, { id: ids('existing'), now });
+  const existing = await applications.create({ semesterName: '2026 봄', memberName: '홍길동', applicationOrder: 1,
+    applicantNote: '기존 메모', choices: [{ courseName: '기초', preference: 1 }] });
+  await applications.updateSemesterContext({ semesterId: existing.semesterId, expectedRevision: 1,
+    order: 1, semesterCourses: [{ courseName: '기초', capacity: 10 }] });
+  const previews = previewService(store);
+  const commits = commitService(store, previews);
+  const same = await previews.preview({ filename: '동일.xlsx', kind: 'APPLICATIONS',
+    bytes: await applicationNoteWorkbook({ note: '기존 메모' }) });
+  assert.equal(same.identicalRows, 1);
+  const changed = await previews.preview({ filename: '메모 변경.xlsx', kind: 'APPLICATIONS',
+    bytes: await applicationNoteWorkbook({ note: '새 메모' }) });
+  assert.equal(changed.identicalRows, 0);
+  assert.equal(changed.conflicts, 1);
+  const before = store.snapshot();
+  await assert.rejects(commits.commit(requestFor(changed)), ImportCommitConflictError);
+  assert.deepEqual(store.snapshot(), before);
+  await seedRepository(store, (data) => {
+    data.applications[0].applicationOrder = null;
+    data.applications[0].applicationOrderStatus = 'MISSING';
+    data.applications[0].orderResolution = 'UNRESOLVED';
+  });
+  const unresolved = await previews.preview({ filename: '순서와 메모.xlsx', kind: 'APPLICATIONS', mode: 'REPLACE_APPLICATION',
+    bytes: await applicationNoteWorkbook({ note: '새 메모', order: null }) });
+  const order = { entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER', semesterName: '2026 봄',
+    memberName: '홍길동', applicationOrder: 2 };
+  const unresolvedBefore = store.snapshot();
+  await assert.rejects(commits.commit(requestFor(unresolved, 'order-only', [order])), ImportCommitConflictError);
+  assert.deepEqual(store.snapshot(), unresolvedBefore);
+  await commits.commit(requestFor(unresolved, 'replace', [order, { entity: 'APPLICATION', action: 'REPLACE_APPLICATION',
+    semesterName: '2026 봄', memberName: '홍길동' }]));
+  assert.equal(applications.list()[0].applicantNote, '새 메모');
+  assert.equal(applications.list()[0].applicationOrder, 2);
+});
+
 test('commits student rows with three, five, or sparse preferences and rejects duplicate or empty rows atomically', async () => {
   const store = await createTestRepository(emptyStore());
   const previews = previewService(store);
@@ -109,16 +213,18 @@ test('commits student rows with three, five, or sparse preferences and rejects d
     ['2026 봄', '세 개', 1, '기초', '심화', '합창'],
     ['2026 봄', '다섯 개', 2, '기초', '심화', '합창', '발성', '연기'],
     ['2026 봄', '빈 순위', 3, '기초', null, null, null, '연기'],
+    ['2026 봄', '반복 지망', 4, '기초', '기초', '심화'],
   ];
   const expected = [
     [['기초', 1], ['심화', 2], ['합창', 3]],
     [['기초', 1], ['심화', 2], ['합창', 3], ['발성', 4], ['연기', 5]],
     [['기초', 1], ['연기', 5]],
+    [['기초', 1], ['기초', 2], ['심화', 3]],
   ];
   const preview = await previews.preview({ filename: 'students.xlsx', kind: 'APPLICATIONS',
     bytes: await workbookWithRows('APPLICATIONS', requests) });
   const receipt = await commits.commit(requestFor(preview));
-  assert.equal(receipt.inserted, 3);
+  assert.equal(receipt.inserted, 4);
   const applications = new ApplicationService(store, { id: ids('read'), now });
   assert.deepEqual(requests.map(([, memberName]) => applications.list({ memberName })[0].choices.map(({ courseName, preference }) => (
     [courseName, preference]
@@ -126,7 +232,6 @@ test('commits student rows with three, five, or sparse preferences and rejects d
   const before = store.snapshot();
   for (const rows of [
     [['2026 봄', '중복', 4, '기초'], ['2026 봄', '중복', 4, '심화']],
-    [['2026 봄', '강좌 중복', 4, '기초', ' 기초 ']],
     [['2026 봄', '강좌 없음', 4, null, null, null, null, null]],
   ]) {
     const invalid = await previews.preview({ filename: 'invalid.xlsx', kind: 'APPLICATIONS',

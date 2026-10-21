@@ -835,7 +835,7 @@ test('exports application semester and course settings with filtered students an
     semesters.push(JSON.parse(configured.text));
   }
   const requests = [
-    { semesterName: '2026 봄', memberName: '나 회원', applicationOrder: 2, choices: [{ courseName: '창세기', preference: 1 }] },
+    { semesterName: '2026 봄', memberName: '나 회원', applicationOrder: 2, applicantNote: '신청자 메모\n<일반 텍스트>', choices: [{ courseName: '창세기', preference: 1 }, { courseName: '창세기', preference: 3 }] },
     { semesterName: '2026 가을', memberName: '가 회원', applicationOrder: 1, choices: [{ courseName: '창세기', preference: 1 }] },
     { semesterName: '2026 봄', memberName: '다 회원', applicationOrder: 3, choices: [{ courseName: '마태복음', preference: 5 }] },
   ];
@@ -891,6 +891,10 @@ test('exports application semester and course settings with filtered students an
   });
   assert.equal(committed.status, 200);
   assert.equal(JSON.parse(committed.text).inserted, 3);
+  const restoredApplications = restored.repository.snapshot().applications;
+  const restoredNote = restoredApplications.find(({ applicantNote }) => applicantNote !== null);
+  assert.equal(restoredNote.applicantNote, requests[0].applicantNote);
+  assert.deepEqual(restored.repository.snapshot().applicationChoices.filter(({ applicationId }) => applicationId === restoredNote.id).map(({ preference }) => preference), [1, 3]);
   for (const semester of semesters.slice(0, 2)) {
     const restoredSemester = restored.repository.snapshot().semesters.find(({ name }) => name === semester.semester.name);
     assert.equal(restoredSemester.order, semester.order);

@@ -59,7 +59,7 @@ const fixture = () => ({
   applications: [stamped({
     id: 'application-1',
     semesterId: 'semester-1',
-    memberId: 'member-1', ministry: null,
+    memberId: 'member-1', ministry: null, applicantNote: null,
     applicationOrder: 1,
     applicationOrderStatus: 'NORMAL',
     orderResolution: 'SOURCE_AGREED',
@@ -115,6 +115,59 @@ test('persists automatic evidence and an administrator final edit across a real 
   assert.equal(restored.studentResults[0].finalDecision, automatic.autoDecision);
   assert.equal(restored.studentResults[0].finalSemesterCourseId, automatic.autoSemesterCourseId);
   assert.deepEqual(reopened.store.snapshot().enrollments, beforeEnrollments);
+});
+
+test('preserves notes, duplicate ranks, and retake warnings through reopen and stored-input replay', async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), 'glorycourse-drafts-notes-'));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  const file = join(workspace, 'db.sqlite');
+  const data = fixture();
+  data.applications[0].applicantNote = '직장 일정 확인 필요';
+  data.semesterCourses.push(stamped({ id: 'sc-past-a', semesterId: 'semester-0', courseId: 'course-a', capacity: 1 }));
+  data.enrollments.push(stamped({ id: 'past-a', semesterCourseId: 'sc-past-a', memberId: 'member-1', ministry: null, revision: 0, exceptionAcknowledgement: null }));
+  data.applicationChoices.push(stamped({ id: 'choice-duplicate', applicationId: 'application-1', semesterCourseId: 'sc-a', preference: 2, sourceRefs: [] }));
+  const first = await serviceAt(file, data);
+  const created = await first.service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  assert.equal(created.draft.engineVersion, '2.0.0');
+  assert.equal(created.applicationSnapshot.applications[0].applicantNote, '직장 일정 확인 필요');
+  assert.deepEqual(created.applicationSnapshot.choices.map(({ preference }) => preference).sort(), [1, 2]);
+  assert.equal(created.studentResults[0].autoReasonCode, 'RETAKE_PREFERENCE_ALLOCATED');
+  assert.deepEqual(created.issues.map(({ code, preferences }) => [code, preferences]), [['RETAKE', [1, 2]]]);
+  const reopened = await serviceAt(file, emptyStore());
+  assert.deepEqual(reopened.service.get(created.draft.id).issues, created.issues);
+  await seedRepository(reopened.store, (current) => { current.applications[0].applicantNote = '변경된 메모'; });
+  const stale = reopened.service.get(created.draft.id);
+  assert.equal(stale.isStale, true);
+  assert.ok(stale.inputChanges.some(({ code }) => code === 'APPLICATIONS_CHANGED'));
+  assert.equal(stale.applicationSnapshot.applications[0].applicantNote, '직장 일정 확인 필요');
+  const replay = await reopened.service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy, replayFromDraftId: created.draft.id });
+  assert.deepEqual(replay.studentResults.map(autoProjection), created.studentResults.map(autoProjection));
+  assert.deepEqual(replay.issues, created.issues);
+  assert.equal(replay.applicationSnapshot.applications[0].applicantNote, '직장 일정 확인 필요');
+});
+
+test('keeps old draft snapshots readable and finalizable while blocking replay by an older engine', async (t) => {
+  const { service, store } = await temporaryService(t, fixture());
+  const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  assert.equal(created.applicationSnapshot.applications[0].applicantNote, null);
+  await seedRepository(store, (data) => {
+    const draft = data.allocationDrafts[0];
+    draft.engineVersion = '1.0.0';
+    draft.inputSnapshot.applications[0].applicantNote = null;
+  });
+  const legacy = service.get(created.draft.id);
+  assert.equal(legacy.draft.engineVersion, '1.0.0');
+  assert.equal(legacy.isStale, false);
+  assert.deepEqual(legacy.studentResults.map(autoProjection), created.studentResults.map(autoProjection));
+  await assert.rejects(service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy, replayFromDraftId: created.draft.id }), DraftUnsupportedEngineError);
+  let nextId = 0;
+  const finalization = new FinalizationService(store, { id: () => `legacy-final-${++nextId}`, now: () => new Date(timestamp), secret: '0123456789abcdef0123456789abcdef' });
+  const preview = finalization.preview(created.draft.id, { expectedDraftRevision: 0 });
+  const receipt = await finalization.finalize(created.draft.id, {
+    expectedDraftRevision: 0, preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest,
+    acknowledgementNote: '', idempotencyKey: 'legacy-finalization',
+  });
+  assert.equal(receipt.createdCount, 1);
 });
 
 test('assigns the next semester order before creating an automatic draft', async (t) => {

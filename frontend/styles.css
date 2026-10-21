@@ -102,6 +102,8 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 15px 16px; border-bottom: 1px solid #ebeae3; text-align: left; vertical-align: top; }
 th { color: var(--muted); background: #f2f2ec; font-size: 12px; letter-spacing: .04em; }
 td { font-size: 14px; }
+.application-note, .application-warnings { min-width: 160px; max-width: 300px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.application-warnings { color: #854b13; }
 .enrollment-note { min-width: 130px; max-width: 300px; }
 .enrollment-note summary { cursor: pointer; color: var(--green-dark); }
 .enrollment-note p { white-space: pre-wrap; overflow-wrap: anywhere; }

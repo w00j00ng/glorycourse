@@ -188,7 +188,9 @@ const applyApplications = (
       continue;
     }
     if (existing) {
-      if (orderDecision && existing.ministry === candidate.ministry && choicesMatch(data, existing, candidate)) {
+      if (orderDecision && existing.ministry === candidate.ministry
+        && (candidate.applicantNote === undefined || existing.applicantNote === candidate.applicantNote)
+        && choicesMatch(data, existing, candidate)) {
         existing.applicationOrder = confirmedOrder!;
         existing.applicationOrderStatus = 'NORMAL';
         existing.orderResolution = 'ADMIN_CONFIRMED';
@@ -282,6 +284,7 @@ const createApplication = (
     semesterId: semester.id,
     memberId: member.id,
     ministry: candidate.ministry,
+    applicantNote: candidate.applicantNote ?? null,
     applicationOrder: candidate.applicationOrder,
     applicationOrderStatus: candidate.applicationOrderStatus,
     orderResolution: candidate.applicationOrderStatus === 'NORMAL'
@@ -307,6 +310,7 @@ const replaceApplication = (
   id: () => string,
 ): void => {
   application.ministry = candidate.ministry;
+  if (candidate.applicantNote !== undefined) application.applicantNote = candidate.applicantNote;
   application.applicationOrder = candidate.applicationOrder;
   application.applicationOrderStatus = candidate.applicationOrderStatus;
   application.orderResolution = candidate.applicationOrderStatus === 'NORMAL'
@@ -432,6 +436,7 @@ const applicationMatches = (data: ImportContext, application: Application, candi
     application.applicationOrder !== candidate.applicationOrder
     || application.applicationOrderStatus !== candidate.applicationOrderStatus
     || application.ministry !== candidate.ministry
+    || (candidate.applicantNote !== undefined && application.applicantNote !== candidate.applicantNote)
   ) return false;
   return choicesMatch(data, application, candidate);
 };

@@ -36,7 +36,7 @@ const application = (semesterName, ministry) => ({
 
 test('downloaded templates include student ministry and four default application preferences', async () => {
   const cases = [
-    { kind: 'APPLICATIONS', sheet: '수강신청', expected: ['학기명', '회원명', '학생 소속', '신청순서', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌'] },
+    { kind: 'APPLICATIONS', sheet: '수강신청', expected: ['학기명', '회원명', '학생 소속', '신청순서', '신청자 메모', '1순위 강좌', '2순위 강좌', '3순위 강좌', '4순위 강좌'] },
     { kind: 'ENROLLMENTS', sheet: '수강이력', expected: ['학기명', '회원명', '학생 소속', '강좌명', '관리자 메모'] },
   ];
   for (const { kind, sheet, expected } of cases) {
@@ -139,10 +139,10 @@ test('updates preserve omitted ministries and clear only explicit null or blank 
 
 test('staged current templates preserve ministry text and version after restart and commit', async (t) => {
   const cases = [
-    { kind: 'APPLICATIONS', sheet: '수강신청', row: ['2027 봄', '신청 회원', '  =청년부  ', 1, '기초'], candidates: 'applications' },
-    { kind: 'ENROLLMENTS', sheet: '수강이력', row: ['2026 가을', '이력 회원', '  =대학부  ', '발성', ''], candidates: 'enrollments' },
+    { kind: 'APPLICATIONS', sheet: '수강신청', row: ['2027 봄', '신청 회원', '  =청년부  ', 1, null, '기초'], candidates: 'applications', version: '4' },
+    { kind: 'ENROLLMENTS', sheet: '수강이력', row: ['2026 가을', '이력 회원', '  =대학부  ', '발성', ''], candidates: 'enrollments', version: '3' },
   ];
-  for (const { kind, sheet, row, candidates } of cases) {
+  for (const { kind, sheet, row, candidates, version } of cases) {
     const { file, dependencies, previews } = await setup(t);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(await createImportTemplate(kind));
@@ -153,7 +153,7 @@ test('staged current templates preserve ministry text and version after restart 
     }
     const preview = await previews.preview({ filename: '신규.xlsx', bytes: Buffer.from(await workbook.xlsx.writeBuffer()), kind });
     const staged = await previews.stage(preview.previewId);
-    assert.equal(staged.templateVersion, '3');
+    assert.equal(staged.templateVersion, version);
     const reopened = await openRepository(file, empty);
     const restarted = new ImportPreviewService(reopened, dependencies);
     const reviewed = restarted.repreviewStaged(staged.id);
@@ -164,7 +164,7 @@ test('staged current templates preserve ministry text and version after restart 
       idempotencyKey: `stage-${kind}`, storeRevision: reviewed.storeRevision, storeEpoch: reviewed.storeEpoch,
       warningDigest: reviewed.warningDigest, resolutions: [] });
     assert.equal(reopened.snapshot()[candidates][0].ministry, row[2].trim());
-    assert.equal(reopened.read((queries) => queries.imports.getBatch({ id: staged.id })).templateVersion, '3');
+    assert.equal(reopened.read((queries) => queries.imports.getBatch({ id: staged.id })).templateVersion, version);
   }
 });
 

@@ -142,6 +142,7 @@ export const createApiRouter = (repository: Repository): ApiHandler => {
         semesterName: item.semesterName,
         memberName: item.memberName,
         ministry: item.ministry,
+        applicantNote: item.applicantNote,
         applicationOrder: item.applicationOrder,
         courseName: choice.courseName,
         preference: choice.preference,

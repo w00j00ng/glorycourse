@@ -1,3 +1,5 @@
+import { applicationWarnings } from '../domain/application-warnings.ts';
+import type { QuerySession } from '../repository/queries.ts';
 import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
 import type { Repository } from '../repository/database.ts';
 import type { CatalogQueries, SemesterContext } from '../repository/catalog.ts';
@@ -14,6 +16,7 @@ export type ApplicationInput = {
   semesterName: string;
   memberName: string;
   ministry?: string | null;
+  applicantNote?: string | null;
   applicationOrder: number;
   choices: { courseName: string; preference: number }[];
 };
@@ -77,7 +80,7 @@ export class ApplicationService {
     });
     return this.repository.write({}, (queries) => {
       const now = this.dependencies.now().toISOString();
-      return cleanInputs.map((clean, index) => {
+      const created = cleanInputs.map((clean, index) => {
         const semester = resolveSemester(queries.catalog, clean.semesterName, now, this.dependencies.id);
         const member = resolveNamed(queries.catalog, 'members', clean.memberName, now, this.dependencies.id);
         if (queries.applications.findBySemesterMember({ semesterId: semester.id, memberId: member.id })) {
@@ -89,6 +92,7 @@ export class ApplicationService {
           semesterId: semester.id,
           memberId: member.id,
           ministry: clean.ministry ?? null,
+          applicantNote: clean.applicantNote ?? null,
           applicationOrder: clean.applicationOrder,
           applicationOrderStatus: 'NORMAL',
           orderResolution: 'SOURCE_AGREED',
@@ -120,6 +124,7 @@ export class ApplicationService {
         queries.catalog.bumpSemester({ id: semester.id, now });
         return queries.applications.getView({ id: application.id })!;
       });
+      return withApplicationWarnings(queries, created);
     });
   }
 
@@ -162,6 +167,7 @@ export class ApplicationService {
       current.semesterId = semester.id;
       current.memberId = member.id;
       if (input.ministry !== undefined) current.ministry = clean.ministry ?? null;
+      if (input.applicantNote !== undefined) current.applicantNote = clean.applicantNote ?? null;
       current.applicationOrder = clean.applicationOrder;
       current.revision += 1;
       current.updatedAt = now;
@@ -169,7 +175,7 @@ export class ApplicationService {
       queries.applications.replaceChoices({ applicationId: id, records: nextChoices });
       queries.catalog.bumpSemester({ id: oldSemester.id, now });
       if (semester.id !== oldSemester.id) queries.catalog.bumpSemester({ id: semester.id, now });
-      return queries.applications.getView({ id })!;
+      return withApplicationWarnings(queries, [queries.applications.getView({ id })!])[0]!;
     });
   }
 
@@ -177,16 +183,19 @@ export class ApplicationService {
     return this.repository.read((queries) => {
       const application = queries.applications.getView({ id });
       if (!application) throw new ApplicationNotFoundError();
-      return application;
+      return withApplicationWarnings(queries, [application])[0]!;
     });
   }
 
   list(filters: ApplicationListFilters = {}): ApplicationView[] {
-    return this.repository.read((queries) => queries.applications.listViews(filters));
+    return this.repository.read((queries) => withApplicationWarnings(queries, queries.applications.listViews(filters)));
   }
 
   listPage(filters: ApplicationListFilters & { page: number; limit: number }) {
-    return this.repository.read((queries) => queries.applications.listPage(filters));
+    return this.repository.read((queries) => {
+      const page = queries.applications.listPage(filters);
+      return { ...page, items: withApplicationWarnings(queries, page.items) };
+    });
   }
 
   async delete(id: string, input: { expectedRevision: number }): Promise<void> {
@@ -433,6 +442,30 @@ export class ApplicationService {
   }
 }
 
+const withApplicationWarnings = (queries: QuerySession, rows: Omit<ApplicationView, 'warnings'>[]): ApplicationView[] => {
+  if (!rows.length) return [];
+  const { targets, history } = queries.applications.warningContext({ applicationIds: rows.map(({ id }) => id) });
+  const choicesByApplication = new Map<string, typeof targets>();
+  for (const target of targets) {
+    const choices = choicesByApplication.get(target.applicationId) ?? [];
+    choices.push(target);
+    choicesByApplication.set(target.applicationId, choices);
+  }
+  const historyByMember = new Map<string, typeof history>();
+  for (const enrollment of history) {
+    const records = historyByMember.get(enrollment.memberId) ?? [];
+    records.push(enrollment);
+    historyByMember.set(enrollment.memberId, records);
+  }
+  return rows.map((row) => {
+    const choices = choicesByApplication.get(row.id) ?? [];
+    return { ...row, warnings: applicationWarnings({
+      memberId: row.memberId, semesterOrder: choices[0]?.semesterOrder ?? null,
+      choices, history: (historyByMember.get(row.memberId) ?? []).filter(({ semesterId }) => semesterId !== row.semesterId),
+    }) };
+  });
+};
+
 const validateApplicationInput = (input: ApplicationInput): ApplicationInput => {
   if (!input || typeof input !== 'object') throw new ApplicationValidationError('신청 행이 올바르지 않습니다.');
   const semesterName = cleanName(input.semesterName, 'semesterName');
@@ -441,6 +474,10 @@ const validateApplicationInput = (input: ApplicationInput): ApplicationInput => 
     throw new ApplicationValidationError('학생 소속은 200자 이내로 입력하세요.');
   }
   const ministry = input.ministry?.trim() || null;
+  if (input.applicantNote != null && (typeof input.applicantNote !== 'string' || input.applicantNote.trim().length > 2000)) {
+    throw new ApplicationValidationError('신청자 메모는 2000자 이내로 입력하세요.');
+  }
+  const applicantNote = input.applicantNote?.trim() || null;
   requireSafeInteger(input.applicationOrder, 'applicationOrder');
   if (!Array.isArray(input.choices) || input.choices.length < 1 || input.choices.length > MAX_CHOICES_PER_APPLICATION) {
     throw new ApplicationValidationError(`희망 강좌는 1개 이상, 최대 ${MAX_CHOICES_PER_APPLICATION}개까지 입력할 수 있습니다.`);
@@ -453,9 +490,8 @@ const validateApplicationInput = (input: ApplicationInput): ApplicationInput => 
     if (preference > MAX_CHOICES_PER_APPLICATION) throw new ApplicationValidationError(`희망순위는 1~${MAX_CHOICES_PER_APPLICATION} 사이로 입력하세요.`);
     return { courseName: name, preference };
   });
-  ensureUnique(cleanChoices.map(({ courseName }) => nameKey(courseName)), 'courseName');
   ensureUnique(cleanChoices.map(({ preference }) => preference), 'preference');
-  return { semesterName, memberName, ministry, applicationOrder: input.applicationOrder, choices: cleanChoices };
+  return { semesterName, memberName, ministry, applicantNote, applicationOrder: input.applicationOrder, choices: cleanChoices };
 };
 
 const withRow = (error: unknown, index: number): Error => Object.assign(

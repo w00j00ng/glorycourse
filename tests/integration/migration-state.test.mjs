@@ -64,6 +64,48 @@ test('startup stores exactly one version-dirty row and repeats without executing
   assert.deepEqual(await readFile(file), before);
 });
 
+test('upgrades populated note-free records and source evidence, then refuses a lossy duplicate-choice downgrade', async (t) => {
+  const { file } = await temporary(t);
+  const original = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
+  original.importBatches.push({
+    id: 'source', kind: 'APPLICATIONS', templateVersion: '3', fileHash: 'a'.repeat(64),
+    importedAt: '2026-10-04T00:00:00.000Z', status: 'STAGED', resolutions: [], receipt: null,
+    rawRows: [{ sheet: '수강신청', row: 2, cells: { 회원명: 'Alice', '1순위 강좌': 'Art' } }],
+  });
+  original.applicationChoices[0].sourceRefs = [{ importBatchId: 'source', sheet: '수강신청', row: 2 }];
+  let repository = await openRepository(file, original);
+  repository.close();
+  await migrateDatabase(file, undefined, { targetVersion: 1791158400, rotateEpoch: false });
+  const old = new DatabaseSync(file, { readOnly: true });
+  try {
+    assert.equal(old.prepare('SELECT COUNT(*) AS count FROM application_choice_source_refs').get().count, 1);
+    assert.equal(old.prepare('PRAGMA table_info(applications)').all().some(({ name }) => name === 'applicant_note'), false);
+    assert.equal(old.prepare('SELECT member_name FROM allocation_snapshot_applications').get().member_name, 'Alice at generation');
+  } finally { old.close(); }
+  repository = await openRepository(file, empty);
+  let saved = repository.snapshot();
+  assert.deepEqual(saved, { ...original, meta: saved.meta });
+  assert.equal(saved.allocationDrafts[0].inputSnapshot.applications[0].applicantNote, null);
+  const candidate = structuredClone(saved);
+  candidate.applications[0].applicantNote = '신청자 메모\n줄바꿈 보존';
+  candidate.applicationChoices.push({ ...structuredClone(candidate.applicationChoices[0]), id: 'repeated-choice', preference: 2 });
+  await repository.restore(candidate, { expectedEpoch: saved.meta.storeEpoch, expectedRevision: saved.meta.storeRevision, backup: async () => {} });
+  repository.close();
+  repository = await openRepository(file, empty);
+  saved = repository.snapshot();
+  assert.deepEqual(saved.applicationChoices.map(({ preference, sourceRefs }) => ({ preference, sourceRefs })), [
+    { preference: 1, sourceRefs: original.applicationChoices[0].sourceRefs },
+    { preference: 2, sourceRefs: original.applicationChoices[0].sourceRefs },
+  ]);
+  assert.equal(saved.applications[0].applicantNote, candidate.applications[0].applicantNote);
+  assert.equal(saved.allocationDrafts[0].inputSnapshot.applications[0].applicantNote, null);
+  repository.close();
+  await assert.rejects(migrateDatabase(file, undefined, { targetVersion: 1791158400 }), /UNIQUE constraint failed/);
+  assert.deepEqual(state(file), { version: 1791158400, dirty: 1 });
+  assert.deepEqual(readDatabase(file), saved);
+  await assert.rejects(openRepository(file, empty), /dirty/i);
+});
+
 test('dirty, unknown, future, duplicate and zero-version business databases block startup unchanged', async (t) => {
   const cases = [
     { version: target, dirty: 1, message: /dirty/i },
@@ -140,7 +182,7 @@ test('explicit down preserves renamed ministries, permits their loss, and suppor
   const original = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url), 'utf8'));
   await openRepository(file, original);
   const renamed = await migrateDatabase(file, undefined, { targetVersion: 1791072000 });
-  assert.deepEqual(renamed.applied, ['1791158400_rename_student_ministry.down.sql']);
+  assert.deepEqual(renamed.applied, [...current.migrations].reverse().filter(({ version }) => version > 1791072000).map(({ down }) => down.name));
   assert.deepEqual(state(file), { version: 1791072000, dirty: 0 });
   const db = new DatabaseSync(file, { readOnly: true });
   try { assert.equal(db.prepare('SELECT affiliation FROM applications').get().affiliation, original.applications[0].ministry); }
@@ -184,26 +226,31 @@ test('legacy history is verified before conversion even when business DDL is alr
   ];
   for (const input of cases) {
     const { file } = await temporary(t);
+    const repository = await openRepository(file, original);
+    repository.close();
+    await migrateDatabase(file, undefined, { targetVersion: legacy.migrations.at(-1).version, rotateEpoch: false });
     const db = new DatabaseSync(file);
     try {
-      db.exec('PRAGMA foreign_keys = ON');
+      const legacyInit = await readFile(resolve('tests/fixtures/migrations/1790294400_init.sql'), 'utf8');
+      db.exec('PRAGMA foreign_keys = ON; DROP TABLE schema_migrations');
+      db.exec(legacyInit.match(/CREATE TABLE schema_migrations \([\s\S]*?\) STRICT;/)[0]);
       for (const entry of legacy.migrations) {
         const sql = await readFile(entry.version === legacy.migrations[0].version
           ? resolve('tests/fixtures/migrations/1790294400_init.sql')
           : resolve('schema/migrations', entry.name.replace('.sql', '.up.sql')), 'utf8');
         assert.equal(hash(sql), entry.checksum);
-        db.exec(sql);
         db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)').run(entry.version, entry.name, entry.checksum, '2026-10-05T00:00:00.000Z', '0.2.2');
       }
-      writeRelationalStore(db, original);
       if (input.sql) db.exec(input.sql);
     } finally { db.close(); }
     const before = await readFile(file);
     if (input.valid) {
       const result = await migrateDatabase(file);
-      assert.deepEqual(result.applied, []);
+      assert.deepEqual(result.applied, current.migrations.filter(({ version }) => version > legacy.migrations.at(-1).version).map(({ name }) => name));
       assert.deepEqual(state(file), { version: target, dirty: 0 });
-      assert.deepEqual(readDatabase(file), original);
+      const saved = readDatabase(file);
+      assert.deepEqual(saved, { ...original, meta: saved.meta });
+      assert.equal(saved.meta.storeRevision, original.meta.storeRevision);
       const backup = new DatabaseSync(result.backupFile, { readOnly: true });
       try { assert.equal(backup.prepare('SELECT count(*) AS count FROM schema_migrations').get().count, legacy.migrations.length); }
       finally { backup.close(); }

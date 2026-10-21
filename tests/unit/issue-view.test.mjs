@@ -23,6 +23,17 @@ test('shows allocation and enrollment problems in Korean with the affected perso
   for (const { issue, context, expected } of cases) assert.equal(issueText(issue, context), expected);
 });
 
+test('shows application warning courses and original ranks without blocking input', () => {
+  const cases = [
+    { code: 'RETAKE', expected: '주의 · 김은혜 · 창세기 · 1·4순위: 이전 학기에 수강한 강좌입니다. 수강이력을 확인하세요.' },
+    { code: 'SEMESTER_ORDER_UNRESOLVED', expected: '주의 · 김은혜 · 창세기 · 1·4순위: 학기 순서를 확인하세요. 과거 수강이력이 있으면 해당 학기의 순서도 입력하세요.' },
+  ];
+  for (const { code, expected } of cases) {
+    assert.equal(issueText({ code, severity: 'WARNING', courseName: '창세기', preferences: [1, 4] }, { memberName: '김은혜' }), expected);
+  }
+  assert.equal(issueText({ code: 'APPLICANT_NOTE_TOO_LONG', severity: 'ERROR' }), '오류: 신청자 메모는 2000자까지 입력할 수 있습니다. 메모를 줄인 뒤 다시 올리세요.');
+});
+
 test('shows Excel review problems with their sheet and row instead of internal status codes', () => {
   const cases = [
     {
@@ -51,6 +62,17 @@ test('shows Excel review problems with their sheet and row instead of internal s
     },
   ];
   for (const { issue, expected } of cases) assert.equal(issueText(issue), expected);
+});
+
+test('shows original repeated ranks from Excel retake warning details', () => {
+  const issue = {
+    code: 'RETAKE', severity: 'WARNING',
+    source: { sheet: '수강신청', row: 2, column: '1순위 강좌' },
+    subject: { entityType: 'Application', memberId: 'member-retake' },
+    detail: { preferences: [1, 3] },
+  };
+  assert.equal(issueText(issue, { memberName: '재수강 회원', courseName: '창세기' }),
+    '주의 · 수강신청 시트 2행 1순위 강좌 · 재수강 회원 · 창세기 · 1·3순위: 이전 학기에 수강한 강좌입니다. 수강이력을 확인하세요.');
 });
 
 test('keeps Korean guidance and does not expose unknown English diagnostics', () => {

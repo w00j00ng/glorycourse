@@ -4,7 +4,7 @@
   "members": [{ "id": "member", "name": "Alice", "nameKey": "Alice", "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
   "courses": [{ "id": "course", "name": "Art", "nameKey": "Art", "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
   "semesterCourses": [{ "id": "sc", "semesterId": "semester", "courseId": "course", "capacity": 3, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
-  "applications": [{ "id": "application", "semesterId": "semester", "memberId": "member", "ministry": "Application school", "applicationOrder": 1, "applicationOrderStatus": "NORMAL", "orderResolution": "ADMIN_CONFIRMED", "orderResolutionNote": null, "revision": 0, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
+  "applications": [{ "id": "application", "semesterId": "semester", "memberId": "member", "ministry": "Application school", "applicationOrder": 1, "applicationOrderStatus": "NORMAL", "applicantNote": null, "orderResolution": "ADMIN_CONFIRMED", "orderResolutionNote": null, "revision": 0, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
   "applicationChoices": [{ "id": "choice", "applicationId": "application", "semesterCourseId": "sc", "preference": 1, "sourceRefs": [], "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
   "enrollments": [{ "id": "enrollment", "semesterCourseId": "sc", "memberId": "member", "ministry": "Enrollment school", "exceptionAcknowledgement": null, "revision": 0, "createdAt": "2026-10-04T00:00:00.000Z", "updatedAt": "2026-10-04T00:00:00.000Z" }],
   "allocationDrafts": [{
@@ -15,7 +15,7 @@
     "inputSnapshot": {
       "semester": { "id": "semester", "name": "Fall", "order": 1 },
       "semesterCourses": [{ "id": "sc", "courseId": "course", "courseName": "Art", "capacity": 3 }],
-      "applications": [{ "id": "application", "memberId": "member", "memberName": "Alice at generation", "ministry": "Snapshot application school", "applicationOrder": 1, "applicationOrderStatus": "NORMAL" }],
+      "applications": [{ "id": "application", "memberId": "member", "memberName": "Alice at generation", "ministry": "Snapshot application school", "applicationOrder": 1, "applicationOrderStatus": "NORMAL", "applicantNote": null }],
       "choices": [{ "id": "choice", "applicationId": "application", "semesterCourseId": "sc", "preference": 1 }],
       "relevantPastEnrollments": [],
       "existingEnrollments": [{ "id": "enrollment", "memberId": "member", "memberName": "Alice at generation", "ministry": "Snapshot enrollment school", "semesterCourseId": "sc" }]

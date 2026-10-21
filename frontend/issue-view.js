@@ -30,6 +30,7 @@ const messages = {
   DUPLICATE_SEMESTER_ENROLLMENT: '같은 회원의 같은 학기 수강이력이 파일에 두 번 이상 있습니다. 한 건만 남기세요.',
   ENROLLMENT_INPUT_INVALID: '수강이력 입력값을 확인하세요.',
   ENROLLMENT_NOTE_TOO_LONG: '관리자 메모는 2000자까지 입력할 수 있습니다. 메모를 줄인 뒤 다시 올리세요.',
+  APPLICANT_NOTE_TOO_LONG: '신청자 메모는 2000자까지 입력할 수 있습니다. 메모를 줄인 뒤 다시 올리세요.',
   APPLICATION_INPUT_INVALID: '수강신청 입력값을 확인하세요.',
   INVALID_METADATA: '선택한 업로드 종류와 엑셀 양식이 다릅니다. 올바른 양식을 사용하세요.',
   UNSUPPORTED_FILE_TYPE: '엑셀 파일(.xlsx)만 올릴 수 있습니다.',
@@ -83,7 +84,7 @@ const contextMessage = (code) => {
 };
 
 /**
- * @param {{ code: string, severity: string, source?: { sheet?: string, row?: number, column?: string }, location?: string, detail?: { rowNumber?: number }, message?: string }} issue
+ * @param {{ code: string, severity: string, source?: { sheet?: string, row?: number, column?: string }, location?: string, detail?: { rowNumber?: number, preferences?: number[] }, message?: string, courseName?: string, preferences?: number[] }} issue
  * @param {{ memberName?: string, courseName?: string }} context
  */
 export const issueText = (issue, context = {}) => {
@@ -95,7 +96,9 @@ export const issueText = (issue, context = {}) => {
   const place = source.sheet
     ? `${source.sheet} 시트${source.row ? ` ${source.row}행` : ''}${source.column ? ` ${source.column}` : ''}`
     : location || (issue.detail?.rowNumber ? `${issue.detail.rowNumber}행` : '');
-  const subject = [place, context.memberName, context.courseName].filter(Boolean).join(' · ');
+  const preferences = issue.preferences ?? issue.detail?.preferences;
+  const ranks = preferences?.length ? `${preferences.join('·')}순위` : '';
+  const subject = [place, context.memberName, context.courseName ?? issue.courseName, ranks].filter(Boolean).join(' · ');
   const message = (issue.severity === 'INFO' ? informationMessages[issue.code] : null)
     ?? messages[issue.code] ?? contextMessage(issue.code)
     ?? (/[가-힣]/.test(issue.message ?? '') && !/[A-Za-z]/.test(issue.message ?? '') ? issue.message : '자료를 확인한 뒤 다시 시도하세요.');

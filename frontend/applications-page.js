@@ -1,4 +1,5 @@
 import { templateFilename } from './download-name.js';
+import { issueText } from './issue-view.js';
 
 /** @typedef {import('../backend/src/services/applications.ts').ApplicationInput['choices'][number]} ApplicationChoice */
 /** @typedef {import('../backend/src/domain/query-models.ts').ApplicationView} ApplicationRow */
@@ -25,13 +26,19 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     const body = byId('application-rows');
     body.replaceChildren(...state.applications.map((item) => {
       const row = document.createElement('tr');
+      const note = cell(item.applicantNote ?? '—');
+      note.className = 'application-note';
+      const warnings = cell((item.warnings ?? []).map((warning) => issueText(warning)).join('\n') || '—');
+      warnings.className = 'application-warnings';
       row.append(
         cell(item.memberName),
         cell(item.ministry ?? '—'),
         cell(item.semesterName),
         cell(String(item.applicationOrder)),
         choicesCell(item.choices),
+        note,
         badgeCell(item.applicationOrderStatus === 'NORMAL' ? '정상' : item.applicationOrderStatus, item.applicationOrderStatus !== 'NORMAL'),
+        warnings,
         actionsCell(
           ['수정', () => openApplication(item)],
           ['삭제', () => deleteApplication(item), 'delete'],
@@ -76,6 +83,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     row.querySelector('[name="memberName"]').value = item.memberName ?? '';
     row.querySelector('[name="ministry"]').value = item.ministry ?? '';
     row.querySelector('[name="applicationOrder"]').value = item.applicationOrder ?? '';
+    row.querySelector('[name="applicantNote"]').value = item.applicantNote ?? '';
     const choices = row.querySelector('.choice-fields');
     for (const choice of item.choices ?? [{}]) addChoice(choices, choice);
     row.querySelector('.add-choice').addEventListener('click', () => addChoice(choices));
@@ -126,6 +134,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
       memberName: entry.querySelector('[name="memberName"]').value,
       ministry: entry.querySelector('[name="ministry"]').value.trim() || null,
       applicationOrder: Number(entry.querySelector('[name="applicationOrder"]').value),
+      applicantNote: entry.querySelector('[name="applicantNote"]').value.trim() || null,
       choices: [...entry.querySelector('.choice-fields').children].map((row) => ({
         courseName: row.querySelector('[name="courseName"]').value,
         preference: Number(row.querySelector('[name="preference"]').value),
