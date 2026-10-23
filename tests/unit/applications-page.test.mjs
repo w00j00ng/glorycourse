@@ -93,7 +93,7 @@ test('the application list shows its current rows, choices, actions, and empty s
       applications: [{ memberName: '홍길동', ministry: '청년부', semesterName: '2026 봄', applicationOrder: 2,
         applicantNote: '<em>첫 줄</em>\n다음 줄',
         warnings: [{ code: 'RETAKE', severity: 'WARNING', courseName: '창세기', preferences: [1, 3] }],
-        applicationOrderStatus: 'NORMAL', choices: [{ courseName: '창세기', preference: 1 }, { courseName: '창세기', preference: 3 }] }],
+        applicationOrderStatus: 'NORMAL', reviewStatus: 'RETAKE', choices: [{ courseName: '창세기', preference: 1 }, { courseName: '창세기', preference: 3 }] }],
       pagination: { application: { total: 12 } }, semesters: [],
     };
     const page = createApplicationsPage({
@@ -108,6 +108,7 @@ test('the application list shows its current rows, choices, actions, and empty s
     assert.equal(rows.children[0].children[1].value, '청년부');
     assert.equal(rows.children[0].children[4].choices[0].courseName, '창세기');
     assert.equal(rows.children[0].children[5].value, '<em>첫 줄</em>\n다음 줄');
+    assert.equal(rows.children[0].children[6].text, '재수강');
     assert.match(rows.children[0].children[7].value, /주의 · 창세기 · 1·3순위: 이전 학기에 수강한 강좌/);
     assert.deepEqual(rows.children[0].children[8].actions.map(([name]) => name), ['수정', '삭제']);
     assert.equal(count.textContent, '12');

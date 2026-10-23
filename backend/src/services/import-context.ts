@@ -1,12 +1,15 @@
 import type { ImportContext } from '../repository/import-batches.ts';
 import type { ImportResolutionRecord as Resolution, NamedRecord as Named, SemesterCourseRecord as SemesterCourse, SemesterRecord as Semester } from '../domain/records.ts';
-import type { ImportContextChange } from './import-preview.ts';
+import type { ImportContextChange, ImportIssue } from './import-preview.ts';
 import { nextSemesterOrder } from './semester-order.ts';
 
 export class ImportCommitConflictError extends Error {
-  constructor(message = 'Import contains an unresolved conflict') {
+  readonly issues: ImportIssue[];
+
+  constructor(message = 'Import contains an unresolved conflict', issues: ImportIssue[] = []) {
     super(message);
     this.name = 'ImportCommitConflictError';
+    this.issues = issues;
   }
 }
 

@@ -281,6 +281,7 @@ const recordQuery = (prefix) => new URLSearchParams([
   ['semesterId', byId(`${prefix}-semester-filter`).value],
   ['courseId', byId(`${prefix}-course-filter`).value],
   ['sort', byId(`${prefix}-sort`).value],
+  ...(prefix === 'application' ? [['reviewStatus', byId('application-status-filter').value]] : []),
 ].filter(([, value]) => value)).toString();
 
 const loadPaged = async (name, path, filters = '', pagination = state.pagination[name]) => {
@@ -493,7 +494,7 @@ byId('application-page-size').addEventListener('change', (event) => {
   resetPage('application', loadApplications);
 });
 byId('enrollment-member-search').addEventListener('input', debounce(() => resetPage('enrollment', loadEnrollments)));
-for (const id of ['application-semester-filter', 'application-course-filter']) {
+for (const id of ['application-semester-filter', 'application-course-filter', 'application-status-filter']) {
   byId(id).addEventListener('change', () => {
     if (id === 'application-semester-filter') state.applicationSemesterFilterTouched = true;
     resetPage('application', loadApplications);

@@ -421,6 +421,7 @@ paths:
         - $ref: '#/components/parameters/CourseIdQuery'
         - $ref: '#/components/parameters/MemberNameQuery'
         - $ref: '#/components/parameters/ApplicationSortQuery'
+        - $ref: '#/components/parameters/ApplicationReviewStatusQuery'
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -430,6 +431,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApplicationList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       tags: [Applications]
       operationId: createApplication
@@ -526,9 +529,12 @@ paths:
         - $ref: '#/components/parameters/CourseIdQuery'
         - $ref: '#/components/parameters/MemberNameQuery'
         - $ref: '#/components/parameters/ApplicationSortQuery'
+        - $ref: '#/components/parameters/ApplicationReviewStatusQuery'
       responses:
         '200':
           $ref: '#/components/responses/XlsxFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /applications/batch:
@@ -1172,6 +1178,12 @@ components:
       schema:
         type: string
         enum: [ORDER_ASC, ORDER_DESC, NAME_ASC, NAME_DESC]
+    ApplicationReviewStatusQuery:
+      name: reviewStatus
+      in: query
+      description: 현재 신청순서와 수강 이력으로 계산한 검토 상태로 페이지 분할 전 전체 신청을 필터링한다. 지원하지 않는 값은 400 오류다.
+      schema:
+        $ref: '#/components/schemas/ApplicationReviewStatus'
     EnrollmentSortQuery:
       name: sort
       in: query
@@ -1672,8 +1684,10 @@ components:
     Application:
       type: object
       additionalProperties: false
-      required: [id, semesterId, memberId, semesterName, memberName, applicationOrder, applicationOrderStatus, orderResolution, revision, choices, ministry, applicantNote, warnings]
+      required: [id, semesterId, memberId, semesterName, memberName, applicationOrder, applicationOrderStatus, orderResolution, revision, choices, ministry, applicantNote, warnings, reviewStatus]
       properties:
+        reviewStatus:
+          $ref: '#/components/schemas/ApplicationReviewStatus'
         applicantNote:
           $ref: '#/components/schemas/ApplicantNote'
         warnings:
@@ -1709,6 +1723,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ApplicationChoice'
+    ApplicationReviewStatus:
+      type: string
+      enum: [NORMAL, RETAKE, NEEDS_REVIEW]
+      description: 신청순서 상태가 NORMAL이 아니거나 학기 순서 미정 경고가 있으면 NEEDS_REVIEW, 그 외 재수강 경고가 있으면 RETAKE, 나머지는 NORMAL이다. 저장된 신청순서 상태와 배정 동작은 변경하지 않는다.
     ApplicationWarning:
       type: object
       additionalProperties: false

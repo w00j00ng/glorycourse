@@ -103,6 +103,9 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     const td = document.createElement('td');
     const details = document.createElement('details');
     const summary = document.createElement('summary');
+    summary.className = 'badge draft-reason';
+    summary.dataset.reason = item.autoReasonCode;
+    summary.dataset.decision = item.autoDecision;
     summary.textContent = reasonLabel(item.autoReasonCode);
     const list = document.createElement('ul');
     list.className = 'draft-reason-list';
@@ -160,10 +163,14 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       const applicationCell = cell(application?.choices ?? '신청 없음');
       applicationCell.className = 'choices';
       if (application?.applicantNote) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = '신청자 메모';
         const note = document.createElement('p');
         note.className = 'application-note';
         note.textContent = `신청자 메모: ${application.applicantNote}`;
-        applicationCell.append(note);
+        details.append(summary, note);
+        applicationCell.append(details);
       }
       const ministryCell = cell(item.ministry ?? '—');
       const ministry = document.createElement('input');

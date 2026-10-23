@@ -186,6 +186,81 @@ test('an existing enrollment in the same unordered semester is not reported as u
   assert.deepEqual(service.list({ semesterId: saved.semesterId })[0].warnings, []);
 });
 
+test('an administrator sees current review statuses and filters them before paging', async () => {
+  const { service, store } = await openService();
+  const cases = [
+    { memberName: '가 정상', expected: 'NORMAL', history: [] },
+    { memberName: '나 재수강', expected: 'RETAKE', history: [['earlier', '기초']] },
+    { memberName: '다 순서미정', expected: 'NEEDS_REVIEW', history: [['unknown', '기초']] },
+    { memberName: '라 혼합', expected: 'NEEDS_REVIEW', history: [['earlier', '기초'], ['unknown', '심화']] },
+    { memberName: '마 충돌', expected: 'NEEDS_REVIEW', history: [['earlier', '기초']], orderStatus: 'CONFLICT' },
+    { memberName: '바 누락', expected: 'NEEDS_REVIEW', history: [], orderStatus: 'MISSING' },
+    { memberName: '사 오류', expected: 'NEEDS_REVIEW', history: [], orderStatus: 'INVALID' },
+  ];
+  const inputs = cases.map(({ memberName }, index) => ({
+    semesterName: '대상', memberName, applicationOrder: index + 1,
+    choices: [{ courseName: '기초', preference: 1 }, { courseName: '심화', preference: 2 }],
+  }));
+  const created = await service.createMany(inputs);
+  assert.deepEqual(created.map(({ reviewStatus }) => reviewStatus), cases.map(() => 'NORMAL'));
+  await seedRepository(store, (data) => {
+    data.semesters[0].order = 2;
+    const stamp = { createdAt: data.applications[0].createdAt, updatedAt: data.applications[0].updatedAt };
+    for (const [id, order] of [['earlier', 1], ['unknown', null]]) {
+      data.semesters.push({ id, name: id, nameKey: id, order, allocationInputRevision: 0, ...stamp });
+      for (const course of data.courses) {
+        data.semesterCourses.push({ id: `${id}-${course.id}`, semesterId: id, courseId: course.id, capacity: 10, ...stamp });
+      }
+    }
+    cases.forEach(({ history, orderStatus }, index) => {
+      const application = data.applications[index];
+      if (orderStatus) {
+        application.applicationOrderStatus = orderStatus;
+        application.applicationOrder = null;
+        application.orderResolution = 'UNRESOLVED';
+      }
+      for (const [semesterId, courseName] of history) {
+        const course = data.courses.find(({ name }) => name === courseName);
+        data.enrollments.push({ id: `${application.id}-${semesterId}-${course.id}`,
+          semesterCourseId: `${semesterId}-${course.id}`, memberId: application.memberId,
+          ministry: null, exceptionAcknowledgement: null, revision: 0, ...stamp });
+      }
+    });
+  });
+  for (const [index, { expected }] of cases.entries()) {
+    assert.equal(service.get(created[index].id).reviewStatus, expected, cases[index].memberName);
+  }
+  assert.deepEqual(service.list().map(({ reviewStatus }) => reviewStatus), cases.map(({ expected }) => expected));
+  assert.deepEqual(service.listPage({ page: 1, limit: 20 }).items.map(({ reviewStatus }) => reviewStatus), cases.map(({ expected }) => expected));
+  const courseId = store.snapshot().courses.find(({ name }) => name === '기초').id;
+  const filters = { reviewStatus: 'NEEDS_REVIEW', memberName: ' ', semesterId: created[0].semesterId, courseId, sort: 'NAME_DESC' };
+  const expectedIds = [6, 5, 4, 3, 2].map((index) => created[index].id);
+  assert.deepEqual(service.list(filters).map(({ id }) => id), expectedIds);
+  for (const [page, expected] of [[1, expectedIds.slice(0, 2)], [2, expectedIds.slice(2, 4)], [3, expectedIds.slice(4)], [4, []]]) {
+    const result = service.listPage({ ...filters, page, limit: 2 });
+    assert.equal(result.total, 5);
+    assert.deepEqual(result.items.map(({ id }) => id), expected);
+  }
+  assert.deepEqual(service.list({ ...filters, memberName: '혼합' }).map(({ id }) => id), [created[3].id]);
+  for (const [reviewStatus, expected] of [['NORMAL', [created[0].id]], ['RETAKE', [created[1].id]]]) {
+    assert.deepEqual(service.list({ reviewStatus }).map(({ id }) => id), expected);
+  }
+  const updated = await service.update(created[1].id, { ...inputs[1], expectedRevision: 0 });
+  assert.equal(updated.reviewStatus, 'RETAKE');
+  assert.equal((await service.create({ ...inputs[1], semesterName: '다음' })).reviewStatus, 'RETAKE');
+  const batch = await service.createMany([inputs[1], inputs[2]].map((input) => ({ ...input, semesterName: '그다음' })));
+  assert.deepEqual(batch.map(({ reviewStatus }) => reviewStatus), ['RETAKE', 'NEEDS_REVIEW']);
+  const applicationsBeforeHistoryChange = store.snapshot().applications;
+  await seedRepository(store, (data) => {
+    data.enrollments = data.enrollments.filter(({ memberId, semesterCourseId }) => (
+      memberId !== created[1].memberId && !(memberId === created[3].memberId && semesterCourseId.startsWith('unknown-'))
+    ));
+  });
+  assert.equal(service.get(created[1].id).reviewStatus, 'NORMAL');
+  assert.equal(service.get(created[3].id).reviewStatus, 'RETAKE');
+  assert.deepEqual(store.snapshot().applications, applicationsBeforeHistoryChange);
+});
+
 test('accepts up to five preferences and atomically rejects a sixth in all input paths', async () => {
   const { service, store } = await openService();
   const request = (count) => ({

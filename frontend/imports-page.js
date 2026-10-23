@@ -37,6 +37,8 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     byId('import-candidate-details').open = false;
     byId('import-preview-action').hidden = false;
     byId('commit-import').disabled = true;
+    byId('import-commit-blocked').hidden = true;
+    byId('import-commit-blocked').textContent = '';
   };
 
   /** @param {ImportPreview['kind']} kind */
@@ -68,7 +70,9 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       if ('choices' in candidate) {
         const note = document.createElement('small');
         note.textContent = `신청자 메모: ${candidate.applicantNote === undefined ? '기존 메모 유지' : candidate.applicantNote ?? '—'}`;
+        note.style.display = 'block';
         note.style.whiteSpace = 'pre-wrap';
+        note.style.overflowWrap = 'anywhere';
         card.append(note);
       }
       return card;
@@ -193,9 +197,15 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     }));
     renderCandidates(preview);
     renderResolutions(preview);
-    const blocksCommit = preview.issues.some((issue) => (
+    const blockingIssues = preview.issues.filter((issue) => (
       issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
-    )) || (preview.kind === 'ENROLLMENTS' && preview.conflicts > 0);
+    ));
+    const blocksCommit = blockingIssues.length > 0 || (preview.kind === 'ENROLLMENTS' && preview.conflicts > 0);
+    const blocked = byId('import-commit-blocked');
+    blocked.textContent = blockingIssues.length
+      ? `오류 ${blockingIssues.length}건으로 반영할 수 없습니다. 위의 시트·행·강좌와 오류 사유를 확인해 파일을 수정한 뒤 다시 검토하세요.`
+      : blocksCommit ? '기존 수강이력과 충돌하여 반영할 수 없습니다. 충돌 자료를 확인하고 파일을 수정한 뒤 다시 검토하세요.' : '';
+    blocked.hidden = !blocksCommit;
     byId('commit-import').disabled = blocksCommit;
     byId('import-preview').hidden = false;
     byId('import-preview-action').hidden = true;
@@ -206,6 +216,7 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     const button = byId('commit-import');
     if (!preview || button.disabled) return;
     button.disabled = true;
+    byId('import-commit-blocked').hidden = true;
     let applied = false;
     try {
       let invalidOrder = '';
@@ -269,6 +280,14 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       }
       await loadCatalogs();
       await Promise.all([loadApplications(), loadEnrollments()]);
+    } catch (error) {
+      if (state.importPreview === preview && !applied) {
+        const blocked = byId('import-commit-blocked');
+        const failure = /** @type {Error & { issues?: ImportPreview['issues'] }} */ (error);
+        blocked.textContent = [failure.message, ...(failure.issues ?? []).map((issue) => issueText(issue))].join('\n');
+        blocked.hidden = false;
+      }
+      throw error;
     } finally {
       if (state.importPreview === preview) button.disabled = applied;
     }

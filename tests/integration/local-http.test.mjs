@@ -809,6 +809,69 @@ test('sorts all applications before dividing them into pages', async (t) => {
   assert.equal(invalid.status, 400);
 });
 
+test('filters application review statuses consistently across pages and Excel exports', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const inputs = [
+    ['대상', '가 재수강', '기초'], ['대상', '나 재수강', '기초'], ['대상', '다 재수강', '기초'],
+    ['대상', '라 재수강', '심화'], ['다른 학기', '가 재수강', '기초'], ['대상', '마 일반', '기초'],
+  ].map(([semesterName, memberName, courseName], index) => ({
+    semesterName, memberName, applicationOrder: index + 1, choices: [{ courseName, preference: 1 }],
+  }));
+  const createdResponse = await call(runtime.origin, '/api/v1/applications/batch', {
+    method: 'POST', headers, body: JSON.stringify({ items: inputs }),
+  });
+  assert.equal(createdResponse.status, 201);
+  const created = JSON.parse(createdResponse.text).items;
+  await seedRepository(runtime.repository, (data) => {
+    data.semesters.forEach((semester, index) => { semester.order = index + 2; });
+    const stamp = { createdAt: data.applications[0].createdAt, updatedAt: data.applications[0].updatedAt };
+    data.semesters.push({ id: 'earlier', name: '이전 학기', nameKey: '이전 학기', order: 1, allocationInputRevision: 0, ...stamp });
+    const courseId = data.courses.find(({ name }) => name === '기초').id;
+    data.semesterCourses.push({ id: 'earlier-course', semesterId: 'earlier', courseId, capacity: 10, ...stamp });
+    for (const { memberId } of created.slice(0, 3)) {
+      data.enrollments.push({ id: `history-${memberId}`, semesterCourseId: 'earlier-course', memberId,
+        ministry: null, exceptionAcknowledgement: null, revision: 0, ...stamp });
+    }
+  });
+  const before = runtime.repository.snapshot();
+  for (const [reviewStatus, total] of [['NORMAL', 2], ['RETAKE', 4], ['NEEDS_REVIEW', 0]]) {
+    const response = await call(runtime.origin, `/api/v1/applications?reviewStatus=${reviewStatus}`, { headers });
+    assert.equal(response.status, 200);
+    const result = JSON.parse(response.text);
+    assert.equal(result.total, total, reviewStatus);
+    assert.ok(result.items.every((item) => item.reviewStatus === reviewStatus));
+  }
+  const courseId = before.courses.find(({ name }) => name === '기초').id;
+  const query = new URLSearchParams({ reviewStatus: 'RETAKE', semesterId: created[0].semesterId,
+    courseId, memberName: '재수강', sort: 'ORDER_DESC', limit: '1' });
+  for (const [page, expectedMember] of [[1, '다 재수강'], [2, '나 재수강'], [3, '가 재수강']]) {
+    query.set('page', String(page));
+    const response = await call(runtime.origin, `/api/v1/applications?${query}`, { headers });
+    assert.equal(response.status, 200);
+    const result = JSON.parse(response.text);
+    assert.equal(result.total, 3);
+    assert.deepEqual(result.items.map(({ memberName }) => memberName), [expectedMember]);
+    const exported = await call(runtime.origin, `/api/v1/applications/export?${query}`, { headers });
+    assert.equal(exported.status, 200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported.bytes);
+    assert.deepEqual(workbook.getWorksheet('수강신청').getSheetValues().slice(2).map((row) => row[2]), ['다 재수강', '나 재수강', '가 재수강']);
+  }
+  for (const path of ['/applications', '/applications/export']) {
+    for (const reviewStatus of ['', 'UNKNOWN', 'retake']) {
+      const invalid = await call(runtime.origin, `/api/v1${path}?reviewStatus=${reviewStatus}`, { headers });
+      assert.equal(invalid.status, 400, `${path}: ${reviewStatus}`);
+    }
+  }
+  assert.deepEqual(runtime.repository.snapshot(), before);
+});
+
 test('exports application semester and course settings with filtered students and reimports them on a new store', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });

@@ -87,9 +87,10 @@ export class ImportCommitService {
       throw error;
     }
     assertCurrent(this.#repository.version(), preview, input);
-    if (preview.issues.some((issue) => (
+    const blockingIssues = preview.issues.filter((issue) => (
       issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
-    ))) throw new ImportCommitConflictError();
+    ));
+    if (blockingIssues.length) throw new ImportCommitConflictError('Import contains blocking errors', blockingIssues);
 
     const batchId = preview.sourceBatchId ?? this.#dependencies.id();
     const receiptId = this.#dependencies.id();

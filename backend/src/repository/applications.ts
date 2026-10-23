@@ -7,8 +7,9 @@ import { ApplicationChoiceQueries } from './application-choices.ts';
 import { EnrollmentQueries } from './enrollments.ts';
 import { validateRecord } from './validation.ts';
 
-type ApplicationData = Omit<ApplicationView, 'warnings'>;
+type ApplicationData = Omit<ApplicationView, 'warnings' | 'reviewStatus'>;
 type ApplicationRow = Omit<ApplicationData, 'choices'>;
+type ApplicationQueryFilters = Omit<ApplicationListFilters, 'reviewStatus'>;
 
 export class ApplicationQueries {
   private readonly db: DatabaseSync;
@@ -46,17 +47,17 @@ export class ApplicationQueries {
     return this.listViews({ id })[0];
   }
 
-  listViews(filters: ApplicationListFilters & { id?: string } = {}): ApplicationData[] {
+  listViews(filters: ApplicationQueryFilters & { id?: string } = {}): ApplicationData[] {
     return this.#withChoices(this.#listRows(filters));
   }
 
-  listPage({ page, limit, ...filters }: ApplicationListFilters & { page: number; limit: number }) {
+  listPage({ page, limit, ...filters }: ApplicationQueryFilters & { page: number; limit: number }) {
     const rows = this.#listRows(filters);
     const start = (page - 1) * limit;
     return { items: this.#withChoices(rows.slice(start, start + limit)), page, limit, total: rows.length };
   }
 
-  #listRows(filters: ApplicationListFilters & { id?: string }): ApplicationRow[] {
+  #listRows(filters: ApplicationQueryFilters & { id?: string }): ApplicationRow[] {
     const memberName = filters.memberName?.trim().normalize('NFC') || null;
     const rows = this.db.prepare(`SELECT a.id, a.semester_id AS semesterId, a.member_id AS memberId,
       s.name AS semesterName, m.name AS memberName, a.ministry, a.applicant_note AS applicantNote, a.application_order AS applicationOrder,

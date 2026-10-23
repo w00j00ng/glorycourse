@@ -190,14 +190,21 @@ export class ApplicationService {
     });
   }
 
-  list(filters: ApplicationListFilters = {}): ApplicationView[] {
-    return this.repository.read((queries) => withApplicationWarnings(queries, queries.applications.listViews(filters)));
+  list({ reviewStatus, ...filters }: ApplicationListFilters = {}): ApplicationView[] {
+    return this.repository.read((queries) => withApplicationWarnings(queries, queries.applications.listViews(filters))
+      .filter((row) => reviewStatus === undefined || row.reviewStatus === reviewStatus));
   }
 
-  listPage(filters: ApplicationListFilters & { page: number; limit: number }) {
+  listPage({ page, limit, reviewStatus, ...filters }: ApplicationListFilters & { page: number; limit: number }) {
     return this.repository.read((queries) => {
-      const page = queries.applications.listPage(filters);
-      return { ...page, items: withApplicationWarnings(queries, page.items) };
+      if (reviewStatus !== undefined) {
+        const items = withApplicationWarnings(queries, queries.applications.listViews(filters))
+          .filter((row) => row.reviewStatus === reviewStatus);
+        const start = (page - 1) * limit;
+        return { items: items.slice(start, start + limit), page, limit, total: items.length };
+      }
+      const result = queries.applications.listPage({ ...filters, page, limit });
+      return { ...result, items: withApplicationWarnings(queries, result.items) };
     });
   }
 
@@ -445,7 +452,7 @@ export class ApplicationService {
   }
 }
 
-const withApplicationWarnings = (queries: QuerySession, rows: Omit<ApplicationView, 'warnings'>[]): ApplicationView[] => {
+const withApplicationWarnings = (queries: QuerySession, rows: Omit<ApplicationView, 'warnings' | 'reviewStatus'>[]): ApplicationView[] => {
   if (!rows.length) return [];
   const { targets, history } = queries.applications.warningContext({ applicationIds: rows.map(({ id }) => id) });
   const choicesByApplication = new Map<string, typeof targets>();
@@ -462,10 +469,14 @@ const withApplicationWarnings = (queries: QuerySession, rows: Omit<ApplicationVi
   }
   return rows.map((row) => {
     const choices = choicesByApplication.get(row.id) ?? [];
-    return { ...row, warnings: applicationWarnings({
+    const warnings = applicationWarnings({
       memberId: row.memberId, semesterOrder: choices[0]?.semesterOrder ?? null,
       choices, history: (historyByMember.get(row.memberId) ?? []).filter(({ semesterId }) => semesterId !== row.semesterId),
-    }) };
+    });
+    const reviewStatus: ApplicationView['reviewStatus'] = row.applicationOrderStatus !== 'NORMAL'
+      || warnings.some(({ code }) => code === 'SEMESTER_ORDER_UNRESOLVED') ? 'NEEDS_REVIEW'
+      : warnings.some(({ code }) => code === 'RETAKE') ? 'RETAKE' : 'NORMAL';
+    return { ...row, warnings, reviewStatus };
   });
 };
 

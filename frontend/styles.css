@@ -176,7 +176,7 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
 .draft-toolbar label { min-width: 180px; }
 .draft-toolbar .form-help { margin: 0 0 10px; }
 .draft-toolbar .badge { margin: 0 0 8px auto; }
-#draft-dialog { scroll-padding-top: calc(min(180px, 30vh) + 100px); }
+#draft-dialog { width: min(1600px, calc(100vw - 32px)); scroll-padding-top: calc(min(180px, 30vh) + 100px); }
 .draft-capacity { position: sticky; top: 0; z-index: 2; margin-bottom: 16px; padding: 10px 0; background: var(--panel); }
 .draft-capacity h3 { margin: 0; font-size: 16px; }
 .draft-capacity .form-help { margin: 6px 0 10px; }
@@ -184,6 +184,14 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
 .draft-capacity th { position: sticky; top: 0; }
 .draft-capacity th, .draft-capacity td { padding: 8px 12px; white-space: nowrap; }
 .badge.draft-capacity-exceeded { color: var(--red); background: #fff0ed; }
+#draft-item-rows td { padding: 8px 12px; vertical-align: middle; }
+#draft-item-rows input { min-width: 130px; }
+#draft-item-rows select { min-width: 220px; }
+#draft-item-rows summary { cursor: pointer; }
+#draft-item-rows .draft-reason { display: list-item; width: max-content; }
+#draft-item-rows .draft-reason[data-reason="RETAKE_PREFERENCE_ALLOCATED"] { color: #643e8c; background: #eee2fa; }
+#draft-item-rows .draft-reason[data-reason="RANDOM_FALLBACK"] { color: #24569b; background: #e0edfc; }
+#draft-item-rows .draft-reason[data-decision="REJECTED"] { color: var(--red); background: #fff0ed; }
 #draft-item-rows .row-actions button { white-space: nowrap; }
 .draft-reason-list { min-width: 240px; margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
 .draft-reason-list li + li { margin-top: 5px; }
@@ -191,6 +199,10 @@ legend { padding: 0 7px; font-size: 13px; font-weight: 800; }
 .warning-list li + li { margin-top: 8px; }
 #import-issues li { display: flex; align-items: center; gap: 8px; }
 #import-issues .import-issue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#import-issues li[data-severity="ERROR"] { align-items: flex-start; padding: 10px 12px; border-left: 3px solid var(--red); color: var(--red); background: #fff0ed; }
+#import-issues li[data-severity="ERROR"] .import-issue-text { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+#commit-import:disabled { cursor: not-allowed; opacity: .5; }
+#import-commit-blocked { white-space: pre-wrap; overflow-wrap: anywhere; }
 #import-issues li.information { color: var(--muted); }
 .import-issue-dismiss { flex-shrink: 0; padding: 4px 8px; font-size: 12px; }
 #backup-rows td:last-child { max-width: 320px; overflow-wrap: anywhere; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }

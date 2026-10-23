@@ -37,7 +37,7 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
         cell(String(item.applicationOrder)),
         choicesCell(item.choices),
         note,
-        badgeCell(item.applicationOrderStatus === 'NORMAL' ? '정상' : item.applicationOrderStatus, item.applicationOrderStatus !== 'NORMAL'),
+        badgeCell(({ NORMAL: '정상', RETAKE: '재수강', NEEDS_REVIEW: '확인 필요' })[item.reviewStatus], item.reviewStatus !== 'NORMAL'),
         warnings,
         actionsCell(
           ['수정', () => openApplication(item)],

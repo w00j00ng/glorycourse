@@ -94,7 +94,7 @@ test('reloads imported records using the catalog and filters shown to the user',
   const newSemester = { id: 'new', name: 'New semester', order: 2 };
   const semesterSelect = { value: 'old' };
   const nodes = {
-    'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {},
+    'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {}, 'import-commit-blocked': {},
   };
   const queries = [];
   let loadedSemester;

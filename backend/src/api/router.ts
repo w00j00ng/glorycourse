@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { createImportTemplate, exportApplicationRows, exportRawRows } from '../excel/workbooks.ts';
-import { APPLICATION_SORTS, ENROLLMENT_SORTS, type ApplicationSort, type EnrollmentSort } from '../domain/query-models.ts';
+import { APPLICATION_REVIEW_STATUSES, APPLICATION_SORTS, ENROLLMENT_SORTS, type ApplicationReviewStatus, type ApplicationSort, type EnrollmentSort } from '../domain/query-models.ts';
 import { ApplicationService, type ApplicationInput } from '../services/applications.ts';
 import { DraftService, type CreateDraftInput, type DraftItemInput } from '../services/drafts.ts';
 import { EnrollmentService } from '../services/enrollments.ts';
@@ -494,7 +494,12 @@ const applicationFilters = (request: ApiRequest) => {
   if (sort !== null && !APPLICATION_SORTS.includes(sort as ApplicationSort)) {
     throw new HttpError(400, 'BAD_REQUEST', '수강신청 정렬 기준이 올바르지 않습니다.');
   }
-  return { ...recordFilters(request), ...(sort === null ? {} : { sort: sort as ApplicationSort }) };
+  const reviewStatus = request.query.get('reviewStatus');
+  if (reviewStatus !== null && !APPLICATION_REVIEW_STATUSES.includes(reviewStatus as ApplicationReviewStatus)) {
+    throw new HttpError(400, 'BAD_REQUEST', '수강신청 검토 상태가 올바르지 않습니다.');
+  }
+  return { ...recordFilters(request), ...(sort === null ? {} : { sort: sort as ApplicationSort }),
+    ...(reviewStatus === null ? {} : { reviewStatus: reviewStatus as ApplicationReviewStatus }) };
 };
 
 const enrollmentFilters = (request: ApiRequest) => {

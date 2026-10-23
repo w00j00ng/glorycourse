@@ -561,7 +561,13 @@ test('requires a capacity for an application choice absent from the course sheet
   assert.ok(preview.issues.some(({ code, severity }) => (
     code === 'APPLICATION_COURSE_CAPACITY_MISSING' && severity === 'ERROR'
   )));
-  await assert.rejects(commitService(store, previews).commit(requestFor(preview)), ImportCommitConflictError);
+  await assert.rejects(commitService(store, previews).commit(requestFor(preview)), (error) => {
+    assert.ok(error instanceof ImportCommitConflictError);
+    assert.deepEqual(error.issues, preview.issues.filter((issue) => (
+      issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
+    )));
+    return true;
+  });
   assert.equal(store.snapshot().applications.length, 0);
 });
 
