@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
+import { applicationWarnings } from '../domain/application-warnings.ts';
 import {
   extractRawRows,
   exportRawRows,
@@ -13,7 +14,9 @@ import {
 } from '../excel/workbooks.ts';
 import { applyBatchCandidate, evaluateEnrollmentImport } from './enrollments.ts';
 import { applyContext } from './import-context.ts';
-import type { Store, DatabaseState } from '../storage/store.ts';
+import type { Repository } from '../repository/database.ts';
+import type { ImportContext } from '../repository/import-batches.ts';
+import type { ImportBatchRecord } from '../domain/records.ts';
 
 export type ImportMode = 'MERGE_KEEP_EXISTING' | 'REPLACE_APPLICATION';
 export type ApplicationStatus = 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
@@ -30,7 +33,8 @@ export type ImportIssue = {
 export type ApplicationCandidate = {
   semesterName: string;
   memberName: string;
-  affiliation: string | null;
+  ministry: string | null;
+  applicantNote?: string | null;
   applicationOrder: number | null;
   applicationOrderStatus: ApplicationStatus;
   choices: Array<{
@@ -44,7 +48,7 @@ export type ApplicationCandidate = {
 export type EnrollmentCandidate = {
   semesterName: string;
   memberName: string;
-  affiliation: string | null;
+  ministry: string | null;
   courseName: string;
   adminNote: string;
   sourceRef: { sheet: string; row: number };
@@ -86,7 +90,7 @@ type Dependencies = {
   limits?: Partial<WorkbookLimits>;
   previewTtlMs?: number;
 };
-type ImportBatch = DatabaseState['importBatches'][number];
+type ImportBatch = ImportBatchRecord;
 
 export class ImportPreviewNotFoundError extends Error {
   constructor() {
@@ -103,12 +107,12 @@ export class ImportBatchNotFoundError extends Error {
 }
 
 export class ImportPreviewService {
-  readonly #store: Store;
+  readonly #repository: Repository;
   readonly #dependencies: Dependencies & { previewTtlMs: number };
   readonly #previews = new Map<string, ImportPreview>();
 
-  constructor(store: Store, dependencies: Dependencies) {
-    this.#store = store;
+  constructor(repository: Repository, dependencies: Dependencies) {
+    this.#repository = repository;
     this.#dependencies = { ...dependencies, previewTtlMs: dependencies.previewTtlMs ?? 15 * 60 * 1000 };
   }
 
@@ -126,7 +130,7 @@ export class ImportPreviewService {
     const templateVersion = validateMetadata(workbook, input.kind);
     const rawRows = extractRawRows(workbook, input.kind);
     return this.#remember(buildPreview(
-      this.#store.read(),
+      this.#repository.read((queries) => queries.importBatches.getContext()),
       input.kind,
       templateVersion,
       rawRows,
@@ -143,7 +147,7 @@ export class ImportPreviewService {
       this.#previews.delete(previewId);
       throw new ImportPreviewNotFoundError();
     }
-    return this.#store.write({}, (data) => {
+    return this.#repository.write({}, (queries) => {
       const batch: ImportBatch = {
         id: this.#dependencies.id(),
         kind: preview.kind,
@@ -155,13 +159,13 @@ export class ImportPreviewService {
         resolutions: [],
         receipt: null,
       };
-      importBatches(data).push(batch);
+      queries.importBatches.saveBatch({ record: batch });
       return structuredClone(batch);
     });
   }
 
   getStaged(id: string): ImportBatch {
-    const batch = this.#store.getImportBatch(id);
+    const batch = this.#repository.read((queries) => queries.importBatches.getBatch({ id }));
     if (!batch || batch.status !== 'STAGED') throw new ImportBatchNotFoundError();
     return structuredClone(batch);
   }
@@ -169,7 +173,7 @@ export class ImportPreviewService {
   repreviewStaged(id: string): ImportPreview {
     const batch = this.getStaged(id);
     return this.#remember(buildPreview(
-      this.#store.read(),
+      this.#repository.read((queries) => queries.importBatches.getContext()),
       batch.kind,
       batch.templateVersion,
       batch.rawRows,
@@ -205,7 +209,7 @@ export class ImportPreviewService {
 }
 
 const buildPreview = (
-  data: DatabaseState,
+  data: ImportContext,
   kind: ImportKind,
   templateVersion: string,
   rawRows: RawRow[],
@@ -234,8 +238,8 @@ const buildPreview = (
   };
 };
 
-const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: ImportMode) => {
-  const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강신청');
+const analyzeApplications = (data: ImportContext, rawRows: RawRow[], mode: ImportMode) => {
+  const sourceRows = rawRows.filter(({ sheet, row }) => sheet === '수강신청' && row > 1);
   const issues: ImportIssue[] = [];
   const seen = new Set<string>();
   for (const row of sourceRows) {
@@ -270,7 +274,8 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
       || candidate.choices.some(({ preference }) => preference === null)
       || !candidate.semesterName
       || !candidate.memberName
-      || (candidate.affiliation?.length ?? 0) > 200;
+      || (candidate.ministry?.length ?? 0) > 200
+      || (candidate.applicantNote?.length ?? 0) > 2000;
     const existing = findApplication(data, candidate.semesterName, candidate.memberName);
     candidate.removedCourseNames = existing && mode === 'REPLACE_APPLICATION'
       ? removedCourseNames(data, existing, candidate)
@@ -278,6 +283,7 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
     if (!existing && !qualityConflict) insertCandidates += 1;
     else if (existing && applicationMatches(data, existing, candidate)) identicalRows += candidate.sourceRowCount;
     else conflicts += 1;
+    issues.push(...candidateWarnings(data, candidate, contextChanges));
   }
   return {
     sourceRowCount: sourceRows.length,
@@ -294,9 +300,13 @@ const analyzeApplications = (data: DatabaseState, rawRows: RawRow[], mode: Impor
 const applicationCandidate = (first: RawRow, issues: ImportIssue[]): ApplicationCandidate => {
   const semesterName = clean(first.cells['학기명']);
   const memberName = clean(first.cells['회원명']);
-  const affiliation = clean(first.cells['학생 소속']) || null;
-  if (affiliation && affiliation.length > 200) issues.push(requiredRowIssue(
-    'AFFILIATION_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', first, '학생 소속',
+  const ministry = clean(first.cells['학생 소속']) || null;
+  const applicantNote = '신청자 메모' in first.cells ? clean(first.cells['신청자 메모']) || null : undefined;
+  if (applicantNote && applicantNote.length > 2000) issues.push(requiredRowIssue(
+    'APPLICANT_NOTE_TOO_LONG', '신청자 메모는 2000자 이내로 입력하세요.', first, '신청자 메모',
+  ));
+  if (ministry && ministry.length > 200) issues.push(requiredRowIssue(
+    'MINISTRY_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', first, '학생 소속',
   ));
   if (!semesterName) issues.push(requiredRowIssue('SEMESTER_NAME_REQUIRED', 'Semester name is required', first, '학기명'));
   if (!memberName) issues.push(requiredRowIssue('MEMBER_NAME_REQUIRED', 'Member name is required', first, '회원명'));
@@ -313,17 +323,11 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   }
 
   const choices: ApplicationCandidate['choices'] = [];
-  const seenCourses = new Set<string>();
   for (const [column, value] of Object.entries(first.cells)) {
     const match = /^(\d+)순위 강좌$/.exec(column);
     if (!match) continue;
     const courseName = clean(value);
     if (!courseName) continue;
-    const key = nameKey(courseName);
-    if (seenCourses.has(key)) issues.push(requiredRowIssue(
-      'DUPLICATE_CHOICE_COURSE', 'Application course choice is duplicated', first, column,
-    ));
-    seenCourses.add(key);
     choices.push({ courseName, preference: Number(match[1]), sourceRefs: [{ sheet: first.sheet, row: first.row }] });
   }
   if (choices.length > MAX_CHOICES_PER_APPLICATION || choices.some(({ preference }) => (
@@ -335,7 +339,8 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   return {
     semesterName,
     memberName,
-    affiliation,
+    ministry,
+    ...(applicantNote !== undefined ? { applicantNote } : {}),
     applicationOrder,
     applicationOrderStatus,
     choices,
@@ -344,16 +349,16 @@ const applicationCandidate = (first: RawRow, issues: ImportIssue[]): Application
   };
 };
 
-const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
-  const sourceRows = rawRows.filter(({ sheet }) => sheet === '수강이력');
+const analyzeEnrollments = (data: ImportContext, rawRows: RawRow[]) => {
+  const sourceRows = rawRows.filter(({ sheet, row }) => sheet === '수강이력' && row > 1);
   const issues: ImportIssue[] = [];
   const contextChanges = contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '개설강좌'), 'SEMESTER_COURSE', issues, 'ENROLLMENTS');
   const candidates = sourceRows.map((row): EnrollmentCandidate => {
     const semesterName = clean(row.cells['학기명']);
     const memberName = clean(row.cells['회원명']);
-    const affiliation = clean(row.cells['학생 소속']) || null;
-    if (affiliation && affiliation.length > 200) issues.push(requiredRowIssue(
-      'AFFILIATION_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', row, '학생 소속',
+    const ministry = clean(row.cells['학생 소속']) || null;
+    if (ministry && ministry.length > 200) issues.push(requiredRowIssue(
+      'MINISTRY_TOO_LONG', '학생 소속은 200자 이내로 입력하세요.', row, '학생 소속',
     ));
     const courseName = clean(row.cells['강좌명']);
     const adminNote = clean(row.cells['관리자 메모']);
@@ -361,7 +366,7 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
     if (!memberName) issues.push(requiredRowIssue('MEMBER_NAME_REQUIRED', 'Member name is required', row, '회원명'));
     if (!courseName) issues.push(requiredRowIssue('COURSE_NAME_REQUIRED', 'Course name is required', row, '강좌명'));
     if (adminNote.length > 2000) issues.push(requiredRowIssue('ENROLLMENT_NOTE_TOO_LONG', 'Administrator note must be at most 2000 characters', row, '관리자 메모'));
-    return { semesterName, memberName, affiliation, courseName, adminNote, sourceRef: { sheet: row.sheet, row: row.row } };
+    return { semesterName, memberName, ministry, courseName, adminNote, sourceRef: { sheet: row.sheet, row: row.row } };
   });
 
   const groups = new Map<string, EnrollmentCandidate[]>();
@@ -390,7 +395,7 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   let conflicts = 0;
   const pending: EnrollmentCandidate[] = [];
   for (const group of groups.values()) {
-    if (group.length > 1 || !group[0]!.semesterName || !group[0]!.memberName || !group[0]!.courseName || (group[0]!.affiliation?.length ?? 0) > 200) {
+    if (group.length > 1 || !group[0]!.semesterName || !group[0]!.memberName || !group[0]!.courseName || (group[0]!.ministry?.length ?? 0) > 200) {
       conflicts += group.length;
       continue;
     }
@@ -400,9 +405,9 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
       pending.push(group[0]!);
     }
     else if (nameKey(existing.courseName) === nameKey(group[0]!.courseName)) {
-      if (existing.affiliation !== group[0]!.affiliation) {
+      if (existing.ministry !== group[0]!.ministry) {
         conflicts += 1;
-        issues.push(requiredRowIssue('ENROLLMENT_AFFILIATION_CONFLICT',
+        issues.push(requiredRowIssue('ENROLLMENT_MINISTRY_CONFLICT',
           '기존 수강이력과 학생 소속이 다릅니다. 수강이력 화면에서 확인 후 수정하세요.', sourceRows.find(({ row }) => row === group[0]!.sourceRef.row)!, '학생 소속'));
         continue;
       }
@@ -462,13 +467,13 @@ const analyzeEnrollments = (data: DatabaseState, rawRows: RawRow[]) => {
   };
 };
 
-const analyzeContext = (data: DatabaseState, rawRows: RawRow[], issues: ImportIssue[]): ImportContextChange[] => [
+const analyzeContext = (data: ImportContext, rawRows: RawRow[], issues: ImportIssue[]): ImportContextChange[] => [
   ...contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '학기'), 'SEMESTER', issues),
   ...contextCandidates(data, rawRows.filter(({ sheet }) => sheet === '개설강좌'), 'SEMESTER_COURSE', issues),
 ];
 
 const contextCandidates = (
-  data: DatabaseState,
+  data: ImportContext,
   rows: RawRow[],
   entity: ImportContextChange['entity'],
   issues: ImportIssue[],
@@ -539,7 +544,7 @@ const contextCandidates = (
 };
 
 const contextValue = (
-  data: DatabaseState,
+  data: ImportContext,
   entity: ImportContextChange['entity'],
   semesterName: string,
   courseName?: string,
@@ -559,7 +564,7 @@ const validateMetadata = (workbook: import('@excel.js/exceljs').Workbook, kind: 
   if (
     !metadata
     || metadata.getCell('A1').text !== 'templateVersion'
-    || !['2', TEMPLATE_VERSIONS[kind]].includes(metadata.getCell('B1').text)
+    || !['2', '3', TEMPLATE_VERSIONS[kind]].includes(metadata.getCell('B1').text)
     || metadata.getCell('A2').text !== 'kind'
     || metadata.getCell('B2').text !== kind
   ) throw new WorkbookValidationError([{
@@ -613,10 +618,10 @@ const requiredRowIssue = (code: string, message: string, row: RawRow, column: st
 });
 
 const findApplication = (
-  data: DatabaseState,
+  data: ImportContext,
   semesterName: string,
   memberName: string,
-): DatabaseState['applications'][number] | undefined => {
+): ImportContext['applications'][number] | undefined => {
   const semester = data.semesters.find((item) => item.nameKey === nameKey(semesterName));
   const member = data.members.find((item) => item.nameKey === nameKey(memberName));
   return semester && member
@@ -625,14 +630,15 @@ const findApplication = (
 };
 
 const applicationMatches = (
-  data: DatabaseState,
-  application: DatabaseState['applications'][number],
+  data: ImportContext,
+  application: ImportContext['applications'][number],
   candidate: ApplicationCandidate,
 ): boolean => {
   if (
     application.applicationOrderStatus !== candidate.applicationOrderStatus
     || application.applicationOrder !== candidate.applicationOrder
-    || application.affiliation !== candidate.affiliation
+    || application.ministry !== candidate.ministry
+    || (candidate.applicantNote !== undefined && application.applicantNote !== candidate.applicantNote)
   ) return false;
   const actual = data.applicationChoices
     .filter((choice) => choice.applicationId === application.id)
@@ -646,7 +652,7 @@ const applicationMatches = (
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 };
 
-const findEnrollment = (data: DatabaseState, semesterName: string, memberName: string): { courseName: string; affiliation: string | null } | null => {
+const findEnrollment = (data: ImportContext, semesterName: string, memberName: string): { courseName: string; ministry: string | null } | null => {
   const semester = data.semesters.find((item) => item.nameKey === nameKey(semesterName));
   const member = data.members.find((item) => item.nameKey === nameKey(memberName));
   if (!semester || !member) return null;
@@ -658,12 +664,12 @@ const findEnrollment = (data: DatabaseState, semesterName: string, memberName: s
   if (!enrollment) return null;
   const semesterCourse = data.semesterCourses.find((item) => item.id === enrollment.semesterCourseId);
   const course = semesterCourse && data.courses.find((item) => item.id === semesterCourse.courseId);
-  return course ? { courseName: course.name, affiliation: enrollment.affiliation } : null;
+  return course ? { courseName: course.name, ministry: enrollment.ministry } : null;
 };
 
 const removedCourseNames = (
-  data: DatabaseState,
-  application: DatabaseState['applications'][number],
+  data: ImportContext,
+  application: ImportContext['applications'][number],
   candidate: ApplicationCandidate,
 ): string[] => {
   const expected = new Set(candidate.choices.map(({ courseName }) => nameKey(courseName)));
@@ -683,6 +689,49 @@ const warningDigest = (issues: ImportIssue[]): string => createHash('sha256')
   .update(JSON.stringify(issues.filter(({ severity }) => severity === 'WARNING')))
   .digest('hex');
 
+const candidateWarnings = (
+  data: ImportContext,
+  candidate: ApplicationCandidate,
+  changes: ImportContextChange[],
+): ImportIssue[] => {
+  const member = data.members.find(({ nameKey: key }) => key === nameKey(candidate.memberName));
+  if (!member) return [];
+  const semester = data.semesters.find(({ nameKey: key }) => key === nameKey(candidate.semesterName));
+  const change = changes.find((change) => change.entity === 'SEMESTER'
+    && nameKey(change.semesterName) === nameKey(candidate.semesterName));
+  const semesterOrders = change?.status === 'NEW' ? [change.fileValue]
+    : change?.status === 'EXISTING_CONFLICT' ? [semester?.order ?? null, change.fileValue]
+      : [semester?.order ?? null];
+  const choices = candidate.choices.flatMap((choice) => {
+    const course = data.courses.find(({ nameKey: key }) => key === nameKey(choice.courseName));
+    if (!course) return [];
+    const semesterCourse = data.semesterCourses.find((item) => item.semesterId === semester?.id && item.courseId === course.id);
+    return [{ semesterCourseId: semesterCourse?.id ?? course.id, courseId: course.id,
+      courseName: course.name, preference: choice.preference }];
+  });
+  const history = data.enrollments.filter(({ memberId }) => memberId === member.id).flatMap((enrollment) => {
+    const course = data.semesterCourses.find(({ id }) => id === enrollment.semesterCourseId);
+    if (!course || course.semesterId === semester?.id) return [];
+    const historySemester = data.semesters.find(({ id }) => id === course.semesterId);
+    const change = changes.find((change) => change.entity === 'SEMESTER'
+      && nameKey(change.semesterName) === historySemester?.nameKey);
+    const orders = change?.status === 'EXISTING_CONFLICT'
+      ? [historySemester?.order ?? null, change.fileValue] : [historySemester?.order ?? null];
+    return orders.map((semesterOrder) => ({ courseId: course.courseId, semesterOrder }));
+  });
+  const warnings = new Map(semesterOrders.flatMap((semesterOrder) => (
+    applicationWarnings({ memberId: member.id, semesterOrder, choices, history })
+  )).map((warning) => [`${warning.code}\0${warning.semesterCourseId}`, warning]));
+  return [...warnings.values()].flatMap((warning) => (
+    candidate.choices.filter(({ courseName }) => nameKey(courseName) === nameKey(warning.courseName)).flatMap((choice) => (
+      choice.sourceRefs.map((source): ImportIssue => ({
+        code: warning.code, message: warning.message, severity: 'WARNING', blockingStages: [], acknowledgementStages: [],
+        subject: { entityType: 'Application', memberId: member.id },
+        source: { ...source, column: `${choice.preference}순위 강좌` }, detail: { preferences: warning.preferences },
+      }))
+    ))
+  ));
+};
+
 const clean = (value: string | null | undefined): string => typeof value === 'string' ? value.trim() : '';
 const nameKey = (value: string | null | undefined): string => clean(value).normalize('NFC');
-const importBatches = (data: DatabaseState): ImportBatch[] => data.importBatches as unknown as ImportBatch[];

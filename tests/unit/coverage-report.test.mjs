@@ -9,7 +9,7 @@ import test from 'node:test';
 const measures = (covered, total) => Object.fromEntries(['lines', 'branches', 'functions', 'statements']
   .map((key) => [key, { total, covered, pct: Math.floor(10000 * covered / total) / 100 }]));
 
-test('creates fixed-path coverage badges and an HTML summary without changing README', () => {
+test('creates branch-local README badges and a summary alongside Pages without changing README', () => {
   const script = fileURLToPath(new URL('../../scripts/coverage-report.mjs', import.meta.url));
   const total = measures(6, 16);
   const cases = [
@@ -38,6 +38,12 @@ test('creates fixed-path coverage badges and an HTML summary without changing RE
         const frontendBadge = readFileSync(join(directory, 'coverage/pages/coverage/frontend.svg'), 'utf8');
         const rootPage = readFileSync(join(directory, 'coverage/pages/index.html'), 'utf8');
         const page = readFileSync(join(directory, 'coverage/pages/coverage/index.html'), 'utf8');
+        assert.equal(readFileSync(join(directory, 'docs/coverage-report/backend.svg'), 'utf8'), backendBadge);
+        assert.equal(readFileSync(join(directory, 'docs/coverage-report/frontend.svg'), 'utf8'), frontendBadge);
+        const readmeSummary = readFileSync(join(directory, 'docs/coverage-report/README.md'), 'utf8');
+        assert.match(readmeSummary, /npm run test:coverage/);
+        assert.match(readmeSummary, /\| Backend \| 37\.50% \|/);
+        assert.match(readmeSummary, /\| Frontend \| 37\.50% \|/);
         assert.match(summary, /\| Backend \| 37\.50% \|/);
         assert.match(summary, /\| Frontend \| 37\.50% \|/);
         assert.match(backendBadge, /Backend coverage: 37\.50%/);
@@ -48,6 +54,7 @@ test('creates fixed-path coverage badges and an HTML summary without changing RE
         assert.match(page, /<td>Frontend<\/td>\s*<td>37\.50%<\/td>/);
       } else {
         assert.equal(existsSync(join(directory, 'coverage/pages/coverage/index.html')), false);
+        assert.equal(existsSync(join(directory, 'docs/coverage-report')), false);
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
@@ -89,6 +96,37 @@ test('weights file coverage and warns separately below 80 percent only on PRs', 
       const badge = readFileSync(join(directory, 'coverage/pages/coverage/backend.svg'), 'utf8');
       assert.match(badge, new RegExp(`Backend coverage: ${input.pct}%`));
       assert.match(badge, new RegExp(Number(input.pct) >= 80 ? '#4c1' : '#fe7d37'));
+      const readmeSummary = readFileSync(join(directory, 'docs/coverage-report/README.md'), 'utf8');
+      assert.ok(readmeSummary.includes(`| Backend | ${input.pct}% |`));
+      assert.equal(readmeSummary.includes('PR 권장 기준'), false);
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
+});
+
+test('refreshes branch-local badges and summary when measured checkout coverage changes', () => {
+  const script = fileURLToPath(new URL('../../scripts/coverage-report.mjs', import.meta.url));
+  const cases = [
+    { backend: [3, 8], frontend: [3, 8], backendPct: '37.50', frontendPct: '37.50' },
+    { backend: [8, 8], frontend: [0, 8], backendPct: '100.00', frontendPct: '0.00' },
+  ];
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'glorycourse-coverage-refresh-')));
+  try {
+    mkdirSync(join(directory, 'coverage'));
+    for (const input of cases) {
+      const report = {
+        total: measures(input.backend[0] + input.frontend[0], input.backend[1] + input.frontend[1]),
+        [join(directory, 'backend/src/main.ts')]: measures(...input.backend),
+        [join(directory, 'frontend/app.js')]: measures(...input.frontend),
+      };
+      writeFileSync(join(directory, 'coverage/coverage-summary.json'), JSON.stringify(report));
+      const result = spawnSync(process.execPath, [script], { cwd: directory, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+      const summary = readFileSync(join(directory, 'docs/coverage-report/README.md'), 'utf8');
+      for (const [name, pct] of [['Backend', input.backendPct], ['Frontend', input.frontendPct]]) {
+        const badge = readFileSync(join(directory, `docs/coverage-report/${name.toLowerCase()}.svg`), 'utf8');
+        assert.ok(badge.includes(`${name} coverage: ${pct}%`));
+        assert.ok(summary.includes(`| ${name} | ${pct}% |`));
+      }
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

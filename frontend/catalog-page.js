@@ -1,6 +1,6 @@
 import { copySemesterCourses, parseSemesterCourses } from './catalog-view.js';
 
-/** @typedef {import('../backend/src/storage/store.ts').SemesterRecord} Semester */
+/** @typedef {import('../backend/src/domain/records.ts').SemesterRecord} Semester */
 /** @typedef {ReturnType<import('../backend/src/services/applications.ts').ApplicationService['getSemesterContext']>} CatalogContext */
 /**
  * @param {{

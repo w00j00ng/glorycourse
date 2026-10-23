@@ -7,14 +7,15 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { buildAllocationSnapshot } from '../../backend/src/allocation/snapshot.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
+import { ApplicationService } from '../../backend/src/services/applications.ts';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const timestamp = '2026-09-26T00:00:00.000Z';
 const stamped = (record) => ({ ...record, createdAt: timestamp, updatedAt: timestamp });
 const named = (id, name) => stamped({ id, name, nameKey: name });
 
-const mixedRecords = (count) => {
+const mixedRecords = (count, choicesPerApplication = 1) => {
   const data = structuredClone(empty);
   data.semesters = [
     { ...named('current', '현재 학기'), order: 2, allocationInputRevision: 0 },
@@ -25,16 +26,18 @@ const mixedRecords = (count) => {
   data.semesterCourses = data.semesters.flatMap((semester) => data.courses.map((course) => stamped({
     id: `${semester.id}-${course.id}`, semesterId: semester.id, courseId: course.id, capacity: count,
   })));
-  data.applications = data.members.map((member, index) => stamped({
-    id: `application-${index}`, semesterId: 'current', memberId: member.id, affiliation: null, applicationOrder: index + 1,
+  data.applications = data.members.map((member, index) => stamped({ applicantNote: null,
+    id: `application-${index}`, semesterId: 'current', memberId: member.id, ministry: null, applicationOrder: index + 1,
     applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null, revision: 0,
   }));
-  data.applicationChoices = data.applications.map((application, index) => stamped({
-    id: `choice-${index}`, applicationId: application.id, semesterCourseId: `current-course-${index % 10}`,
-    preference: 1, sourceRefs: [{ importBatchId: 'import', sheet: '신청', row: index + 2 }],
-  }));
+  data.applicationChoices = data.applications.flatMap((application, index) => (
+    Array.from({ length: choicesPerApplication }, (_, rank) => stamped({
+      id: `choice-${index}-${rank}`, applicationId: application.id, semesterCourseId: `current-course-${index % 10}`,
+      preference: rank + 1, sourceRefs: [{ importBatchId: 'import', sheet: '신청', row: index + 2 }],
+    }))
+  ));
   data.enrollments = data.members.map((member, index) => stamped({
-    id: `enrollment-${index}`, semesterCourseId: `past-course-${index % 10}`, memberId: member.id, affiliation: null,
+    id: `enrollment-${index}`, semesterCourseId: `past-course-${index % 10}`, memberId: member.id, ministry: null,
     exceptionAcknowledgement: null, revision: 0,
   }));
   data.importBatches = [{
@@ -54,7 +57,7 @@ const mixedRecords = (count) => {
     enrollmentReportDownloadedAt: null, enrollmentReportStoreRevision: null, finalization: null,
   })];
   data.allocationDraftItems = data.members.map((member, index) => ({
-    id: `draft-item-${index}`, draftId: 'draft', memberId: member.id, affiliation: null, sourceApplicationId: `application-${index}`,
+    id: `draft-item-${index}`, draftId: 'draft', memberId: member.id, ministry: null, sourceApplicationId: `application-${index}`,
     memberNameAtGeneration: member.name, autoSemesterCourseId: null, autoDecision: 'NOT_EVALUATED',
     autoReasonCode: 'MANUAL_ONLY', autoReasonDetail: { preferenceAttempts: [], fallback: null },
     finalSemesterCourseId: null, finalDecision: 'REJECTED', finalReasonCode: null, finalReasonDetail: null,
@@ -62,12 +65,6 @@ const mixedRecords = (count) => {
   }));
   return data;
 };
-
-const editMember = (store, edit) => store.write({}, (data) => {
-  data.members[0].name = `수정 회원 ${edit}`;
-  data.members[0].nameKey = `수정 회원 ${edit}`;
-  data.members[0].updatedAt = `2026-09-26T00:00:0${edit}.000Z`;
-});
 
 // Count SQLite row changes, including foreign-key cascades, outside the timed samples.
 const changedRowsFor = async (action) => {
@@ -83,32 +80,52 @@ const changedRowsFor = async (action) => {
 };
 
 for (const members of [1_000, 10_000]) {
-  test(`persists one member edit without rewriting mixed records for ${members} members`, async (context) => {
-    const directory = await mkdtemp(join(tmpdir(), 'glorycourse-storage-scale-'));
+  test(`SQL repository preserves mixed records when editing one of ${members} members`, async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), 'glorycourse-repository-scale-'));
     context.after(() => rm(directory, { recursive: true, force: true }));
     const initial = mixedRecords(members);
-    const file = join(directory, 'data.sqlite');
-    const store = await openStore(file, initial);
-    const samples = [];
-    for (let edit = 1; edit <= 3; edit++) {
+    const file = join(directory, 'db.sqlite');
+    const repository = await openRepository(file, initial);
+    const request = { id: 'member-0', name: '수정 회원', nameKey: '수정 회원', updatedAt: '2026-10-21T00:00:00.000Z' };
+    let elapsed;
+    const changedRows = await changedRowsFor(async () => {
       const started = performance.now();
-      await editMember(store, edit);
-      samples.push(performance.now() - started);
-    }
-    const changedRows = await changedRowsFor(() => editMember(store, 4));
+      await repository.write({}, (queries) => {
+        const current = queries.members.get({ id: request.id });
+        queries.members.update({ record: { ...current, ...request } });
+      });
+      elapsed = performance.now() - started;
+    });
     const expected = structuredClone(initial);
-    expected.meta.storeRevision += 4;
-    expected.members[0] = {
-      ...expected.members[0], name: '수정 회원 4', nameKey: '수정 회원 4', updatedAt: '2026-09-26T00:00:04.000Z',
-    };
-    assert.deepEqual(store.read(), expected, 'only the member and store revision change');
-    assert.deepEqual((await openStore(file, empty)).read(), expected, 'restart retains every record and snapshot');
-    const medianMs = [...samples].sort((left, right) => left - right)[1];
-    assert.ok(medianMs < 60_000, `one member edit took ${Math.round(medianMs)} ms`);
-    context.diagnostic(JSON.stringify({
-      scenario: 'one-member-edit', members, medianMs: Math.round(medianMs * 10) / 10,
-      samplesMs: samples.map(Math.round), changedRows,
-    }));
-    assert.ok(changedRows <= 4, `one member edit changed ${changedRows} SQLite rows`);
+    Object.assign(expected.members[0], request);
+    expected.meta.storeRevision += 1;
+    const reopened = await openRepository(file, empty);
+    try {
+      assert.deepEqual(reopened.snapshot(), expected);
+      assert.equal(changedRows, 2, 'only the member and store revision are persisted');
+      assert.ok(elapsed < 60_000, `one SQL edit took ${Math.round(elapsed)} ms`);
+      context.diagnostic(JSON.stringify({ scenario: 'repository-one-member-edit', members,
+        elapsedMs: Math.round(elapsed * 10) / 10, changedRows }));
+    } finally { reopened.close(); repository.close(); }
   });
 }
+
+test('an administrator filters 10000 applications with five repeated choices without multiplying applicants', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-application-filter-scale-'));
+  const repository = await openRepository(join(directory, 'db.sqlite'), mixedRecords(10_000, 5));
+  context.after(async () => { repository.close(); await rm(directory, { recursive: true, force: true }); });
+  const applications = new ApplicationService(repository, { id: () => 'unused', now: () => new Date(timestamp) });
+  const started = performance.now();
+  const result = applications.listPage({ semesterId: 'current', courseId: 'course-0', page: 1, limit: 50 });
+  const elapsedMs = Math.round((performance.now() - started) * 10) / 10;
+  assert.equal(result.total, 1_000);
+  assert.equal(result.items.length, 50);
+  for (const application of result.items) {
+    assert.deepEqual(application.choices.map(({ preference }) => preference), [1, 2, 3, 4, 5]);
+    assert.deepEqual(application.warnings.map(({ code, preferences }) => ({ code, preferences })),
+      [{ code: 'RETAKE', preferences: [1, 2, 3, 4, 5] }]);
+  }
+  context.diagnostic(JSON.stringify({ scenario: 'repeated-choice-course-filter', applicants: 10_000,
+    choices: 50_000, matchedApplicants: result.total, elapsedMs }));
+  assert.ok(elapsedMs < 10_000, `application course filter took ${elapsedMs} ms`);
+});

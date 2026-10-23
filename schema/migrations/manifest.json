@@ -1,35 +1,77 @@
 {
-  "targetVersion": 1791072000,
+  "targetVersion": 1792540800,
   "migrations": [
     {
       "version": 1790294400,
-      "name": "1790294400_init.sql",
-      "checksum": "7ecdada91e71075095cdf0e09e9787f3f78e81c96348fb171abdfcf369cb2c6f"
+      "name": "1790294400_init.up.sql",
+      "checksum": "8859673aa868e0fbf868cc0aa397bacab9f6b184b6d367b23fedbece2ddf5329",
+      "down": {
+        "name": "1790294400_init.down.sql",
+        "checksum": "8cc22eb1451fa063cba227128b3615c9b96ae2d8b449536cf7ed0869f0cbe34c"
+      }
     },
     {
       "version": 1790314390,
-      "name": "1790314390_restore_receipts.sql",
-      "checksum": "83bd13e73097234ae966c33ed47f4a7026ff70de6232dcb77c38b2308d7763b0"
+      "name": "1790314390_restore_receipts.up.sql",
+      "checksum": "83bd13e73097234ae966c33ed47f4a7026ff70de6232dcb77c38b2308d7763b0",
+      "down": {
+        "name": "1790314390_restore_receipts.down.sql",
+        "checksum": "d0b68280f6cd55816638e3eea861053a96ce53826b92ff84bb41976181e4df5a"
+      }
     },
     {
       "version": 1790319873,
-      "name": "1790319873_drop_enrollment_draft_source.sql",
-      "checksum": "029fb4483506a798dc6204d2b8a0cc90d465ca03fb01d5f1e62a784422a2242e"
+      "name": "1790319873_drop_enrollment_draft_source.up.sql",
+      "checksum": "029fb4483506a798dc6204d2b8a0cc90d465ca03fb01d5f1e62a784422a2242e",
+      "down": {
+        "name": "1790319873_drop_enrollment_draft_source.down.sql",
+        "checksum": "7ef4fd6461e238e06146336716596963b657b1f32acd65c8819a98dc1fc9d05d"
+      }
     },
     {
       "version": 1790332153,
-      "name": "1790332153_add_enrollment_report_revision.sql",
-      "checksum": "0cfeb188733fb06332728b21ea3967bfeaf1e4cf6b602a23129bccfda46b7f28"
+      "name": "1790332153_add_enrollment_report_revision.up.sql",
+      "checksum": "0cfeb188733fb06332728b21ea3967bfeaf1e4cf6b602a23129bccfda46b7f28",
+      "down": {
+        "name": "1790332153_add_enrollment_report_revision.down.sql",
+        "checksum": "87b46b488712a53cc75b85f4d094585058e84085ab2546bd46749fed7d84451f"
+      }
     },
     {
       "version": 1790336872,
-      "name": "1790336872_detach_finalization_receipts.sql",
-      "checksum": "09405bd16280ee8005e04949ccdfb141e2422bc8e95e4c7ff1aa160053113589"
+      "name": "1790336872_detach_finalization_receipts.up.sql",
+      "checksum": "09405bd16280ee8005e04949ccdfb141e2422bc8e95e4c7ff1aa160053113589",
+      "down": {
+        "name": "1790336872_detach_finalization_receipts.down.sql",
+        "checksum": "75ee3e32049576bcb8a9b45cd0280427ec7f5607b47237f7f0427a00781b9818"
+      }
     },
     {
       "version": 1791072000,
-      "name": "1791072000_add_student_affiliation.sql",
-      "checksum": "2d78897d8500c9bf4dbc6a06467849c4843927b5949f1852b09c620dc7c351c9"
+      "name": "1791072000_add_student_affiliation.up.sql",
+      "checksum": "2d78897d8500c9bf4dbc6a06467849c4843927b5949f1852b09c620dc7c351c9",
+      "down": {
+        "name": "1791072000_add_student_affiliation.down.sql",
+        "checksum": "9ca037fe3c2dd4e3d8966a786484c5b66c374ae361ff0146a3b5d46806d54e18"
+      }
+    },
+    {
+      "version": 1791158400,
+      "name": "1791158400_rename_student_ministry.up.sql",
+      "checksum": "7251fe03e2e4664dc4718797d9013483151bb2c97a8cfa0098c5620da0650d4f",
+      "down": {
+        "name": "1791158400_rename_student_ministry.down.sql",
+        "checksum": "86a9f9bc96a68f533e95f5e30475dacce1a8436c986ec5b97b01438d19613542"
+      }
+    },
+    {
+      "version": 1792540800,
+      "name": "1792540800_application_notes_repeated_choices.up.sql",
+      "checksum": "90aad6b3681b59a8b3c2a80a4f312bd46cee8b62548a7a764880a95b3e47a039",
+      "down": {
+        "name": "1792540800_application_notes_repeated_choices.down.sql",
+        "checksum": "f50ae43d1da100156021e0951570e575abccb875bf0b57a4729ad1dbf77d15e8"
+      }
     }
   ]
 }

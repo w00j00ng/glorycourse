@@ -1,42 +1,41 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { createImportTemplate, exportApplicationRows, exportRawRows } from '../excel/workbooks.ts';
-import { APPLICATION_SORTS, ApplicationService, type ApplicationInput, type ApplicationSort } from '../services/applications.ts';
+import { APPLICATION_REVIEW_STATUSES, APPLICATION_SORTS, ENROLLMENT_SORTS, type ApplicationReviewStatus, type ApplicationSort, type EnrollmentSort } from '../domain/query-models.ts';
+import { ApplicationService, type ApplicationInput } from '../services/applications.ts';
 import { DraftService, type CreateDraftInput, type DraftItemInput } from '../services/drafts.ts';
-import { ENROLLMENT_SORTS, EnrollmentService, type EnrollmentSort } from '../services/enrollments.ts';
+import { EnrollmentService } from '../services/enrollments.ts';
 import { FinalizationService } from '../services/finalization.ts';
 import { ImportCommitService } from '../services/import-commit.ts';
 import { ImportPreviewService, type ImportMode, type ImportPreview } from '../services/import-preview.ts';
-import type { Store } from '../storage/store.ts';
+import type { Repository } from '../repository/database.ts';
 import { HttpError } from './errors.ts';
 import { parseMultipart } from './multipart.ts';
 import type { ApiHandler, ApiRequest, ApiResponse } from '../server.ts';
 
-type NamedResource = { id: string; name: string };
-type SemesterResource = NamedResource & { order: number | null };
 type EnrollmentPreviewInput = Parameters<EnrollmentService['preview']>[0];
 type PreparedEnrollmentInput = Pick<Parameters<EnrollmentService['execute']>[0],
   'preparedActionToken' | 'acknowledgedWarningDigest' | 'acknowledgementNote'>;
 
-export const createApiRouter = (store: Store): ApiHandler => {
+export const createApiRouter = (repository: Repository): ApiHandler => {
   const clock = () => new Date();
-  const applications = new ApplicationService(store, { id: randomUUID, now: clock });
-  const enrollments = new EnrollmentService(store, {
+  const applications = new ApplicationService(repository, { id: randomUUID, now: clock });
+  const enrollments = new EnrollmentService(repository, {
     id: randomUUID,
     now: clock,
     secret: randomBytes(32),
   });
-  const importPreviews = new ImportPreviewService(store, { id: randomUUID, now: clock });
-  const drafts = new DraftService(store, {
+  const importPreviews = new ImportPreviewService(repository, { id: randomUUID, now: clock });
+  const drafts = new DraftService(repository, {
     id: randomUUID,
     now: clock,
     seed: () => randomBytes(24).toString('base64url'),
   });
-  const importCommits = new ImportCommitService(store, importPreviews, {
+  const importCommits = new ImportCommitService(repository, importPreviews, {
     id: randomUUID,
     now: clock,
   });
-  const finalization = new FinalizationService(store, {
+  const finalization = new FinalizationService(repository, {
     id: randomUUID,
     now: clock,
     secret: randomBytes(32),
@@ -52,8 +51,12 @@ export const createApiRouter = (store: Store): ApiHandler => {
     }
 
     if (request.method === 'GET' && ['/semesters', '/members', '/courses'].includes(path)) {
-      const key = path.slice(1) as 'semesters' | 'members' | 'courses';
-      return ok(page(named(store.catalog(key), key), request, ({ name }) => name));
+      const filters = { query: request.query.get('query') ?? undefined, ...pagination(request) };
+      return ok(repository.read((queries) => {
+        if (path === '/semesters') return queries.semesters.listPage(filters);
+        if (path === '/members') return queries.members.listPage(filters);
+        return queries.courses.listPage(filters);
+      }));
     }
 
     const semester = match(path, /^\/semesters\/([^/]+)$/);
@@ -109,7 +112,7 @@ export const createApiRouter = (store: Store): ApiHandler => {
 
     if (path === '/applications') {
       if (request.method === 'GET') {
-        return ok(page(applications.list(applicationFilters(request)), request));
+        return ok(applications.listPage({ ...applicationFilters(request), ...pagination(request) }));
       }
       if (request.method === 'POST') {
         return { status: 201, json: await applications.create(json<ApplicationInput>(request)) };
@@ -140,7 +143,8 @@ export const createApiRouter = (store: Store): ApiHandler => {
       return xlsx(await exportApplicationRows(items.flatMap((item) => item.choices.map((choice) => ({
         semesterName: item.semesterName,
         memberName: item.memberName,
-        affiliation: item.affiliation,
+        ministry: item.ministry,
+        applicantNote: item.applicantNote,
         applicationOrder: item.applicationOrder,
         courseName: choice.courseName,
         preference: choice.preference,
@@ -187,7 +191,7 @@ export const createApiRouter = (store: Store): ApiHandler => {
 
     if (path === '/enrollments') {
       if (request.method === 'GET') {
-        return ok(page(enrollments.list(enrollmentFilters(request)), request));
+        return ok(enrollments.listPage({ ...enrollmentFilters(request), ...pagination(request) }));
       }
       if (request.method === 'POST') {
         return {
@@ -205,8 +209,10 @@ export const createApiRouter = (store: Store): ApiHandler => {
       return xlsx(await createImportTemplate('ENROLLMENTS'), 'glorycourse-enrollments-template.xlsx');
     }
     if (request.method === 'GET' && path === '/enrollments/export') {
-      const items = enrollments.list(enrollmentFilters(request));
-      return xlsx(await enrollmentWorkbook(items, store.enrollmentData().semesterCourses), 'glorycourse-enrollments.xlsx');
+      const data = repository.read((queries) => ({
+        items: queries.enrollments.list(enrollmentFilters(request)), courses: queries.semesterCourses.list(),
+      }));
+      return xlsx(await enrollmentWorkbook(data.items, data.courses), 'glorycourse-enrollments.xlsx');
     }
 
     const semesterEnrollments = match(path, /^\/semesters\/([^/]+)\/enrollments$/);
@@ -259,7 +265,7 @@ export const createApiRouter = (store: Store): ApiHandler => {
       if (request.method !== 'POST') return methodNotAllowed();
       const input = json<{ storeRevision: number; storeEpoch: string }>(request);
       const preview = importPreviews.getPreview(stageImport[1]);
-      const version = store.version();
+      const version = repository.version();
       if (
         input.storeRevision !== preview.storeRevision
         || input.storeEpoch !== preview.storeEpoch
@@ -287,7 +293,7 @@ export const createApiRouter = (store: Store): ApiHandler => {
     const importBatch = match(path, /^\/import-batches\/([^/]+)$/);
     if (importBatch) {
       if (request.method !== 'GET') return methodNotAllowed();
-      const batch = store.getImportBatch(importBatch[1]);
+      const batch = repository.read((queries) => queries.importBatches.getBatch({ id: importBatch[1] }));
       if (!batch) throw new HttpError(404, 'NOT_FOUND', '대상을 찾을 수 없습니다.');
       return ok(structuredClone(batch));
     }
@@ -314,10 +320,8 @@ export const createApiRouter = (store: Store): ApiHandler => {
 
     if (path === '/allocation-drafts') {
       if (request.method === 'GET') {
-        let items = drafts.list();
-        const semesterId = request.query.get('semesterId');
-        if (semesterId) items = items.filter((item) => item.semesterId === semesterId);
-        return ok(page(items, request, () => ''));
+        return ok(drafts.listPage({ semesterId: request.query.get('semesterId') ?? undefined,
+          query: request.query.get('query') ?? undefined, ...pagination(request) }));
       }
       if (request.method === 'POST') {
         return { status: 201, json: await drafts.create(json<CreateDraftInput>(request)) };
@@ -370,8 +374,12 @@ export const createApiRouter = (store: Store): ApiHandler => {
     if (enrollmentReport) {
       if (request.method === 'GET') return ok(finalization.reportStatus(enrollmentReport[1]));
       if (request.method !== 'POST') return methodNotAllowed();
-      const expectedStore = store.version();
-      const body = await enrollmentWorkbook(enrollments.list({ semesterId: enrollmentReport[1] }), store.enrollmentData().semesterCourses);
+      const data = repository.read((queries) => ({
+        expectedStore: queries.metadata(), items: queries.enrollments.list({ semesterId: enrollmentReport[1] }),
+        courses: queries.semesterCourses.list(),
+      }));
+      const expectedStore = data.expectedStore;
+      const body = await enrollmentWorkbook(data.items, data.courses);
       await finalization.recordEnrollmentReportDownload(enrollmentReport[1], expectedStore);
       return xlsx(body, 'glorycourse-enrollments.xlsx');
     }
@@ -447,14 +455,10 @@ const integerQuery = (request: ApiRequest, name: string): number => {
   return value;
 };
 
-const page = <T>(items: T[], request: ApiRequest, searchable?: (item: T) => string) => {
-  const query = searchable ? request.query.get('query')?.trim().normalize('NFC') ?? '' : '';
-  const filtered = query && searchable ? items.filter((item) => searchable(item).includes(query)) : items;
-  const pageNumber = positiveQuery(request, 'page', 1);
-  const limit = positiveQuery(request, 'limit', 50, 200);
-  const start = (pageNumber - 1) * limit;
-  return { items: filtered.slice(start, start + limit), page: pageNumber, limit, total: filtered.length };
-};
+const pagination = (request: ApiRequest) => ({
+  page: positiveQuery(request, 'page', 1),
+  limit: positiveQuery(request, 'limit', 50, 200),
+});
 
 const positiveQuery = (request: ApiRequest, name: string, fallback: number, maximum?: number): number => {
   const raw = request.query.get(name);
@@ -479,22 +483,6 @@ const match = (path: string, pattern: RegExp): RegExpMatchArray | null => {
   }
 };
 
-const named = (
-  items: ReadonlyArray<NamedResource & { order?: number | null; createdAt: string }>,
-  key: 'semesters' | 'members' | 'courses',
-): Array<NamedResource | SemesterResource> => {
-  const ordered = key === 'semesters'
-    ? [...items].sort((left, right) => (
-      (right.order ?? 0) - (left.order ?? 0)
-      || right.createdAt.localeCompare(left.createdAt)
-      || left.name.localeCompare(right.name)
-    ))
-    : items;
-  return ordered.map(({ id, name, order }) => (
-    key === 'semesters' ? { id, name, order: order ?? null } : { id, name }
-  ));
-};
-
 const recordFilters = (request: ApiRequest) => ({
   memberName: request.query.get('memberName') ?? undefined,
   semesterId: request.query.get('semesterId') ?? undefined,
@@ -506,7 +494,12 @@ const applicationFilters = (request: ApiRequest) => {
   if (sort !== null && !APPLICATION_SORTS.includes(sort as ApplicationSort)) {
     throw new HttpError(400, 'BAD_REQUEST', '수강신청 정렬 기준이 올바르지 않습니다.');
   }
-  return { ...recordFilters(request), ...(sort === null ? {} : { sort: sort as ApplicationSort }) };
+  const reviewStatus = request.query.get('reviewStatus');
+  if (reviewStatus !== null && !APPLICATION_REVIEW_STATUSES.includes(reviewStatus as ApplicationReviewStatus)) {
+    throw new HttpError(400, 'BAD_REQUEST', '수강신청 검토 상태가 올바르지 않습니다.');
+  }
+  return { ...recordFilters(request), ...(sort === null ? {} : { sort: sort as ApplicationSort }),
+    ...(reviewStatus === null ? {} : { reviewStatus: reviewStatus as ApplicationReviewStatus }) };
 };
 
 const enrollmentFilters = (request: ApiRequest) => {
@@ -530,7 +523,7 @@ const enrollmentWorkbook = (
     })),
     ...items.map((item, index) => ({
       sheet: '수강이력', row: index + 2,
-      cells: { 학기명: item.semesterName, 회원명: item.memberName, '학생 소속': item.affiliation, 강좌명: item.courseName, '관리자 메모': item.exceptionAcknowledgement?.note ?? '' },
+      cells: { 학기명: item.semesterName, 회원명: item.memberName, '학생 소속': item.ministry, 강좌명: item.courseName, '관리자 메모': item.exceptionAcknowledgement?.note ?? '' },
     })),
   ]);
 };

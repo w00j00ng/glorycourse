@@ -8,6 +8,7 @@ import {
   draftDecisionChanged,
   draftFinalSelection,
   filterDraftItems,
+  reasonLabel,
   draftItemPage,
   sortDraftItems,
 } from '../../frontend/draft-view.js';
@@ -112,7 +113,7 @@ test('pages a large draft after filtering and sorting without losing the selecte
 test('shows application order separately and keeps ranked choices concise in a draft', () => {
   const snapshot = {
     applications: [
-      { id: 'application-1', applicationOrder: 4 },
+      { id: 'application-1', applicationOrder: 4, applicantNote: '<b>신청 당시</b>\n메모' },
       { id: 'application-2', applicationOrder: null },
       { id: 'application-3', applicationOrder: 5 },
     ],
@@ -123,15 +124,27 @@ test('shows application order separately and keeps ranked choices concise in a d
     choices: [
       { applicationId: 'application-1', semesterCourseId: 'course-matthew', preference: 2 },
       { applicationId: 'application-1', semesterCourseId: 'course-genesis', preference: 1 },
+      { applicationId: 'application-1', semesterCourseId: 'course-genesis', preference: 4 },
       { applicationId: 'application-2', semesterCourseId: 'course-genesis', preference: null },
     ],
   };
 
   const summaries = draftApplicationSummaries(snapshot);
-  assert.deepEqual(summaries.get('application-1'), { applicationOrder: 4, choices: '1. 창세기 · 2. 마태복음' });
-  assert.deepEqual(summaries.get('application-2'), { applicationOrder: null, choices: '순위 미정: 창세기' });
-  assert.deepEqual(summaries.get('application-3'), { applicationOrder: 5, choices: '희망 강좌 없음' });
+  assert.deepEqual(summaries.get('application-1'), { applicationOrder: 4, choices: '1. 창세기 · 2. 마태복음 · 4. 창세기', applicantNote: '<b>신청 당시</b>\n메모' });
+  assert.deepEqual(summaries.get('application-2'), { applicationOrder: null, choices: '순위 미정: 창세기', applicantNote: null });
+  assert.deepEqual(summaries.get('application-3'), { applicationOrder: 5, choices: '희망 강좌 없음', applicantNote: null });
   assert.equal(snapshot.choices[0].preference, 2);
+});
+
+test('explains current and historical allocation reasons in Korean', () => {
+  const cases = [
+    ['RETAKE_PREFERENCE_ALLOCATED', '재수강 희망 배정'],
+    ['DUPLICATE_CHOICE_SKIPPED', '같은 강좌 중복 희망 건너뜀'],
+    ['ALLOCATED_TO_HIGHER_PRIORITY', '우선 단계 배정으로 미검토'],
+    ['ALREADY_TAKEN', '과거 수강'],
+    ['ALLOCATED_TO_HIGHER_PREFERENCE', '상위 희망 배정으로 미검토'],
+  ];
+  for (const [code, expected] of cases) assert.equal(reasonLabel(code), expected);
 });
 
 test('filters a long draft list by the member, visible course, and result category', () => {

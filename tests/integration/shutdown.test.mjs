@@ -15,11 +15,16 @@ test('protected shutdown finishes an accepted save and allows restart with saved
   t.after(() => releaseSave());
   const runtime = await startLocalServer({
     dataDirectory, staticDirectory: 'frontend',
-    apiHandler: async (request, { store }) => {
+    apiHandler: async (request, { repository }) => {
       if (request.path !== '/api/v1/save') return;
       saveStarted();
       await proceed;
-      await store.write({}, (data) => { data.meta.storeEpoch = 'saved-before-exit'; });
+      await repository.write({}, (queries) => {
+        queries.members.insert({ record: {
+          id: 'saved-before-exit', name: '저장된 회원', nameKey: '저장된 회원',
+          createdAt: '2026-09-22T00:00:00.000Z', updatedAt: '2026-09-22T00:00:00.000Z',
+        } });
+      });
       return { status: 200, json: { saved: true } };
     },
   });
@@ -46,5 +51,5 @@ test('protected shutdown finishes an accepted save and allows restart with saved
   await runtime.close();
   const restarted = await startLocalServer({ dataDirectory, staticDirectory: 'frontend' });
   t.after(() => restarted.close());
-  assert.equal(restarted.store.read().meta.storeEpoch, 'saved-before-exit');
+  assert.equal(restarted.repository.snapshot().members[0].id, 'saved-before-exit');
 });

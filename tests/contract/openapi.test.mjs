@@ -100,9 +100,9 @@ test('requires idempotency keys on irreversible commits', () => {
   }
 });
 
-test('accepts optional student affiliation on each manual input and rejects invalid values', () => {
+test('accepts optional student ministry on each manual input and rejects invalid values', () => {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
-  const rootId = 'https://glorycourse.local/affiliation-openapi.json';
+  const rootId = 'https://glorycourse.local/ministry-openapi.json';
   addFormats(ajv);
   ajv.addSchema({ ...api, $id: rootId }, rootId);
   const cases = [
@@ -113,11 +113,11 @@ test('accepts optional student affiliation on each manual input and rejects inva
   ];
   for (const { schema, input } of cases) {
     const validate = ajv.getSchema(`${rootId}#/components/schemas/${schema}`);
-    for (const { affiliation, expected } of [
-      { affiliation: '청년부', expected: true }, { affiliation: null, expected: true },
-      { affiliation: '', expected: true }, { affiliation: 42, expected: false },
-      { affiliation: '가'.repeat(201), expected: false },
-    ]) assert.equal(validate({ ...input, affiliation }), expected, `${schema}: ${JSON.stringify(validate.errors)}`);
+    for (const { ministry, expected } of [
+      { ministry: '청년부', expected: true }, { ministry: null, expected: true },
+      { ministry: '', expected: true }, { ministry: 42, expected: false },
+      { ministry: '가'.repeat(201), expected: false },
+    ]) assert.equal(validate({ ...input, ministry }), expected, `${schema}: ${JSON.stringify(validate.errors)}`);
     assert.equal(validate(input), true);
   }
 });

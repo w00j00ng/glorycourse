@@ -1,42 +1,28 @@
+import { applicationWarnings } from '../domain/application-warnings.ts';
+import type { QuerySession } from '../repository/queries.ts';
 import { MAX_CHOICES_PER_APPLICATION } from '../allocation/engine.ts';
+import type { Repository } from '../repository/database.ts';
+import type { MemberQueries } from '../repository/members.ts';
+import type { CourseQueries } from '../repository/courses.ts';
+import type { SemesterQueries, SemesterContext } from '../repository/semesters.ts';
+import type { SemesterCourseQueries } from '../repository/semester-courses.ts';
+import type { ApplicationListFilters, ApplicationView } from '../domain/query-models.ts';
 import type {
   ApplicationChoiceRecord as Choice,
   ApplicationRecord as Application,
-  DatabaseState,
   NamedRecord as Named,
   SemesterCourseRecord as SemesterCourse,
   SemesterRecord as Semester,
-  Store,
-} from '../storage/store.ts';
-import { nextSemesterOrder } from './semester-order.ts';
-
-type ApplicationData = ReturnType<Store['applicationData']>;
+} from '../domain/records.ts';
 
 export type ApplicationInput = {
   semesterName: string;
   memberName: string;
-  affiliation?: string | null;
+  ministry?: string | null;
+  applicantNote?: string | null;
   applicationOrder: number;
   choices: { courseName: string; preference: number }[];
 };
-
-export type ApplicationView = Pick<Application,
-  'id' | 'semesterId' | 'memberId' | 'affiliation' | 'applicationOrder' | 'applicationOrderStatus' | 'orderResolution' | 'revision'
-> & {
-  semesterName: string;
-  memberName: string;
-  choices: (Pick<Choice, 'id' | 'semesterCourseId' | 'preference'> & { courseName: string })[];
-};
-
-export type ApplicationListFilters = {
-  memberName?: string;
-  semesterId?: string;
-  courseId?: string;
-  sort?: ApplicationSort;
-};
-
-export const APPLICATION_SORTS = ['ORDER_ASC', 'ORDER_DESC', 'NAME_ASC', 'NAME_DESC'] as const;
-export type ApplicationSort = typeof APPLICATION_SORTS[number];
 
 export class ApplicationValidationError extends Error {
   constructor(message: string) {
@@ -72,14 +58,14 @@ export class RevisionConflictError extends Error {
 type Dependencies = { id: () => string; now: () => Date };
 
 export class ApplicationService {
-  private readonly store: Store;
+  private readonly repository: Repository;
   private readonly dependencies: Dependencies;
 
   constructor(
-    store: Store,
+    repository: Repository,
     dependencies: Dependencies,
   ) {
-    this.store = store;
+    this.repository = repository;
     this.dependencies = dependencies;
   }
 
@@ -95,20 +81,21 @@ export class ApplicationService {
       try { return validateApplicationInput(input); }
       catch (error) { throw withRow(error, index); }
     });
-    return this.store.write({}, (data) => {
+    return this.repository.write({}, (queries) => {
       const now = this.dependencies.now().toISOString();
-      return cleanInputs.map((clean, index) => {
-        const semester = resolveSemester(data, clean.semesterName, now, this.dependencies.id);
-        const member = resolveNamed(members(data), clean.memberName, now, this.dependencies.id);
-        if (applications(data).some((item) => (
-          item.semesterId === semester.id && item.memberId === member.id
-        ))) throw withRow(new ApplicationConflictError('같은 학기에 이미 신청한 회원입니다.'), index);
+      const created = cleanInputs.map((clean, index) => {
+        const semester = resolveSemester(queries.semesters, clean.semesterName, now, this.dependencies.id);
+        const member = resolveMember(queries.members, clean.memberName, now, this.dependencies.id);
+        if (queries.applications.findBySemesterMember({ semesterId: semester.id, memberId: member.id })) {
+          throw withRow(new ApplicationConflictError('같은 학기에 이미 신청한 회원입니다.'), index);
+        }
 
         const application: Application = {
           id: this.dependencies.id(),
           semesterId: semester.id,
           memberId: member.id,
-          affiliation: clean.affiliation ?? null,
+          ministry: clean.ministry ?? null,
+          applicantNote: clean.applicantNote ?? null,
           applicationOrder: clean.applicationOrder,
           applicationOrderStatus: 'NORMAL',
           orderResolution: 'SOURCE_AGREED',
@@ -117,17 +104,17 @@ export class ApplicationService {
           createdAt: now,
           updatedAt: now,
         };
-        applications(data).push(application);
+        queries.applications.insert({ record: application });
         for (const inputChoice of clean.choices) {
-          const course = resolveNamed(courses(data), inputChoice.courseName, now, this.dependencies.id);
+          const course = resolveCourse(queries.courses, inputChoice.courseName, now, this.dependencies.id);
           const semesterCourse = resolveSemesterCourse(
-            data,
+            queries.semesterCourses,
             semester.id,
             course.id,
             now,
             this.dependencies.id,
           );
-          choices(data).push({
+          queries.applicationChoices.insert({ record: {
             id: this.dependencies.id(),
             applicationId: application.id,
             semesterCourseId: semesterCourse.id,
@@ -135,34 +122,35 @@ export class ApplicationService {
             sourceRefs: [],
             createdAt: now,
             updatedAt: now,
-          });
+          } });
         }
-        bumpSemester(semester, now);
-        return applicationView(data, application);
+        queries.semesters.bump({ id: semester.id, now });
+        return queries.applications.getView({ id: application.id })!;
       });
+      return withApplicationWarnings(queries, created);
     });
   }
 
   async update(id: string, input: ApplicationInput & { expectedRevision: number }): Promise<ApplicationView> {
     const clean = validateApplicationInput(input);
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
-    return this.store.write({}, (data) => {
-      const current = applications(data).find((item) => item.id === id);
+    return this.repository.write({}, (queries) => {
+      const current = queries.applications.get({ id });
       if (!current) throw new ApplicationNotFoundError();
       if (current.revision !== input.expectedRevision) throw new RevisionConflictError(current.revision);
 
       const now = this.dependencies.now().toISOString();
-      const oldSemester = semesterById(data, current.semesterId);
-      const semester = resolveSemester(data, clean.semesterName, now, this.dependencies.id);
-      const member = resolveNamed(members(data), clean.memberName, now, this.dependencies.id);
-      if (applications(data).some((item) => (
-        item.id !== id && item.semesterId === semester.id && item.memberId === member.id
-      ))) throw new ApplicationConflictError();
+      const oldSemester = semesterById(queries.semesters, current.semesterId);
+      const semester = resolveSemester(queries.semesters, clean.semesterName, now, this.dependencies.id);
+      const member = resolveMember(queries.members, clean.memberName, now, this.dependencies.id);
+      if (queries.applications.findBySemesterMember({ semesterId: semester.id, memberId: member.id, excludeId: id })) {
+        throw new ApplicationConflictError();
+      }
 
       const nextChoices = clean.choices.map((inputChoice): Choice => {
-        const course = resolveNamed(courses(data), inputChoice.courseName, now, this.dependencies.id);
+        const course = resolveCourse(queries.courses, inputChoice.courseName, now, this.dependencies.id);
         const semesterCourse = resolveSemesterCourse(
-          data,
+          queries.semesterCourses,
           semester.id,
           course.id,
           now,
@@ -181,74 +169,63 @@ export class ApplicationService {
 
       current.semesterId = semester.id;
       current.memberId = member.id;
-      if (input.affiliation !== undefined) current.affiliation = clean.affiliation ?? null;
+      if (input.ministry !== undefined) current.ministry = clean.ministry ?? null;
+      if (input.applicantNote !== undefined) current.applicantNote = clean.applicantNote ?? null;
       current.applicationOrder = clean.applicationOrder;
       current.revision += 1;
       current.updatedAt = now;
-      data.applicationChoices = choices(data).filter((item) => item.applicationId !== id);
-      choices(data).push(...nextChoices);
-      bumpSemester(oldSemester, now);
-      if (semester.id !== oldSemester.id) bumpSemester(semester, now);
-      return applicationView(data, current);
+      queries.applications.update({ record: current });
+      queries.applicationChoices.replaceForApplication({ applicationId: id, records: nextChoices });
+      queries.semesters.bump({ id: oldSemester.id, now });
+      if (semester.id !== oldSemester.id) queries.semesters.bump({ id: semester.id, now });
+      return withApplicationWarnings(queries, [queries.applications.getView({ id })!])[0]!;
     });
   }
 
   get(id: string): ApplicationView {
-    const data = this.store.applicationData();
-    const application = applications(data).find((item) => item.id === id);
-    if (!application) throw new ApplicationNotFoundError();
-    return applicationView(data, application);
+    return this.repository.read((queries) => {
+      const application = queries.applications.getView({ id });
+      if (!application) throw new ApplicationNotFoundError();
+      return withApplicationWarnings(queries, [application])[0]!;
+    });
   }
 
-  list(filters: ApplicationListFilters = {}): ApplicationView[] {
-    const data = this.store.applicationData();
-    const memberName = filters.memberName?.trim().normalize('NFC');
-    const matchingSemesterCourses = filters.courseId
-      ? new Set(semesterCourses(data).filter(({ courseId }) => courseId === filters.courseId).map(({ id }) => id))
-      : null;
-    const items = applications(data).filter((application) => (
-      (!filters.semesterId || application.semesterId === filters.semesterId)
-      && (!memberName || members(data).find(({ id }) => id === application.memberId)?.nameKey.includes(memberName))
-      && (!matchingSemesterCourses || choices(data).some((choice) => (
-        choice.applicationId === application.id && matchingSemesterCourses.has(choice.semesterCourseId)
-      )))
-    )).map((application) => applicationView(data, application));
-    if (!filters.sort) return items;
-    return items.sort((left, right) => {
-      const leftOrder = left.applicationOrder ?? Infinity;
-      const rightOrder = right.applicationOrder ?? Infinity;
-      const orderDifference = leftOrder === rightOrder ? 0 : leftOrder - rightOrder;
-      const nameDifference = left.memberName.localeCompare(right.memberName, 'ko');
-      const selectedDifference = filters.sort === 'ORDER_DESC'
-        ? (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) ? -orderDifference : orderDifference)
-        : filters.sort === 'NAME_ASC' ? nameDifference
-          : filters.sort === 'NAME_DESC' ? -nameDifference : orderDifference;
-      return selectedDifference || orderDifference || nameDifference || left.id.localeCompare(right.id);
+  list({ reviewStatus, ...filters }: ApplicationListFilters = {}): ApplicationView[] {
+    return this.repository.read((queries) => withApplicationWarnings(queries, queries.applications.listViews(filters))
+      .filter((row) => reviewStatus === undefined || row.reviewStatus === reviewStatus));
+  }
+
+  listPage({ page, limit, reviewStatus, ...filters }: ApplicationListFilters & { page: number; limit: number }) {
+    return this.repository.read((queries) => {
+      if (reviewStatus !== undefined) {
+        const items = withApplicationWarnings(queries, queries.applications.listViews(filters))
+          .filter((row) => row.reviewStatus === reviewStatus);
+        const start = (page - 1) * limit;
+        return { items: items.slice(start, start + limit), page, limit, total: items.length };
+      }
+      const result = queries.applications.listPage({ ...filters, page, limit });
+      return { ...result, items: withApplicationWarnings(queries, result.items) };
     });
   }
 
   async delete(id: string, input: { expectedRevision: number }): Promise<void> {
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
-    await this.store.write({}, (data) => {
-      const application = applications(data).find((item) => item.id === id);
+    await this.repository.write({}, (queries) => {
+      const application = queries.applications.get({ id });
       if (!application) throw new ApplicationNotFoundError();
       if (application.revision !== input.expectedRevision) {
         throw new RevisionConflictError(application.revision);
       }
-      data.applications = applications(data).filter((item) => item.id !== id);
-      data.applicationChoices = choices(data).filter((item) => item.applicationId !== id);
-      bumpSemester(semesterById(data, application.semesterId), this.dependencies.now().toISOString());
+      queries.applications.delete({ id });
+      queries.semesters.bump({ id: application.semesterId, now: this.dependencies.now().toISOString() });
     });
   }
 
   previewSemesterApplicationDeletion(semesterId: string) {
-    const data = this.store.applicationData();
-    const semester = semesterById(data, semesterId);
-    return {
-      semesterName: semester.name,
-      count: applications(data).filter((application) => application.semesterId === semesterId).length,
-      ...this.store.version(),
-    };
+    return this.repository.read((queries) => {
+      const semester = semesterById(queries.semesters, semesterId);
+      return { semesterName: semester.name, count: queries.applications.count({ semesterId }), ...queries.metadata() };
+    });
   }
 
   async deleteSemesterApplications(semesterId: string, input: {
@@ -259,36 +236,33 @@ export class ApplicationService {
       throw new ApplicationValidationError('학기 전체 삭제 요청이 올바르지 않습니다.');
     }
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
-    return this.store.write({ expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch }, (data) => {
-      const semester = semesterById(data, semesterId);
+    return this.repository.write({ expectedRevision: input.expectedRevision, expectedEpoch: input.expectedEpoch }, (queries) => {
+      const semester = semesterById(queries.semesters, semesterId);
       if (semester.name !== input.confirmationName) {
         throw new ApplicationValidationError('삭제할 학기명을 정확히 입력하세요.');
       }
-      const applicationIds = new Set(applications(data)
-        .filter((application) => application.semesterId === semesterId).map(({ id }) => id));
-      if (applicationIds.size === 0) throw new ApplicationValidationError('선택한 학기에 삭제할 수강신청이 없습니다.');
-      data.applications = applications(data).filter(({ id }) => !applicationIds.has(id));
-      data.applicationChoices = choices(data).filter(({ applicationId }) => !applicationIds.has(applicationId));
-      bumpSemester(semester, this.dependencies.now().toISOString());
-      return { deletedCount: applicationIds.size };
+      const deletedCount = queries.applications.count({ semesterId });
+      if (deletedCount === 0) throw new ApplicationValidationError('선택한 학기에 삭제할 수강신청이 없습니다.');
+      queries.applications.deleteSemester({ semesterId });
+      queries.semesters.bump({ id: semesterId, now: this.dependencies.now().toISOString() });
+      return { deletedCount };
     });
   }
 
-  getSemesterContext(semesterId: string): ReturnType<typeof semesterContext> {
-    const data = this.store.applicationData();
-    return semesterContext(data, semesterById(data, semesterId));
+  getSemesterContext(semesterId: string): SemesterContext {
+    return this.repository.read((queries) => semesterContext(queries.semesters, semesterId));
   }
 
-  async createSemester(input: { name: string; order: number | null }): Promise<ReturnType<typeof semesterContext>> {
+  async createSemester(input: { name: string; order: number | null }): Promise<SemesterContext> {
     if (!input || typeof input !== 'object') throw new ApplicationValidationError('학기 정보가 올바르지 않습니다.');
     const name = cleanName(input.name, 'name');
     if (input.order !== null) requireSafeInteger(input.order, 'order');
-    return this.store.write({}, (data) => {
-      if (semesters(data).some((item) => item.nameKey === nameKey(name))) {
+    return this.repository.write({}, (queries) => {
+      if (queries.semesters.getByNameKey({ nameKey: nameKey(name) })) {
         throw new ApplicationConflictError('Semester name must be unique');
       }
-      const order = input.order ?? nextSemesterOrder(semesters(data));
-      if (semesters(data).some((item) => item.order === order)) {
+      const order = input.order ?? queries.semesters.nextOrder();
+      if (queries.semesters.findByOrder({ order })) {
         throw new ApplicationConflictError('Semester order must be unique');
       }
       const now = this.dependencies.now().toISOString();
@@ -301,8 +275,8 @@ export class ApplicationService {
         createdAt: now,
         updatedAt: now,
       };
-      semesters(data).push(semester);
-      return semesterContext(data, semester);
+      queries.semesters.insert({ record: semester });
+      return semesterContext(queries.semesters, semester.id);
     });
   }
 
@@ -311,50 +285,37 @@ export class ApplicationService {
     direction: 'UP' | 'DOWN';
     expectedOrder: number;
     adjacentSemesterId: string;
-  }): Promise<ReturnType<typeof semesterContext>> {
+  }): Promise<SemesterContext> {
     if (!input || !['UP', 'DOWN'].includes(input.direction)
       || typeof input.adjacentSemesterId !== 'string' || !input.adjacentSemesterId) {
       throw new ApplicationValidationError('학기 이동 정보가 올바르지 않습니다.');
     }
     requireSafeInteger(input.expectedOrder, 'expectedOrder');
-    return this.store.write({}, (data) => {
-      const semester = semesterById(data, input.semesterId);
+    return this.repository.write({}, (queries) => {
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.order === null) throw new ApplicationValidationError('학기 정보를 저장해 순서를 정한 뒤 이동하세요.');
-      const ordered = semesters(data).filter(({ order }) => order !== null)
-        .sort((left, right) => right.order! - left.order!);
-      const index = ordered.findIndex(({ id }) => id === semester.id);
-      const adjacent = ordered[index + (input.direction === 'UP' ? -1 : 1)];
+      const adjacent = queries.semesters.findAdjacent({ semesterId: semester.id, direction: input.direction });
       if (semester.order !== input.expectedOrder || !adjacent || adjacent.id !== input.adjacentSemesterId) {
         throw new ApplicationConflictError('Semester order changed');
       }
       const now = this.dependencies.now().toISOString();
-      [semester.order, adjacent.order] = [adjacent.order, semester.order];
-      bumpSemester(semester, now);
-      bumpSemester(adjacent, now);
-      return semesterContext(data, semester);
+      queries.semesters.swapOrders({ left: semester, right: adjacent, now });
+      return semesterContext(queries.semesters, semester.id);
     });
   }
 
   async deleteSemester(input: { semesterId: string; expectedRevision: number }): Promise<void> {
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
-    await this.store.write({}, (data) => {
-      const semester = semesterById(data, input.semesterId);
+    await this.repository.write({}, (queries) => {
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.allocationInputRevision !== input.expectedRevision) {
         throw new RevisionConflictError(semester.allocationInputRevision);
       }
-      const offerings = semesterCourses(data).filter(({ semesterId }) => semesterId === semester.id);
-      const offeringIds = new Set(offerings.map(({ id }) => id));
-      if (applications(data).some(({ semesterId }) => semesterId === semester.id)
-        || enrollments(data).some(({ semesterCourseId }) => offeringIds.has(semesterCourseId))
-        || data.allocationDrafts.some(({ semesterId }) => semesterId === semester.id)
-        || data.finalizationReceipts.some(({ semesterId }) => semesterId === semester.id)) {
+      const usage = queries.semesters.usage({ id: semester.id });
+      if (usage.applications || usage.enrollments || usage.drafts || usage.receipts) {
         throw new ApplicationConflictError('신청·수강이력·배정초안·확정 기록이 있는 학기는 삭제할 수 없습니다.');
       }
-      data.semesterCourses = semesterCourses(data).filter(({ semesterId }) => semesterId !== semester.id);
-      const remainingCourseIds = new Set(semesterCourses(data).map(({ courseId }) => courseId));
-      const removedCourseIds = new Set(offerings.map(({ courseId }) => courseId));
-      data.courses = courses(data).filter(({ id }) => !removedCourseIds.has(id) || remainingCourseIds.has(id));
-      data.semesters = semesters(data).filter(({ id }) => id !== semester.id);
+      queries.semesters.delete({ id: semester.id });
     });
   }
 
@@ -364,7 +325,7 @@ export class ApplicationService {
     name?: string;
     order: number | null;
     semesterCourses: { id?: string; courseName: string; capacity: number | null }[];
-  }): Promise<ReturnType<typeof semesterContext>> {
+  }): Promise<SemesterContext> {
     if (!input || typeof input !== 'object') throw new ApplicationValidationError('학기 정보가 올바르지 않습니다.');
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
     if (input.order !== null) requireSafeInteger(input.order, 'order');
@@ -386,54 +347,58 @@ export class ApplicationService {
     });
     ensureUnique(cleanCourses.map(({ courseName }) => nameKey(courseName)), 'courseName');
 
-    return this.store.write({}, (data) => {
-      const semester = semesterById(data, input.semesterId);
+    return this.repository.write({}, (queries) => {
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.allocationInputRevision !== input.expectedRevision) {
         throw new RevisionConflictError(semester.allocationInputRevision);
       }
-      const order = input.order ?? semester.order ?? nextSemesterOrder(semesters(data));
-      if (
-        semesters(data).some((item) => item.id !== semester.id && item.order === order)
-      ) throw new ApplicationConflictError('Semester order must be unique');
+      const order = input.order ?? semester.order ?? queries.semesters.nextOrder();
+      if (queries.semesters.findByOrder({ order, excludeId: semester.id })) {
+        throw new ApplicationConflictError('Semester order must be unique');
+      }
 
       const now = this.dependencies.now().toISOString();
       const semesterName = input.name === undefined ? semester.name : cleanName(input.name, 'name');
       const semesterNameKey = nameKey(semesterName);
-      if (semesters(data).some((item) => item.id !== semester.id && item.nameKey === semesterNameKey)) {
+      const sameName = queries.semesters.getByNameKey({ nameKey: semesterNameKey });
+      if (sameName && sameName.id !== semester.id) {
         throw new ApplicationConflictError('Semester name must be unique');
       }
       semester.name = semesterName;
       semester.nameKey = semesterNameKey;
       semester.order = order;
+      queries.semesters.update({ record: semester });
       const changedSemesterIds = new Set([semester.id]);
       for (const item of cleanCourses) {
         let semesterCourse: SemesterCourse;
         let course: Named;
         if (item.id) {
-          const existing = semesterCourses(data).find((candidate) => candidate.id === item.id);
+          const existing = queries.semesterCourses.get({ id: item.id });
           if (!existing || existing.semesterId !== semester.id) {
             throw new ApplicationNotFoundError('Semester course was not found');
           }
           semesterCourse = existing;
-          const existingCourse = courses(data).find((candidate) => candidate.id === existing.courseId);
+          const existingCourse = queries.courses.get({ id: existing.courseId });
           if (!existingCourse) throw new ApplicationNotFoundError('Course was not found');
           course = existingCourse;
           const courseNameKey = nameKey(item.courseName);
           if (course.nameKey !== courseNameKey) {
-            if (courses(data).some((candidate) => candidate.id !== course.id && candidate.nameKey === courseNameKey)) {
+            const sameCourse = queries.courses.getByNameKey({ nameKey: courseNameKey });
+            if (sameCourse && sameCourse.id !== course.id) {
               throw new ApplicationConflictError('Course name must be unique');
             }
             course.name = item.courseName;
             course.nameKey = courseNameKey;
             course.updatedAt = now;
-            for (const linked of semesterCourses(data)) {
-              if (linked.courseId === course.id) changedSemesterIds.add(linked.semesterId);
+            queries.courses.update({ record: course });
+            for (const linked of queries.semesterCourses.list({ courseId: course.id })) {
+              changedSemesterIds.add(linked.semesterId);
             }
           }
         } else {
-          course = resolveNamed(courses(data), item.courseName, now, this.dependencies.id);
+          course = resolveCourse(queries.courses, item.courseName, now, this.dependencies.id);
           semesterCourse = resolveSemesterCourse(
-            data,
+            queries.semesterCourses,
             semester.id,
             course.id,
             now,
@@ -442,9 +407,10 @@ export class ApplicationService {
         }
         semesterCourse.capacity = item.capacity;
         semesterCourse.updatedAt = now;
+        queries.semesterCourses.update({ record: semesterCourse });
       }
-      for (const semesterId of changedSemesterIds) bumpSemester(semesterById(data, semesterId), now);
-      return semesterContext(data, semester);
+      for (const semesterId of changedSemesterIds) queries.semesters.bump({ id: semesterId, now });
+      return semesterContext(queries.semesters, semester.id);
     });
   }
 
@@ -462,52 +428,70 @@ export class ApplicationService {
       throw new ApplicationValidationError('confirmApplications must be a boolean');
     }
     requireSafeInteger(input.expectedRevision, 'expectedRevision', true);
-    await this.store.write({}, (data) => {
-      const semester = semesterById(data, input.semesterId);
+    await this.repository.write({}, (queries) => {
+      const semester = semesterById(queries.semesters, input.semesterId);
       if (semester.allocationInputRevision !== input.expectedRevision) {
         throw new RevisionConflictError(semester.allocationInputRevision);
       }
-      const semesterCourse = semesterCourses(data).find(({ id, semesterId }) => (
-        id === input.semesterCourseId && semesterId === semester.id
-      ));
-      if (!semesterCourse) throw new ApplicationNotFoundError('Semester course was not found');
-      if (enrollments(data).some(({ semesterCourseId }) => semesterCourseId === semesterCourse.id)) {
+      const semesterCourse = queries.semesterCourses.get({ id: input.semesterCourseId });
+      if (!semesterCourse || semesterCourse.semesterId !== semester.id) throw new ApplicationNotFoundError('Semester course was not found');
+      if (queries.enrollments.hasForCourse({ semesterCourseId: semesterCourse.id })) {
         throw new ApplicationConflictError('Enrollment history uses this semester course');
       }
 
-      const linkedChoices = choices(data).filter(({ semesterCourseId }) => semesterCourseId === semesterCourse.id);
-      if (linkedChoices.length > 0 && !input.confirmApplications) {
+      const linkedChoiceCount = queries.applicationChoices.countForCourse({ semesterCourseId: semesterCourse.id });
+      if (linkedChoiceCount > 0 && !input.confirmApplications) {
         throw new ApplicationConflictError('Application choices use this semester course');
       }
 
       const now = this.dependencies.now().toISOString();
-      const affectedApplicationIds = new Set(linkedChoices.map(({ applicationId }) => applicationId));
-      data.applicationChoices = choices(data).filter(({ semesterCourseId }) => semesterCourseId !== semesterCourse.id);
-      const applicationsWithChoices = new Set(choices(data).map(({ applicationId }) => applicationId));
-      data.applications = applications(data).filter((application) => {
-        if (!affectedApplicationIds.has(application.id)) return true;
-        if (!applicationsWithChoices.has(application.id)) return false;
-        application.revision += 1;
-        application.updatedAt = now;
-        return true;
-      });
-      data.semesterCourses = semesterCourses(data).filter(({ id }) => id !== semesterCourse.id);
-      if (!semesterCourses(data).some(({ courseId }) => courseId === semesterCourse.courseId)) {
-        data.courses = courses(data).filter(({ id }) => id !== semesterCourse.courseId);
-      }
-      bumpSemester(semester, now);
+      queries.applicationChoices.removeCourseChoices({ semesterCourseId: semesterCourse.id, now });
+      queries.semesterCourses.delete({ id: semesterCourse.id });
+      queries.semesters.bump({ id: semester.id, now });
     });
   }
 }
+
+const withApplicationWarnings = (queries: QuerySession, rows: Omit<ApplicationView, 'warnings' | 'reviewStatus'>[]): ApplicationView[] => {
+  if (!rows.length) return [];
+  const { targets, history } = queries.applications.warningContext({ applicationIds: rows.map(({ id }) => id) });
+  const choicesByApplication = new Map<string, typeof targets>();
+  for (const target of targets) {
+    const choices = choicesByApplication.get(target.applicationId) ?? [];
+    choices.push(target);
+    choicesByApplication.set(target.applicationId, choices);
+  }
+  const historyByMember = new Map<string, typeof history>();
+  for (const enrollment of history) {
+    const records = historyByMember.get(enrollment.memberId) ?? [];
+    records.push(enrollment);
+    historyByMember.set(enrollment.memberId, records);
+  }
+  return rows.map((row) => {
+    const choices = choicesByApplication.get(row.id) ?? [];
+    const warnings = applicationWarnings({
+      memberId: row.memberId, semesterOrder: choices[0]?.semesterOrder ?? null,
+      choices, history: (historyByMember.get(row.memberId) ?? []).filter(({ semesterId }) => semesterId !== row.semesterId),
+    });
+    const reviewStatus: ApplicationView['reviewStatus'] = row.applicationOrderStatus !== 'NORMAL'
+      || warnings.some(({ code }) => code === 'SEMESTER_ORDER_UNRESOLVED') ? 'NEEDS_REVIEW'
+      : warnings.some(({ code }) => code === 'RETAKE') ? 'RETAKE' : 'NORMAL';
+    return { ...row, warnings, reviewStatus };
+  });
+};
 
 const validateApplicationInput = (input: ApplicationInput): ApplicationInput => {
   if (!input || typeof input !== 'object') throw new ApplicationValidationError('신청 행이 올바르지 않습니다.');
   const semesterName = cleanName(input.semesterName, 'semesterName');
   const memberName = cleanName(input.memberName, 'memberName');
-  if (input.affiliation != null && (typeof input.affiliation !== 'string' || input.affiliation.trim().length > 200)) {
+  if (input.ministry != null && (typeof input.ministry !== 'string' || input.ministry.trim().length > 200)) {
     throw new ApplicationValidationError('학생 소속은 200자 이내로 입력하세요.');
   }
-  const affiliation = input.affiliation?.trim() || null;
+  const ministry = input.ministry?.trim() || null;
+  if (input.applicantNote != null && (typeof input.applicantNote !== 'string' || input.applicantNote.trim().length > 2000)) {
+    throw new ApplicationValidationError('신청자 메모는 2000자 이내로 입력하세요.');
+  }
+  const applicantNote = input.applicantNote?.trim() || null;
   requireSafeInteger(input.applicationOrder, 'applicationOrder');
   if (!Array.isArray(input.choices) || input.choices.length < 1 || input.choices.length > MAX_CHOICES_PER_APPLICATION) {
     throw new ApplicationValidationError(`희망 강좌는 1개 이상, 최대 ${MAX_CHOICES_PER_APPLICATION}개까지 입력할 수 있습니다.`);
@@ -520,9 +504,8 @@ const validateApplicationInput = (input: ApplicationInput): ApplicationInput => 
     if (preference > MAX_CHOICES_PER_APPLICATION) throw new ApplicationValidationError(`희망순위는 1~${MAX_CHOICES_PER_APPLICATION} 사이로 입력하세요.`);
     return { courseName: name, preference };
   });
-  ensureUnique(cleanChoices.map(({ courseName }) => nameKey(courseName)), 'courseName');
   ensureUnique(cleanChoices.map(({ preference }) => preference), 'preference');
-  return { semesterName, memberName, affiliation, applicationOrder: input.applicationOrder, choices: cleanChoices };
+  return { semesterName, memberName, ministry, applicantNote, applicationOrder: input.applicationOrder, choices: cleanChoices };
 };
 
 const withRow = (error: unknown, index: number): Error => Object.assign(
@@ -558,47 +541,54 @@ const ensureUnique = (values: (string | number)[], field: string): void => {
   }
 };
 
-const resolveNamed = (items: Named[], name: string, now: string, id: () => string): Named => {
+const resolveMember = (members: MemberQueries, name: string, now: string, id: () => string): Named => {
   const key = nameKey(name);
-  const existing = items.find((item) => item.nameKey === key);
+  const existing = members.getByNameKey({ nameKey: key });
   if (existing) return existing;
   const created = { id: id(), name, nameKey: key, createdAt: now, updatedAt: now };
-  items.push(created);
+  members.insert({ record: created });
+  return created;
+};
+
+const resolveCourse = (courses: CourseQueries, name: string, now: string, id: () => string): Named => {
+  const key = nameKey(name);
+  const existing = courses.getByNameKey({ nameKey: key });
+  if (existing) return existing;
+  const created = { id: id(), name, nameKey: key, createdAt: now, updatedAt: now };
+  courses.insert({ record: created });
   return created;
 };
 
 const resolveSemester = (
-  data: DatabaseState,
+  semesters: SemesterQueries,
   name: string,
   now: string,
   id: () => string,
 ): Semester => {
   const key = nameKey(name);
-  const existing = semesters(data).find((item) => item.nameKey === key);
+  const existing = semesters.getByNameKey({ nameKey: key });
   if (existing) return existing;
   const created: Semester = {
     id: id(),
     name,
     nameKey: key,
-    order: nextSemesterOrder(semesters(data)),
+    order: semesters.nextOrder(),
     allocationInputRevision: 0,
     createdAt: now,
     updatedAt: now,
   };
-  semesters(data).push(created);
+  semesters.insert({ record: created });
   return created;
 };
 
 const resolveSemesterCourse = (
-  data: DatabaseState,
+  semesterCourses: SemesterCourseQueries,
   semesterId: string,
   courseId: string,
   now: string,
   id: () => string,
 ): SemesterCourse => {
-  const existing = semesterCourses(data).find((item) => (
-    item.semesterId === semesterId && item.courseId === courseId
-  ));
+  const existing = semesterCourses.getByPair({ semesterId, courseId });
   if (existing) return existing;
   const created: SemesterCourse = {
     id: id(),
@@ -608,84 +598,18 @@ const resolveSemesterCourse = (
     createdAt: now,
     updatedAt: now,
   };
-  semesterCourses(data).push(created);
+  semesterCourses.insert({ record: created });
   return created;
 };
 
-const applicationView = (data: ApplicationData, application: Application): ApplicationView => {
-  const semester = semesterById(data, application.semesterId);
-  const member = members(data).find((item) => item.id === application.memberId);
-  if (!member) throw new ApplicationNotFoundError('Application member was not found');
-  return {
-    id: application.id,
-    semesterId: application.semesterId,
-    memberId: application.memberId,
-    semesterName: semester.name,
-    memberName: member.name,
-    affiliation: application.affiliation,
-    applicationOrder: application.applicationOrder,
-    applicationOrderStatus: application.applicationOrderStatus,
-    orderResolution: application.orderResolution,
-    revision: application.revision,
-    choices: choices(data)
-      .filter((item) => item.applicationId === application.id)
-      .map((choice) => {
-        const semesterCourse = semesterCourses(data).find((item) => item.id === choice.semesterCourseId);
-        const course = semesterCourse && courses(data).find((item) => item.id === semesterCourse.courseId);
-        if (!semesterCourse || !course || semesterCourse.semesterId !== application.semesterId) {
-          throw new ApplicationValidationError('Choice must reference a course from the application semester');
-        }
-        return {
-          id: choice.id,
-          semesterCourseId: choice.semesterCourseId,
-          courseName: course.name,
-          preference: choice.preference,
-        };
-      }),
-  };
+const semesterContext = (semesters: SemesterQueries, id: string): SemesterContext => {
+  const context = semesters.context({ id });
+  if (!context) throw new ApplicationNotFoundError('Semester was not found');
+  return context;
 };
 
-const semesterContext = (data: ApplicationData, semester: Semester) => {
-  const items = semesterCourses(data)
-    .filter((item) => item.semesterId === semester.id)
-    .map((item) => {
-      const course = courses(data).find((candidate) => candidate.id === item.courseId);
-      if (!course) throw new ApplicationValidationError('Semester course has no course');
-      return {
-        id: item.id,
-        courseId: item.courseId,
-        courseName: course.name,
-        capacity: item.capacity,
-        applicationCount: choices(data).filter(({ semesterCourseId }) => semesterCourseId === item.id).length,
-        enrollmentCount: enrollments(data).filter(({ semesterCourseId }) => semesterCourseId === item.id).length,
-      };
-    });
-  const issues = items.some(({ capacity }) => capacity === null) ? [{ code: 'CAPACITY_UNRESOLVED' }] : [];
-  return {
-    semester: { id: semester.id, name: semester.name },
-    order: semester.order,
-    allocationInputRevision: semester.allocationInputRevision,
-    semesterCourses: items,
-    readyForAutoAllocation: issues.length === 0,
-    issues,
-  };
-};
-
-const bumpSemester = (semester: Semester, now: string): void => {
-  semester.allocationInputRevision += 1;
-  semester.updatedAt = now;
-};
-
-const semesterById = (data: ApplicationData, id: string): Semester => {
-  const semester = semesters(data).find((item) => item.id === id);
+const semesterById = (semesters: SemesterQueries, id: string): Semester => {
+  const semester = semesters.get({ id });
   if (!semester) throw new ApplicationNotFoundError('Semester was not found');
   return semester;
 };
-
-const semesters = (data: ApplicationData): Semester[] => data.semesters;
-const members = (data: ApplicationData): Named[] => data.members;
-const courses = (data: ApplicationData): Named[] => data.courses;
-const semesterCourses = (data: ApplicationData): SemesterCourse[] => data.semesterCourses;
-const applications = (data: ApplicationData): Application[] => data.applications;
-const choices = (data: ApplicationData): Choice[] => data.applicationChoices;
-const enrollments = (data: ApplicationData): DatabaseState['enrollments'] => data.enrollments;

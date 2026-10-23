@@ -17,21 +17,21 @@ test('accepts a valid empty store', async () => {
   assert.equal(validate(input), true, JSON.stringify(validate.errors));
 });
 
-test('requires nullable student affiliation on each cached record and snapshot', async () => {
-  const input = await readJson(new URL('../fixtures/store/store-valid-affiliation.json', import.meta.url));
+test('requires nullable student ministry on each cached record and snapshot', async () => {
+  const input = await readJson(new URL('../fixtures/store/store-valid-ministry.json', import.meta.url));
   assert.equal(validate(input), true, JSON.stringify(validate.errors));
   const records = (data) => [data.applications[0], data.enrollments[0], data.allocationDraftItems[0],
     data.allocationDrafts[0].inputSnapshot.applications[0], data.allocationDrafts[0].inputSnapshot.existingEnrollments[0]];
   for (let index = 0; index < records(input).length; index += 1) {
     for (const [value, expected] of [[null, true], ['x'.repeat(200), true], ['x'.repeat(201), false], [5, false]]) {
       const candidate = structuredClone(input);
-      records(candidate)[index].affiliation = value;
+      records(candidate)[index].ministry = value;
       assert.equal(validate(candidate), expected, JSON.stringify(validate.errors));
     }
     const candidate = structuredClone(input);
-    delete records(candidate)[index].affiliation;
+    delete records(candidate)[index].ministry;
     assert.equal(validate(candidate), false);
-    assert.ok(validate.errors.some(({ keyword, params }) => keyword === 'required' && params.missingProperty === 'affiliation'));
+    assert.ok(validate.errors.some(({ keyword, params }) => keyword === 'required' && params.missingProperty === 'ministry'));
   }
 });
 

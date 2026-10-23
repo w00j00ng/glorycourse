@@ -281,6 +281,7 @@ const recordQuery = (prefix) => new URLSearchParams([
   ['semesterId', byId(`${prefix}-semester-filter`).value],
   ['courseId', byId(`${prefix}-course-filter`).value],
   ['sort', byId(`${prefix}-sort`).value],
+  ...(prefix === 'application' ? [['reviewStatus', byId('application-status-filter').value]] : []),
 ].filter(([, value]) => value)).toString();
 
 const loadPaged = async (name, path, filters = '', pagination = state.pagination[name]) => {
@@ -304,7 +305,7 @@ const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseN
   state, byId, fillSelect, cell, actionsCell, policyName,
   renderPagination: (name) => renderPagination(name),
   fillDatalist: (id, items) => fillDatalist(id, items),
-  saveDraftItem: (item, courseId, affiliation) => saveDraftItem(item, courseId, affiliation),
+  saveDraftItem: (item, courseId, ministry) => saveDraftItem(item, courseId, ministry),
   restoreDraftItem: (item) => restoreDraftItem(item),
 });
 
@@ -493,7 +494,7 @@ byId('application-page-size').addEventListener('change', (event) => {
   resetPage('application', loadApplications);
 });
 byId('enrollment-member-search').addEventListener('input', debounce(() => resetPage('enrollment', loadEnrollments)));
-for (const id of ['application-semester-filter', 'application-course-filter']) {
+for (const id of ['application-semester-filter', 'application-course-filter', 'application-status-filter']) {
   byId(id).addEventListener('change', () => {
     if (id === 'application-semester-filter') state.applicationSemesterFilterTouched = true;
     resetPage('application', loadApplications);
@@ -513,6 +514,7 @@ try {
   const session = await api('/session', { method: 'POST' });
   state.token = session.token;
   const runtime = await api('/runtime');
+  byId('app-version').textContent = `v${runtime.version}`;
   byId('data-directory').textContent = runtime.dataDirectory;
   byId('data-directory').title = `Glorycourse ${runtime.version}`;
   setStatus('저장됨');

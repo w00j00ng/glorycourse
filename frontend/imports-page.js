@@ -6,10 +6,10 @@ import { issueText } from './issue-view.js';
  *   previewId: string, storeRevision: number, storeEpoch: string, warningDigest: string,
  *   sourceRowCount: number, insertCandidates: number, identicalRows: number, conflicts: number, expiresAt: string,
  *   issues: { code: string, severity: 'ERROR' | 'WARNING' | 'INFO', message: string,
- *     blockingStages: string[], source?: { sheet?: string, row?: number, column?: string } }[],
- *   applications: { semesterName: string, memberName: string, affiliation: string | null, applicationOrder: number | null,
- *     applicationOrderStatus: string, choices: { courseName: string, preference: number | null }[] }[],
- *   enrollments: { semesterName: string, memberName: string, affiliation: string | null, courseName: string }[],
+ *     blockingStages: string[], source?: { sheet?: string, row?: number, column?: string }, detail?: { preferences?: number[] } }[],
+ *   applications: { semesterName: string, memberName: string, ministry: string | null, applicantNote?: string | null, applicationOrder: number | null,
+ *     applicationOrderStatus: string, choices: { courseName: string, preference: number | null, sourceRefs: { sheet: string, row: number }[] }[] }[],
+ *   enrollments: { semesterName: string, memberName: string, ministry: string | null, courseName: string }[],
  *   contextChanges: { entity: string, status: string, semesterName: string, courseName?: string,
  *     field: string, fileValue: number | null }[],
  * }} ImportPreview
@@ -37,6 +37,8 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     byId('import-candidate-details').open = false;
     byId('import-preview-action').hidden = false;
     byId('commit-import').disabled = true;
+    byId('import-commit-blocked').hidden = true;
+    byId('import-commit-blocked').textContent = '';
   };
 
   /** @param {ImportPreview['kind']} kind */
@@ -60,11 +62,19 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       const title = document.createElement('strong');
       title.textContent = `${candidate.semesterName || '학기 미정'} · ${candidate.memberName || '회원 미정'}`;
       const detail = document.createElement('small');
-      detail.textContent = `학생 소속: ${candidate.affiliation ?? '—'} · ` + ('choices' in candidate
+      detail.textContent = `학생 소속: ${candidate.ministry ?? '—'} · ` + ('choices' in candidate
         ? `신청순서 ${candidate.applicationOrder ?? '미정'} · ${candidate.choices.map(({ courseName, preference }) => `${preference ?? '?'}순위 ${courseName || '강좌 미정'}`).join(', ')}`
         : candidate.courseName || '강좌 미정');
       card.title = `${title.textContent} · ${detail.textContent}`;
       card.append(title, detail);
+      if ('choices' in candidate) {
+        const note = document.createElement('small');
+        note.textContent = `신청자 메모: ${candidate.applicantNote === undefined ? '기존 메모 유지' : candidate.applicantNote ?? '—'}`;
+        note.style.display = 'block';
+        note.style.whiteSpace = 'pre-wrap';
+        note.style.overflowWrap = 'anywhere';
+        card.append(note);
+      }
       return card;
     }));
   };
@@ -152,6 +162,16 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     byId('import-identical-count').textContent = String(preview.identicalRows);
     byId('import-conflict-count').textContent = String(preview.conflicts);
     byId('import-preview-status').textContent = `아직 저장되지 않음 · ${new Date(preview.expiresAt).toLocaleTimeString()}까지 유효`;
+    /** @type {Map<string, { memberName: string, courseName: string }>} */
+    const applicationSources = new Map();
+    for (const application of preview.applications) {
+      for (const choice of application.choices) {
+        for (const source of choice.sourceRefs) {
+          applicationSources.set(JSON.stringify([source.sheet, source.row, `${choice.preference}순위 강좌`]),
+            { memberName: application.memberName, courseName: choice.courseName });
+        }
+      }
+    }
     byId('import-issues').replaceChildren(...(
       preview.issues.length ? preview.issues : [{ code: 'NO_ISSUES', severity: 'INFO', message: '추가 검토 항목이 없습니다.' }]
     ).map((issue) => {
@@ -159,7 +179,9 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       item.dataset.severity = issue.severity;
       const text = document.createElement('span');
       text.className = 'import-issue-text';
-      text.textContent = text.title = issueText(issue);
+      const source = 'source' in issue ? issue.source : undefined;
+      text.textContent = text.title = issueText(issue,
+        applicationSources.get(JSON.stringify([source?.sheet, source?.row, source?.column])));
       item.append(text);
       if (issue.severity === 'INFO') {
         item.classList.add('information');
@@ -175,9 +197,15 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     }));
     renderCandidates(preview);
     renderResolutions(preview);
-    const blocksCommit = preview.issues.some((issue) => (
+    const blockingIssues = preview.issues.filter((issue) => (
       issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
-    )) || (preview.kind === 'ENROLLMENTS' && preview.conflicts > 0);
+    ));
+    const blocksCommit = blockingIssues.length > 0 || (preview.kind === 'ENROLLMENTS' && preview.conflicts > 0);
+    const blocked = byId('import-commit-blocked');
+    blocked.textContent = blockingIssues.length
+      ? `오류 ${blockingIssues.length}건으로 반영할 수 없습니다. 위의 시트·행·강좌와 오류 사유를 확인해 파일을 수정한 뒤 다시 검토하세요.`
+      : blocksCommit ? '기존 수강이력과 충돌하여 반영할 수 없습니다. 충돌 자료를 확인하고 파일을 수정한 뒤 다시 검토하세요.' : '';
+    blocked.hidden = !blocksCommit;
     byId('commit-import').disabled = blocksCommit;
     byId('import-preview').hidden = false;
     byId('import-preview-action').hidden = true;
@@ -188,10 +216,14 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     const button = byId('commit-import');
     if (!preview || button.disabled) return;
     button.disabled = true;
+    byId('import-commit-blocked').hidden = true;
     let applied = false;
     try {
       let invalidOrder = '';
-      const note = await reviewWarnings(preview);
+      const review = preview.kind === 'APPLICATIONS' ? { ...preview, issues: preview.issues.filter((issue) => (
+        !(['RETAKE', 'SEMESTER_ORDER_UNRESOLVED'].includes(issue.code) && issue.blockingStages.length === 0)
+      )) } : preview;
+      const note = await reviewWarnings(review);
       if (note === null || state.importPreview !== preview) return;
       /** @type {Record<string, unknown>[]} */
       const resolutions = preview.kind === 'ENROLLMENTS'
@@ -248,6 +280,14 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
       }
       await loadCatalogs();
       await Promise.all([loadApplications(), loadEnrollments()]);
+    } catch (error) {
+      if (state.importPreview === preview && !applied) {
+        const blocked = byId('import-commit-blocked');
+        const failure = /** @type {Error & { issues?: ImportPreview['issues'] }} */ (error);
+        blocked.textContent = [failure.message, ...(failure.issues ?? []).map((issue) => issueText(issue))].join('\n');
+        blocked.hidden = false;
+      }
+      throw error;
     } finally {
       if (state.importPreview === preview) button.disabled = applied;
     }

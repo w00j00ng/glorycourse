@@ -1,7 +1,8 @@
 import { templateFilename } from './download-name.js';
+import { issueText } from './issue-view.js';
 
 /** @typedef {import('../backend/src/services/applications.ts').ApplicationInput['choices'][number]} ApplicationChoice */
-/** @typedef {import('../backend/src/services/applications.ts').ApplicationView} ApplicationRow */
+/** @typedef {import('../backend/src/domain/query-models.ts').ApplicationView} ApplicationRow */
 /**
  * @param {{
  *   state: { semesters: { id: string, name: string }[], applications: ApplicationRow[], pagination: { application: { total: number } } },
@@ -25,13 +26,19 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     const body = byId('application-rows');
     body.replaceChildren(...state.applications.map((item) => {
       const row = document.createElement('tr');
+      const note = cell(item.applicantNote ?? '—');
+      note.className = 'application-note';
+      const warnings = cell((item.warnings ?? []).map((warning) => issueText(warning)).join('\n') || '—');
+      warnings.className = 'application-warnings';
       row.append(
         cell(item.memberName),
-        cell(item.affiliation ?? '—'),
+        cell(item.ministry ?? '—'),
         cell(item.semesterName),
         cell(String(item.applicationOrder)),
         choicesCell(item.choices),
-        badgeCell(item.applicationOrderStatus === 'NORMAL' ? '정상' : item.applicationOrderStatus, item.applicationOrderStatus !== 'NORMAL'),
+        note,
+        badgeCell(({ NORMAL: '정상', RETAKE: '재수강', NEEDS_REVIEW: '확인 필요' })[item.reviewStatus], item.reviewStatus !== 'NORMAL'),
+        warnings,
         actionsCell(
           ['수정', () => openApplication(item)],
           ['삭제', () => deleteApplication(item), 'delete'],
@@ -74,8 +81,9 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     const previous = container.lastElementChild;
     row.querySelector('[name="semesterName"]').value = item.semesterName ?? previous?.querySelector('[name="semesterName"]').value ?? '';
     row.querySelector('[name="memberName"]').value = item.memberName ?? '';
-    row.querySelector('[name="affiliation"]').value = item.affiliation ?? '';
+    row.querySelector('[name="ministry"]').value = item.ministry ?? '';
     row.querySelector('[name="applicationOrder"]').value = item.applicationOrder ?? '';
+    row.querySelector('[name="applicantNote"]').value = item.applicantNote ?? '';
     const choices = row.querySelector('.choice-fields');
     for (const choice of item.choices ?? [{}]) addChoice(choices, choice);
     row.querySelector('.add-choice').addEventListener('click', () => addChoice(choices));
@@ -124,8 +132,9 @@ export const createApplicationsPage = ({ state, byId, api, fillSelect, showMessa
     const items = [...byId('application-entry-rows').children].map((entry) => ({
       semesterName: entry.querySelector('[name="semesterName"]').value,
       memberName: entry.querySelector('[name="memberName"]').value,
-      affiliation: entry.querySelector('[name="affiliation"]').value.trim() || null,
+      ministry: entry.querySelector('[name="ministry"]').value.trim() || null,
       applicationOrder: Number(entry.querySelector('[name="applicationOrder"]').value),
+      applicantNote: entry.querySelector('[name="applicantNote"]').value.trim() || null,
       choices: [...entry.querySelector('.choice-fields').children].map((row) => ({
         courseName: row.querySelector('[name="courseName"]').value,
         preference: Number(row.querySelector('[name="preference"]').value),

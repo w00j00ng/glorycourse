@@ -12,6 +12,7 @@
     <a class="brand" href="#home" data-view-target="home" aria-label="Glorycourse 홈으로 이동">
       <p class="eyebrow">LOCAL COURSE OPERATIONS</p>
       <h1>Glorycourse</h1>
+      <small id="app-version" class="app-version" title="프로그램 버전"></small>
     </a>
     <div class="runtime" aria-label="실행 상태">
       <span class="status-dot" aria-hidden="true"></span>
@@ -73,13 +74,14 @@
           <label>학기<select id="application-semester-filter"><option value="">전체</option></select></label>
           <label>회원명<input id="application-member-search" type="search" placeholder="회원명 일부"></label>
           <label>강좌명<select id="application-course-filter"><option value="">전체</option></select></label>
+          <label>상태<select id="application-status-filter"><option value="">전체</option><option value="NORMAL">정상</option><option value="RETAKE">재수강</option><option value="NEEDS_REVIEW">확인 필요</option></select></label>
           <label>정렬<select id="application-sort"><option value="ORDER_ASC">신청순서 낮은 순</option><option value="ORDER_DESC">신청순서 높은 순</option><option value="NAME_ASC">회원명 가나다순</option><option value="NAME_DESC">회원명 역순</option></select></label>
           <button class="secondary" id="refresh-applications" type="button" data-button-help="현재 검색 조건으로 수강신청 목록을 다시 불러옵니다.">새로고침</button>
           <button class="danger" id="delete-semester-applications" type="button" data-button-help="선택한 학기의 모든 수강신청을 검토 후 삭제합니다." disabled>선택 학기 신청 전체 삭제</button>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>회원명</th><th>학생 소속</th><th>학기</th><th>신청순서</th><th>희망 강좌</th><th>상태</th><th><span class="sr-only">작업</span></th></tr></thead>
+            <thead><tr><th>회원명</th><th>학생 소속</th><th>학기</th><th>신청순서</th><th>희망 강좌</th><th>신청자 메모</th><th>상태</th><th>신청 경고</th><th><span class="sr-only">작업</span></th></tr></thead>
             <tbody id="application-rows"></tbody>
           </table>
           <p id="application-empty" class="empty">등록된 신청이 없습니다.</p>
@@ -299,7 +301,8 @@
           <div id="import-candidates" class="import-candidates"></div>
         </details>
         <div id="import-resolutions" class="import-resolutions"></div>
-        <div class="dialog-actions"><button class="primary" id="commit-import" type="button" data-button-help="검토한 Excel 내용을 선택한 반영 방식으로 저장합니다.">업무 자료에 반영</button></div>
+        <p id="import-commit-blocked" class="message error" role="alert" hidden></p>
+        <div class="dialog-actions"><button class="primary" id="commit-import" type="button" aria-describedby="import-commit-blocked" data-button-help="검토한 Excel 내용을 선택한 반영 방식으로 저장합니다.">업무 자료에 반영</button></div>
       </section>
     </form>
   </dialog>
@@ -323,6 +326,11 @@
     <form method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">DRAFT REVIEW</p><h2 id="draft-dialog-title">배정초안</h2><p id="draft-dialog-meta" class="form-help"></p></div><button class="icon-button close-dialog" type="button" aria-label="닫기">×</button></div>
       <div id="draft-stale" class="message error" hidden>초안 생성 뒤 원본 자료가 변경되었습니다. 현재 초안을 확정하지 말고 새 초안을 검토하세요.</div>
+      <section id="draft-issues-panel" class="message" aria-labelledby="draft-issues-title" hidden>
+        <h3 id="draft-issues-title">신청 경고</h3>
+        <p>자동 배정은 미수강 희망 강좌, 재수강 희망 강좌, 미수강 대체 강좌 순서로 진행합니다. 경고는 신청 저장이나 초안 검토를 막지 않습니다.</p>
+        <ul id="draft-issues"></ul>
+      </section>
       <section class="draft-capacity" aria-labelledby="draft-capacity-title">
         <h3 id="draft-capacity-title">강좌별 정원 현황</h3>
         <p id="draft-capacity-status" class="form-help" aria-live="polite"></p>
@@ -337,7 +345,7 @@
         <legend>회원 직접 배정</legend>
         <div class="form-grid">
           <label>회원명<input id="draft-add-member" list="draft-member-options" aria-describedby="draft-add-member-warning" maxlength="200" required placeholder="기존 회원 선택 또는 새 이름 입력"></label>
-          <label>학생 소속 (선택)<input id="draft-add-affiliation" maxlength="200"></label>
+          <label>학생 소속 (선택)<input id="draft-add-ministry" maxlength="200"></label>
           <label>배정 강좌<select id="draft-add-course" required></select></label>
         </div>
         <p id="draft-add-member-warning" class="message error" role="alert" hidden><strong>배정 불가:</strong> 이 회원은 같은 학기에 수강이력이 있습니다. 수강이력에서 확인하세요.</p>
@@ -346,7 +354,7 @@
       </fieldset>
       <div class="draft-toolbar">
         <label>결과 검색<input id="draft-search" type="search" placeholder="회원, 자동·최종 강좌"></label>
-        <label>결과 필터<select id="draft-result-filter"><option value="ALL">전체</option><option value="PREFERENCE_ALLOCATED">희망 배정</option><option value="RANDOM_FALLBACK">대체 배정</option><option value="AUTO_REJECTED">자동 미배정</option><option value="MANUAL_CHANGED">관리자 변경</option></select></label>
+        <label>결과 필터<select id="draft-result-filter"><option value="ALL">전체</option><option value="PREFERENCE_ALLOCATED">희망 배정</option><option value="RETAKE_PREFERENCE_ALLOCATED">재수강 희망 배정</option><option value="RANDOM_FALLBACK">대체 배정</option><option value="AUTO_REJECTED">자동 미배정</option><option value="MANUAL_CHANGED">관리자 변경</option></select></label>
         <label>보기<select id="draft-grouping"><option value="STUDENT">학생별</option><option value="COURSE">강좌별</option></select></label>
         <label>정렬<select id="draft-sort"><option value="ORDER_ASC">신청순서 낮은 순</option><option value="ORDER_DESC">신청순서 높은 순</option><option value="NAME_ASC">회원명 가나다순</option><option value="NAME_DESC">회원명 역순</option></select></label>
         <span id="draft-filter-count" class="form-help">0 / 0명</span>
@@ -399,9 +407,11 @@
     <div class="form-grid">
       <label>학기명<input name="semesterName" list="semester-options" required maxlength="200" autocomplete="off"></label>
       <label>회원명<input name="memberName" list="member-options" required maxlength="200" autocomplete="off"></label>
-      <label>학생 소속 (선택)<input name="affiliation" maxlength="200" autocomplete="off"></label>
+      <label>학생 소속 (선택)<input name="ministry" maxlength="200" autocomplete="off"></label>
       <label>신청순서<input name="applicationOrder" type="number" min="1" step="1" required></label>
     </div>
+    <label>신청자 메모 (선택)<textarea name="applicantNote" maxlength="2000" rows="3"></textarea></label>
+    <p class="form-help">최대 2,000자입니다. 줄바꿈을 유지하며 관리자 확정 메모와 별도로 보관합니다. 같은 강좌를 서로 다른 희망순위에 입력할 수 있습니다.</p>
     <fieldset><legend>희망 강좌</legend><div class="choice-fields"></div><button class="secondary add-choice" type="button" data-button-help="이 회원의 희망 강좌와 순위를 추가로 입력합니다.">희망 추가</button></fieldset>
     <button class="secondary remove-entry" type="button" data-button-help="이 신청 행을 입력 목록에서 제거합니다.">신청 행 제거</button>
   </fieldset></template>
@@ -410,7 +420,7 @@
     <div class="form-grid">
       <label>학기명<input name="semesterName" list="semester-options" required maxlength="200" autocomplete="off"></label>
       <label>회원명<input name="memberName" list="member-options" required maxlength="200" autocomplete="off"></label>
-      <label>학생 소속 (선택)<input name="affiliation" maxlength="200" autocomplete="off"></label>
+      <label>학생 소속 (선택)<input name="ministry" maxlength="200" autocomplete="off"></label>
       <label>강좌명<select name="courseId"></select></label>
       <label class="new-course-name">새 강좌명<input name="newCourseName" maxlength="200" autocomplete="off"></label>
     </div>

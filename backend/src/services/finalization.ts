@@ -1,6 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import type { AllocationSnapshot } from '../allocation/engine.ts';
+import type { Repository } from '../repository/database.ts';
+import type { AllocationContext } from '../repository/allocation-drafts.ts';
 import {
   AllocationSnapshotError,
   allocationFingerprint,
@@ -8,13 +10,10 @@ import {
   buildAllocationSnapshot,
 } from '../allocation/snapshot.ts';
 import {
-  StoreRevisionConflictError,
-  StoreEpochConflictError,
-  type DatabaseState,
   type FinalizationReceiptRecord,
   type FinalizationRecord,
-  type Store,
-} from '../storage/store.ts';
+} from '../domain/records.ts';
+import { StoreRevisionConflictError, StoreEpochConflictError } from '../domain/errors.ts';
 import {
   EnrollmentValidationError,
   evaluateEnrollmentSelection,
@@ -43,7 +42,7 @@ type DraftItem = {
   id: string;
   draftId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   sourceApplicationId: string | null;
   finalDecision: 'SELECTED' | 'REJECTED';
   finalSemesterCourseId: string | null;
@@ -52,7 +51,7 @@ type EnrollmentRecord = {
   id: string;
   semesterCourseId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   exceptionAcknowledgement: { warningDigest: string; note: string; acknowledgedAt: string } | null;
   revision: number;
   createdAt: string;
@@ -68,7 +67,7 @@ type Candidate = {
 type SelectedItem = {
   draftItemId: string;
   memberId: string;
-  affiliation: string | null;
+  ministry: string | null;
   semesterCourseId: string;
   sourceApplicationId: string | null;
 };
@@ -101,7 +100,7 @@ type PreviewEnrollment = {
   semesterName: string;
   courseName: string;
   memberName: string;
-  affiliation: string | null;
+  ministry: string | null;
   exceptionAcknowledgement: null;
   revision: 0;
 };
@@ -178,13 +177,13 @@ export class FinalizationIdempotencyConflictError extends Error {
 }
 
 export class FinalizationService {
-  readonly #store: Store;
+  readonly #repository: Repository;
   readonly #dependencies: Required<Omit<Dependencies, 'secret'>> & { secret: Buffer };
 
-  constructor(store: Store, dependencies: Dependencies) {
+  constructor(repository: Repository, dependencies: Dependencies) {
     const secret = Buffer.from(dependencies.secret);
     if (secret.byteLength < 32) throw new FinalizationValidationError('Prepared action secret is too short');
-    this.#store = store;
+    this.#repository = repository;
     this.#dependencies = {
       id: dependencies.id,
       now: dependencies.now,
@@ -196,7 +195,7 @@ export class FinalizationService {
   preview(draftId: string, input: { expectedDraftRevision: number }) {
     requireId(draftId, 'draftId');
     requireRevision(input.expectedDraftRevision);
-    const data = this.#store.read();
+    const data = this.#repository.read((queries) => queries.allocationDrafts.getContext({ draftId }));
     const draft = requireDraft(data, draftId);
     requireEditableRevision(draft, input.expectedDraftRevision);
     const selected = selectedItems(data, draftId);
@@ -237,7 +236,7 @@ export class FinalizationService {
   async finalize(draftId: string, input: FinalizeInput): Promise<FinalizationReceipt> {
     validateFinalizeInput(draftId, input);
     const requestHash = hashRequest(draftId, input);
-    const previous = this.#store.finalizationReceipt(input.idempotencyKey);
+    const previous = this.#repository.read((queries) => queries.finalizationReceipts.get({ idempotencyKey: input.idempotencyKey }));
     if (previous) return matchingReceipt(previous, requestHash);
 
     const payload = verify(input.preparedActionToken, this.#dependencies.secret);
@@ -246,14 +245,15 @@ export class FinalizationService {
       || payload.draftRevision !== input.expectedDraftRevision
       || this.#dependencies.now().getTime() >= Date.parse(payload.expiresAt)
     ) throw new FinalizationTokenError();
-    const currentEvaluation = assertCurrent(this.#store.read(), payload);
+    const currentEvaluation = this.#repository.read((queries) => assertCurrent(queries.allocationDrafts.getContext({ draftId }), payload));
     validateApproval(currentEvaluation.issues, payload.warningDigest, input);
 
     const receiptId = this.#dependencies.id();
     try {
-      return await this.#store.write({ expectedRevision: payload.storeRevision }, (data) => {
-        const raced = findFinalization(data, input.idempotencyKey);
+      return await this.#repository.write({ expectedRevision: payload.storeRevision }, (queries) => {
+        const raced = queries.finalizationReceipts.get({ idempotencyKey: input.idempotencyKey });
         if (raced) return matchingReceipt(raced, requestHash);
+        const data = queries.allocationDrafts.getContext({ draftId });
         const evaluation = assertCurrent(data, payload);
         validateApproval(evaluation.issues, payload.warningDigest, input);
         const finalizedAt = this.#dependencies.now().toISOString();
@@ -272,7 +272,7 @@ export class FinalizationService {
           createdAt: finalizedAt,
           updatedAt: finalizedAt,
         }));
-        (data.enrollments as EnrollmentRecord[]).push(...inserted);
+        for (const record of inserted) queries.enrollments.insert({ record });
         const semesterId = requireDraft(data, draftId).semesterId;
         const receipt: FinalizationReceipt = {
           receiptId,
@@ -281,21 +281,20 @@ export class FinalizationService {
           createdCount: inserted.length,
           finalizedAt,
         };
-        data.finalizationReceipts.push({
+        queries.finalizationReceipts.insert({ record: {
           idempotencyKey: input.idempotencyKey,
           requestHash,
           semesterId,
           receipt,
           enrollmentReportDownloadedAt: null,
           enrollmentReportStoreRevision: null,
-        });
-        data.allocationDrafts = data.allocationDrafts.filter(({ id }) => id !== draftId);
-        data.allocationDraftItems = data.allocationDraftItems.filter((item) => item.draftId !== draftId);
+        } });
+        queries.allocationDrafts.delete({ id: draftId });
         return structuredClone(receipt);
       });
     } catch (error) {
       if (error instanceof StoreRevisionConflictError) {
-        const raced = this.#store.finalizationReceipt(input.idempotencyKey);
+        const raced = this.#repository.read((queries) => queries.finalizationReceipts.get({ idempotencyKey: input.idempotencyKey }));
         if (raced) return matchingReceipt(raced, requestHash);
         throw new FinalizationStaleError();
       }
@@ -305,14 +304,16 @@ export class FinalizationService {
 
   reportStatus(semesterId: string) {
     requireId(semesterId, 'semesterId');
-    const current = this.#store.version();
-    const receipt = this.#store.latestFinalizationReceipt(semesterId);
-    return {
-      semesterId,
-      finalized: Boolean(receipt),
-      enrollmentReportIsCurrent: receipt?.enrollmentReportStoreRevision === current.storeRevision,
-      enrollmentReportDownloadedAt: receipt?.enrollmentReportDownloadedAt ?? null,
-    };
+    return this.#repository.read((queries) => {
+      const current = queries.metadata();
+      const receipt = queries.finalizationReceipts.latest({ semesterId });
+      return {
+        semesterId,
+        finalized: Boolean(receipt),
+        enrollmentReportIsCurrent: receipt?.enrollmentReportStoreRevision === current.storeRevision,
+        enrollmentReportDownloadedAt: receipt?.enrollmentReportDownloadedAt ?? null,
+      };
+    });
   }
 
   async recordEnrollmentReportDownload(
@@ -320,28 +321,25 @@ export class FinalizationService {
     expected: { storeRevision: number; storeEpoch: string },
   ): Promise<void> {
     requireId(semesterId, 'semesterId');
-    const current = this.#store.version();
+    const { current, receipt } = this.#repository.read((queries) => ({
+      current: queries.metadata(), receipt: queries.finalizationReceipts.latest({ semesterId }),
+    }));
     if (current.storeEpoch !== expected.storeEpoch) throw new StoreEpochConflictError();
     if (current.storeRevision !== expected.storeRevision) {
       throw new StoreRevisionConflictError(current.storeRevision);
     }
-    const receipt = this.#store.latestFinalizationReceipt(semesterId);
     if (!receipt) throw new FinalizationValidationError('No finalized allocation exists for this semester');
     if (receipt.enrollmentReportStoreRevision === current.storeRevision) return;
-    await this.#store.write({ expectedRevision: expected.storeRevision, expectedEpoch: expected.storeEpoch }, (data) => {
-      const latest = latestReceipt(data, semesterId);
+    await this.#repository.write({ expectedRevision: expected.storeRevision, expectedEpoch: expected.storeEpoch }, (queries) => {
+      const latest = queries.finalizationReceipts.latest({ semesterId });
       if (!latest || latest.idempotencyKey !== receipt.idempotencyKey) throw new FinalizationStaleError();
-      latest.enrollmentReportDownloadedAt = this.#dependencies.now().toISOString();
-      latest.enrollmentReportStoreRevision = data.meta.storeRevision + 1;
+      queries.finalizationReceipts.markReportDownloaded({ idempotencyKey: latest.idempotencyKey,
+        downloadedAt: this.#dependencies.now().toISOString(), storeRevision: queries.metadata().storeRevision + 1 });
     });
   }
 }
 
-const latestReceipt = (data: DatabaseState, semesterId: string): FinalizationReceiptRecord | undefined => (
-  data.finalizationReceipts.filter((item) => item.semesterId === semesterId).at(-1)
-);
-
-const assertCurrent = (data: DatabaseState, payload: TokenPayload): Evaluation => {
+const assertCurrent = (data: AllocationContext, payload: TokenPayload): Evaluation => {
   if (
     data.meta.storeRevision !== payload.storeRevision
     || data.meta.storeEpoch !== payload.storeEpoch
@@ -361,7 +359,7 @@ const assertCurrent = (data: DatabaseState, payload: TokenPayload): Evaluation =
 };
 
 const evaluate = (
-  data: DatabaseState,
+  data: AllocationContext,
   draft: DraftRecord,
   selected: SelectedItem[],
   candidates: Candidate[],
@@ -410,7 +408,7 @@ const evaluate = (
       id: candidate.id,
       semesterCourseId: item.semesterCourseId,
       memberId: item.memberId,
-      affiliation: item.affiliation,
+      ministry: item.ministry,
       exceptionAcknowledgement: null,
       revision: 0,
       createdAt: '',
@@ -424,7 +422,7 @@ const evaluate = (
       semesterName: semester.name,
       courseName: course.name,
       memberName: member.name,
-      affiliation: record.affiliation,
+      ministry: record.ministry,
       exceptionAcknowledgement: null,
       revision: 0,
     });
@@ -450,7 +448,7 @@ const evaluate = (
   };
 };
 
-const inputChangeIssues = (data: DatabaseState, draft: DraftRecord): FinalizationIssue[] => {
+const inputChangeIssues = (data: AllocationContext, draft: DraftRecord): FinalizationIssue[] => {
   try {
     const current = buildAllocationSnapshot(data, draft.semesterId);
     const currentFingerprint = allocationFingerprint(current, {
@@ -473,20 +471,11 @@ const inputChangeIssues = (data: DatabaseState, draft: DraftRecord): Finalizatio
   }
 };
 
-const hasStagedSource = (data: DatabaseState, applicationId: string | null): boolean => {
-  if (!applicationId) return false;
-  const staged = new Set((data.importBatches as Array<{ id: string; status: string }>)
-    .filter(({ status }) => status === 'STAGED').map(({ id }) => id));
-  return (data.applicationChoices as Array<{
-    applicationId: string;
-    sourceRefs: Array<{ importBatchId: string }>;
-  }>).some((choice) => (
-    choice.applicationId === applicationId
-    && choice.sourceRefs.some(({ importBatchId }) => staged.has(importBatchId))
-  ));
-};
+const hasStagedSource = (data: AllocationContext, applicationId: string | null): boolean => (
+  applicationId !== null && data.stagedApplicationIds.has(applicationId)
+);
 
-const summarizeCourses = (data: DatabaseState, semesterId: string, records: EnrollmentRecord[]) => {
+const summarizeCourses = (data: AllocationContext, semesterId: string, records: EnrollmentRecord[]) => {
   const semesterCourses = (data.semesterCourses as Array<{
     id: string; semesterId: string; capacity: number | null;
   }>).filter((item) => item.semesterId === semesterId);
@@ -504,13 +493,13 @@ const summarizeCourses = (data: DatabaseState, semesterId: string, records: Enro
   })).sort((left, right) => compareId(left.semesterCourseId, right.semesterCourseId));
 };
 
-const selectedItems = (data: DatabaseState, draftId: string): SelectedItem[] => (
+const selectedItems = (data: AllocationContext, draftId: string): SelectedItem[] => (
   (data.allocationDraftItems as DraftItem[])
     .filter((item) => item.draftId === draftId && item.finalDecision === 'SELECTED')
     .map((item) => ({
       draftItemId: item.id,
       memberId: item.memberId,
-      affiliation: item.affiliation,
+      ministry: item.ministry,
       semesterCourseId: item.finalSemesterCourseId!,
       sourceApplicationId: item.sourceApplicationId,
     }))
@@ -558,15 +547,11 @@ const requireEditableRevision = (draft: DraftRecord, expectedRevision: number): 
   if (draft.revision !== expectedRevision) throw new FinalizationStaleError();
 };
 
-const requireDraft = (data: DatabaseState, id: string): DraftRecord => {
+const requireDraft = (data: AllocationContext, id: string): DraftRecord => {
   const draft = (data.allocationDrafts as DraftRecord[]).find((item) => item.id === id);
   if (!draft) throw new FinalizationValidationError('Allocation draft was not found');
   return draft;
 };
-
-const findFinalization = (data: DatabaseState, key: string): FinalizationReceiptRecord | undefined => (
-  data.finalizationReceipts.find((item) => item.idempotencyKey === key)
-);
 
 const matchingReceipt = (stored: FinalizationReceiptRecord, requestHash: string): FinalizationReceipt => {
   if (stored.requestHash !== requestHash) throw new FinalizationIdempotencyConflictError();

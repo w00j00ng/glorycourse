@@ -17,7 +17,7 @@ test('allocates every applicant at the published applicant and course limits', (
     courseName: `강좌 ${index}`,
     capacity: MAX_ALLOCATION_APPLICANTS / MAX_SEMESTER_COURSES,
   }));
-  const applications = Array.from({ length: MAX_ALLOCATION_APPLICANTS }, (_, index) => ({
+  const applications = Array.from({ length: MAX_ALLOCATION_APPLICANTS }, (_, index) => ({ applicantNote: null,
     id: `application-${index}`,
     memberId: `member-${index}`,
     memberName: `회원 ${index}`,
@@ -68,7 +68,7 @@ test('completes a dense fallback workload without dropping applicants', (context
       capacity: 11,
     })),
   ];
-  const applications = Array.from({ length: applicantCount }, (_, index) => ({
+  const applications = Array.from({ length: applicantCount }, (_, index) => ({ applicantNote: null,
     id: `application-${index}`,
     memberId: `member-${index}`,
     memberName: `회원 ${index}`,

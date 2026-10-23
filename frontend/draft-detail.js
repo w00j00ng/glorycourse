@@ -8,9 +8,10 @@ import {
   reasonLabel,
   sortDraftItems,
 } from './draft-view.js';
+import { issueText } from './issue-view.js';
 
 /** @typedef {import('../backend/src/services/drafts.ts').DraftDetail} DraftDetail */
-/** @typedef {import('../backend/src/storage/store.ts').AllocationDraftItemRecord} DraftItem */
+/** @typedef {import('../backend/src/domain/records.ts').AllocationDraftItemRecord} DraftItem */
 /** @typedef {ReturnType<import('../backend/src/services/applications.ts').ApplicationService['getSemesterContext']>} DraftContext */
 
 /**
@@ -28,7 +29,7 @@ import {
  *   cell: (text: string) => HTMLElement,
  *   actionsCell: (...actions: [string, () => void | Promise<void>, string?][]) => HTMLElement,
  *   policyName: (id: string, version: string) => string,
- *   saveDraftItem: (item: DraftItem, semesterCourseId: string, affiliation: string) => Promise<void>,
+ *   saveDraftItem: (item: DraftItem, semesterCourseId: string, ministry: string) => Promise<void>,
  *   restoreDraftItem: (item: DraftItem) => Promise<void>,
  * }} dependencies
  */
@@ -102,6 +103,9 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     const td = document.createElement('td');
     const details = document.createElement('details');
     const summary = document.createElement('summary');
+    summary.className = 'badge draft-reason';
+    summary.dataset.reason = item.autoReasonCode;
+    summary.dataset.decision = item.autoDecision;
     summary.textContent = reasonLabel(item.autoReasonCode);
     const list = document.createElement('ul');
     list.className = 'draft-reason-list';
@@ -158,18 +162,28 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       orderCell.className = 'draft-order';
       const applicationCell = cell(application?.choices ?? '신청 없음');
       applicationCell.className = 'choices';
-      const affiliationCell = cell(item.affiliation ?? '—');
-      const affiliation = document.createElement('input');
+      if (application?.applicantNote) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = '신청자 메모';
+        const note = document.createElement('p');
+        note.className = 'application-note';
+        note.textContent = `신청자 메모: ${application.applicantNote}`;
+        details.append(summary, note);
+        applicationCell.append(details);
+      }
+      const ministryCell = cell(item.ministry ?? '—');
+      const ministry = document.createElement('input');
       if (!readonly) {
-        affiliation.value = item.affiliation ?? '';
-        affiliation.maxLength = 200;
-        affiliation.setAttribute('aria-label', `${item.memberNameAtGeneration} 학생 소속`);
-        affiliationCell.replaceChildren(affiliation);
+        ministry.value = item.ministry ?? '';
+        ministry.maxLength = 200;
+        ministry.setAttribute('aria-label', `${item.memberNameAtGeneration} 학생 소속`);
+        ministryCell.replaceChildren(ministry);
       }
       row.append(
         orderCell,
         cell(item.memberNameAtGeneration),
-        affiliationCell,
+        ministryCell,
         applicationCell,
         cell(item.autoDecision === 'SELECTED' ? courseName(item.autoSemesterCourseId) : item.autoDecision === 'NOT_EVALUATED' ? '자동 결과 없음' : '제외'),
         reasonCell(item),
@@ -178,7 +192,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       if (readonly) row.append(cell(''));
       else {
         /** @type {[string, () => Promise<void>][]} */
-        const actions = [['저장', () => saveDraftItem(item, finalSelect.value, affiliation.value)]];
+        const actions = [['저장', () => saveDraftItem(item, finalSelect.value, ministry.value)]];
         if (item.autoDecision !== 'NOT_EVALUATED') actions.push(['자동 복원', () => restoreDraftItem(item)]);
         row.append(actionsCell(...actions));
       }
@@ -205,7 +219,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       byId('draft-grouping').value = 'STUDENT';
       byId('draft-sort').value = 'ORDER_ASC';
       byId('draft-add-member').value = '';
-      byId('draft-add-affiliation').value = '';
+      byId('draft-add-ministry').value = '';
     }
     byId('draft-dialog-title').textContent = `${context.semester.name} 배정초안`;
     byId('draft-dialog-meta').textContent = `${detail.draft.mode === 'MANUAL'
@@ -226,6 +240,13 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     byId('draft-readonly').hidden = !readonly;
     byId('draft-readonly').textContent = `${detail.draft.status} · 읽기 전용`;
     byId('preview-finalization').hidden = readonly;
+    const members = new Map(detail.applicationSnapshot.applications.map(({ memberId, memberName }) => [memberId, memberName]));
+    byId('draft-issues').replaceChildren(...detail.issues.map((issue) => {
+      const line = document.createElement('li');
+      line.textContent = issueText(issue, { memberName: members.get(issue.memberId) });
+      return line;
+    }));
+    byId('draft-issues-panel').hidden = detail.issues.length === 0;
     renderItems();
     if (!byId('draft-dialog').open) byId('draft-dialog').showModal();
   };

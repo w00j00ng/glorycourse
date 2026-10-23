@@ -11,7 +11,7 @@ const manualApplicationNodes = () => {
     replaceChildren() { this.children = []; },
   };
   const makeEntry = () => {
-    const fields = Object.fromEntries(['semesterName', 'memberName', 'affiliation', 'applicationOrder'].map((name) => [name, { value: '' }]));
+    const fields = Object.fromEntries(['semesterName', 'memberName', 'ministry', 'applicationOrder', 'applicantNote'].map((name) => [name, { value: '' }]));
     const choices = { children: [], append(row) { this.children.push(row); } };
     const add = { addEventListener(_event, callback) { this.click = callback; } };
     const removeButton = { hidden: false, addEventListener(_event, callback) { this.click = callback; } };
@@ -90,8 +90,10 @@ test('the application list shows its current rows, choices, actions, and empty s
       'application-semester-filter': semesterFilter, 'delete-semester-applications': deleteSemesterButton,
     };
     const state = {
-      applications: [{ memberName: '홍길동', affiliation: '청년부', semesterName: '2026 봄', applicationOrder: 2,
-        applicationOrderStatus: 'NORMAL', choices: [{ courseName: '창세기' }] }],
+      applications: [{ memberName: '홍길동', ministry: '청년부', semesterName: '2026 봄', applicationOrder: 2,
+        applicantNote: '<em>첫 줄</em>\n다음 줄',
+        warnings: [{ code: 'RETAKE', severity: 'WARNING', courseName: '창세기', preferences: [1, 3] }],
+        applicationOrderStatus: 'NORMAL', reviewStatus: 'RETAKE', choices: [{ courseName: '창세기', preference: 1 }, { courseName: '창세기', preference: 3 }] }],
       pagination: { application: { total: 12 } }, semesters: [],
     };
     const page = createApplicationsPage({
@@ -105,9 +107,12 @@ test('the application list shows its current rows, choices, actions, and empty s
     assert.equal(rows.children[0].children[0].value, '홍길동');
     assert.equal(rows.children[0].children[1].value, '청년부');
     assert.equal(rows.children[0].children[4].choices[0].courseName, '창세기');
-    assert.deepEqual(rows.children[0].children[6].actions.map(([name]) => name), ['수정', '삭제']);
+    assert.equal(rows.children[0].children[5].value, '<em>첫 줄</em>\n다음 줄');
+    assert.equal(rows.children[0].children[6].text, '재수강');
+    assert.match(rows.children[0].children[7].value, /주의 · 창세기 · 1·3순위: 이전 학기에 수강한 강좌/);
+    assert.deepEqual(rows.children[0].children[8].actions.map(([name]) => name), ['수정', '삭제']);
     assert.equal(count.textContent, '12');
-    assert.equal(choiceCount.textContent, '1');
+    assert.equal(choiceCount.textContent, '2');
     assert.equal(empty.hidden, true);
     assert.equal(deleteSemesterButton.disabled, true);
 
@@ -153,9 +158,10 @@ test('the application list keeps the newest search result when an older request 
 test('registering multiple applications refreshes the catalog before querying the current semester', async () => {
   const makeEntry = (memberName, order) => ({
     querySelector: (selector) => selector === '.choice-fields'
-      ? { children: [{ querySelector: (field) => ({ value: field === '[name="courseName"]' ? '창세기' : '1' }) }] }
+      ? { children: (order === 1 ? [1, 3] : [1]).map((rank) => ({ querySelector: (field) => ({ value: field === '[name="courseName"]' ? '창세기' : String(rank) }) })) }
       : { value: { '[name="semesterName"]': '2026 가을', '[name="memberName"]': memberName,
-        '[name="affiliation"]': order === 1 ? '청년부' : '', '[name="applicationOrder"]': String(order) }[selector] },
+        '[name="ministry"]': order === 1 ? '청년부' : '', '[name="applicationOrder"]': String(order),
+        '[name="applicantNote"]': order === 1 ? '  첫 줄\n다음 줄  ' : '   ' }[selector] },
   });
   const entries = { children: [makeEntry('김가나', 1), makeEntry('박다라', 2)] };
   const submit = { disabled: false };
@@ -184,7 +190,11 @@ test('registering multiple applications refreshes the catalog before querying th
   assert.equal(calls[0].path, '/applications/batch');
   assert.equal(calls[0].options.method, 'POST');
   assert.deepEqual(JSON.parse(calls[0].options.body).items.map((item) => item.memberName), ['김가나', '박다라']);
-  assert.deepEqual(JSON.parse(calls[0].options.body).items.map((item) => item.affiliation), ['청년부', null]);
+  assert.deepEqual(JSON.parse(calls[0].options.body).items.map((item) => item.ministry), ['청년부', null]);
+  assert.deepEqual(JSON.parse(calls[0].options.body).items.map((item) => item.applicantNote), ['첫 줄\n다음 줄', null]);
+  assert.deepEqual(JSON.parse(calls[0].options.body).items[0].choices, [
+    { courseName: '창세기', preference: 1 }, { courseName: '창세기', preference: 3 },
+  ]);
   assert.deepEqual(calls.slice(1), ['close', 'catalog', 'semesterId=new']);
   assert.equal(submit.disabled, false);
 });
@@ -250,7 +260,7 @@ test('editing an application opens one prefilled row and a save action', () => {
     'add-application-entry': addButton, 'application-dialog': dialog,
   });
   const page = createApplicationsPage({ byId: (id) => nodes[id] });
-  const application = { id: 'application-1', revision: 4, memberName: '김가나', affiliation: '대학부' };
+  const application = { id: 'application-1', revision: 4, memberName: '김가나', ministry: '대학부', applicantNote: '첫 줄\n둘째 줄' };
 
   page.openApplication(application);
 
@@ -261,7 +271,8 @@ test('editing an application opens one prefilled row and a save action', () => {
   assert.equal(addButton.hidden, true);
   assert.equal(entries.children.length, 1);
   assert.equal(entries.children[0].fields.memberName.value, '김가나');
-  assert.equal(entries.children[0].fields.affiliation.value, '대학부');
+  assert.equal(entries.children[0].fields.ministry.value, '대학부');
+  assert.equal(entries.children[0].fields.applicantNote.value, '첫 줄\n둘째 줄');
   assert.equal(entries.children[0].removeButton.hidden, true);
   assert.equal(dialog.showModalCalled, true);
 });

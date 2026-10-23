@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createTestRepository, seedRepository } from '../helpers/repository.mjs';
 import { ApplicationConflictError, ApplicationService, RevisionConflictError } from '../../backend/src/services/applications.ts';
 import {
   EnrollmentAcknowledgementError,
@@ -10,7 +11,6 @@ import {
   EnrollmentTokenError,
   EnrollmentValidationError,
 } from '../../backend/src/services/enrollments.ts';
-import { Store } from '../../backend/src/storage/store.ts';
 
 const emptyStore = () => ({
   meta: { storeEpoch: 'epoch-1', storeRevision: 0 },
@@ -29,7 +29,7 @@ const emptyStore = () => ({
 });
 
 const openServices = async () => {
-  const store = await Store.open(new MemoryAdapter(emptyStore()), emptyStore());
+  const store = await createTestRepository(emptyStore());
   let appId = 0;
   let enrollmentId = 0;
   let now = new Date('2026-09-22T00:00:00.000Z');
@@ -84,14 +84,14 @@ test('sets capacity on direct creation or a move to a new offering without resiz
   const { enrollments, store } = await openServices();
   const request = { semesterName: '2024 봄', memberName: '홍길동', courseName: '창세기' };
   const first = await commitCreate(enrollments, request, '과거 이력 등록');
-  assert.equal(store.read().semesterCourses[0].capacity, 1);
+  assert.equal(store.snapshot().semesterCourses[0].capacity, 1);
   await commitCreate(enrollments, { ...request, memberName: '김은혜' }, '추가 이력 등록');
-  assert.equal(store.read().semesterCourses[0].capacity, 1);
+  assert.equal(store.snapshot().semesterCourses[0].capacity, 1);
   const preview = enrollments.preview({ ...request, action: 'UPDATE', enrollmentId: first.id,
     expectedRevision: first.revision, courseName: '마태복음' });
   await enrollments.execute({ preparedActionToken: preview.preparedActionToken,
     acknowledgedWarningDigest: preview.warningDigest, acknowledgementNote: '강좌 수정' });
-  assert.deepEqual(store.read().semesterCourses.map(({ capacity }) => capacity), [1, 1]);
+  assert.deepEqual(store.snapshot().semesterCourses.map(({ capacity }) => capacity), [1, 1]);
 });
 
 test('rejects stale semester edits after direct, batch, or moved enrollment creates a new offering', async () => {
@@ -118,10 +118,10 @@ test('rejects stale semester edits after direct, batch, or moved enrollment crea
     const after = applications.getSemesterContext(semester.semester.id);
     assert.equal(after.semesterCourses.find(({ courseName }) => courseName === request.courseName).capacity, expectedCapacity);
     assert.equal(after.allocationInputRevision, context.allocationInputRevision + 1);
-    const imported = store.read();
+    const imported = store.snapshot();
     assert.equal(imported.semesters.find(({ id }) => id === semester.semester.id).updatedAt, '2026-09-23T00:00:00.000Z');
     await assert.rejects(applications.updateSemesterContext(staleEdit), RevisionConflictError);
-    assert.deepEqual(store.read(), imported);
+    assert.deepEqual(store.snapshot(), imported);
   }
 });
 
@@ -140,14 +140,14 @@ test('previews a retake without mutation and records an explicitly acknowledged 
     order: 2,
     courses: [{ courseName: '기초', capacity: 10 }],
   });
-  const beforePreview = store.read();
+  const beforePreview = store.snapshot();
 
   const preview = enrollments.preview({
     action: 'CREATE', semesterName: '2026 봄', memberName: '홍길동', courseName: '기초',
   });
 
   assert.deepEqual(preview.issues.map(({ code }) => code), ['RETAKE']);
-  assert.deepEqual(store.read(), beforePreview);
+  assert.deepEqual(store.snapshot(), beforePreview);
   await assert.rejects(enrollments.execute({
     preparedActionToken: preview.preparedActionToken,
     acknowledgedWarningDigest: 'different-warning-digest',
@@ -172,10 +172,10 @@ test('accepts optional enrollment notes and keeps the exact warning confirmation
     const preview = enrollments.preview({ action: 'CREATE', ...names, memberName: '추가 회원' });
     assert.ok(preview.issues.some(({ code }) => code === 'CAPACITY_EXCEEDED'));
     const request = { preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest };
-    const before = store.read();
+    const before = store.snapshot();
     for (const invalid of [123, null, 'x'.repeat(2001)]) {
       await assert.rejects(enrollments.execute({ ...request, acknowledgementNote: invalid }), EnrollmentAcknowledgementError);
-      assert.deepEqual(store.read(), before);
+      assert.deepEqual(store.snapshot(), before);
     }
     const saved = await enrollments.execute({ ...request, ...(note === undefined ? {} : { acknowledgementNote: note }) });
     assert.equal(saved.exceptionAcknowledgement.note, expected);
@@ -210,7 +210,7 @@ test('never allows a second enrollment for the same member and semester', async 
     acknowledgedWarningDigest: preview.warningDigest,
     acknowledgementNote: '강제 확인 시도',
   }), EnrollmentConflictError);
-  assert.equal(store.read().enrollments.length, 1);
+  assert.equal(store.snapshot().enrollments.length, 1);
 });
 
 test('rejects stale, expired, and previous-epoch preview tokens without changing enrollments', async () => {
@@ -243,12 +243,12 @@ test('rejects stale, expired, and previous-epoch preview tokens without changing
 
   setNow('2026-09-22T00:00:00.000Z');
   const previousEpoch = enrollments.preview(request);
-  await store.write({}, (data) => { data.meta.storeEpoch = 'epoch-2'; });
+  await seedRepository(store, (data) => { data.meta.storeEpoch = 'epoch-2'; });
   await assert.rejects(enrollments.execute({
     preparedActionToken: previousEpoch.preparedActionToken,
     acknowledgedWarningDigest: previousEpoch.warningDigest,
   }), EnrollmentStaleError);
-  assert.equal(store.read().enrollments.length, 0);
+  assert.equal(store.snapshot().enrollments.length, 0);
 });
 
 test('keeps unresolved semester order and capacity behind explicit warnings', async () => {
@@ -259,7 +259,7 @@ test('keeps unresolved semester order and capacity behind explicit warnings', as
     applicationOrder: 1,
     choices: [{ courseName: '과거 강좌', preference: 1 }],
   });
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesters.find(({ id }) => id === application.semesterId).order = null;
   });
 
@@ -342,7 +342,7 @@ test('warns when a matching past enrollment has no semester order', async () => 
     applicationOrder: 1,
     choices: [{ courseName: '기초', preference: 1 }],
   });
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     data.semesters.find(({ id }) => id === application.semesterId).order = null;
   });
   await commitCreate(enrollments, {
@@ -378,7 +378,7 @@ test('changes an enrollment semester and course, including a newly named course'
     semesterName: '2026 가을', memberName: '김영희', order: 2,
     courses: [{ courseName: '기초', capacity: 10 }],
   });
-  await store.write({}, (data) => {
+  await seedRepository(store, (data) => {
     const semesterCourse = data.semesterCourses.find(({ id }) => id === created.semesterCourseId);
     data.allocationDrafts.push({
       id: 'finalized-draft-1',
@@ -420,7 +420,7 @@ test('changes an enrollment semester and course, including a newly named course'
       },
     });
   });
-  const beforeSnapshot = structuredClone(store.read().allocationDrafts);
+  const beforeSnapshot = structuredClone(store.snapshot().allocationDrafts);
 
   const updatePreview = enrollments.preview({
     action: 'UPDATE',
@@ -438,7 +438,7 @@ test('changes an enrollment semester and course, including a newly named course'
   assert.equal(updated.semesterName, '2026 가을');
   assert.equal(updated.courseName, '신설 강좌');
   assert.equal('sourceDraftId' in updated, false);
-  assert.ok(store.read().courses.some(({ name }) => name === '신설 강좌'));
+  assert.ok(store.snapshot().courses.some(({ name }) => name === '신설 강좌'));
 
   const deletePreview = enrollments.preview({
     action: 'DELETE',
@@ -452,8 +452,8 @@ test('changes an enrollment semester and course, including a newly named course'
     preparedActionToken: deletePreview.preparedActionToken,
     acknowledgedWarningDigest: deletePreview.warningDigest,
   });
-  assert.equal(store.read().enrollments.length, 0);
-  assert.deepEqual(store.read().allocationDrafts, beforeSnapshot);
+  assert.equal(store.snapshot().enrollments.length, 0);
+  assert.deepEqual(store.snapshot().allocationDrafts, beforeSnapshot);
 });
 
 test('filters enrollments by member name, semester, and course', async () => {
@@ -469,7 +469,7 @@ test('filters enrollments by member name, semester, and course', async () => {
   await commitCreate(enrollments, { semesterName: '2026 봄', memberName: '홍길동', courseName: '기초' });
   await commitCreate(enrollments, { semesterName: '2026 봄', memberName: '김영희', courseName: '심화' });
   await commitCreate(enrollments, { semesterName: '2026 가을', memberName: '홍서준', courseName: '심화' });
-  const data = store.read();
+  const data = store.snapshot();
   const springId = data.semesters.find(({ name }) => name === '2026 봄').id;
   const advancedId = data.courses.find(({ name }) => name === '심화').id;
 
@@ -495,8 +495,8 @@ test('deletes all histories in a selected semester without changing other semest
   await commitCreate(enrollments, { semesterName: '2026 봄', memberName: '회원1', courseName: '창세기' });
   await commitCreate(enrollments, { semesterName: '2026 봄', memberName: '회원2', courseName: '창세기' });
   await commitCreate(enrollments, { semesterName: '2026 가을', memberName: '회원3', courseName: '마태복음' });
-  const semesterId = store.read().semesters.find(({ name }) => name === '2026 봄').id;
-  const applicationIds = store.read().applications.map(({ id }) => id);
+  const semesterId = store.snapshot().semesters.find(({ name }) => name === '2026 봄').id;
+  const applicationIds = store.snapshot().applications.map(({ id }) => id);
 
   const stalePreview = enrollments.previewSemesterDeletion(semesterId);
   assert.equal(stalePreview.count, 2);
@@ -525,7 +525,7 @@ test('deletes all histories in a selected semester without changing other semest
   assert.deepEqual(result, { deletedCount: 3 });
   assert.deepEqual(enrollments.list({ semesterId }), []);
   assert.deepEqual(enrollments.list().map(({ memberName }) => memberName), ['회원3']);
-  assert.deepEqual(store.read().applications.map(({ id }) => id), applicationIds);
+  assert.deepEqual(store.snapshot().applications.map(({ id }) => id), applicationIds);
 });
 
 test('rejects a tampered prepared action token', async () => {
@@ -542,17 +542,3 @@ test('rejects a tampered prepared action token', async () => {
     acknowledgedWarningDigest: preview.warningDigest,
   }), EnrollmentTokenError);
 });
-
-class MemoryAdapter {
-  constructor(data) {
-    this.data = structuredClone(data);
-  }
-
-  async read() {
-    return structuredClone(this.data);
-  }
-
-  async write(data) {
-    this.data = structuredClone(data);
-  }
-}

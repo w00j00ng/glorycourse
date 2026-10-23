@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
+import { snapshotApplicationWarnings } from '../domain/application-warnings.ts';
 
-export const ALLOCATION_ENGINE_VERSION = '1.0.0';
+export const ALLOCATION_ENGINE_VERSION = '2.0.0';
 export const MAX_ALLOCATION_APPLICANTS = 10_000;
 export const MAX_SEMESTER_COURSES = 1_000;
 export const MAX_CHOICES_PER_APPLICATION = 5;
@@ -22,7 +23,8 @@ export type AllocationSnapshot = {
     id: string;
     memberId: string;
     memberName: string;
-    affiliation: string | null;
+    ministry: string | null;
+    applicantNote: string | null;
     applicationOrder: number | null;
     applicationOrderStatus: 'NORMAL' | 'CONFLICT' | 'MISSING' | 'INVALID';
   }>;
@@ -43,7 +45,7 @@ export type AllocationSnapshot = {
     id: string;
     memberId: string;
     memberName: string;
-    affiliation: string | null;
+    ministry: string | null;
     semesterCourseId: string;
   }>;
 };
@@ -58,6 +60,9 @@ export type AllocationIssue = {
 
 type ReasonCode =
   | 'PREFERENCE_ALLOCATED'
+  | 'RETAKE_PREFERENCE_ALLOCATED'
+  | 'DUPLICATE_CHOICE_SKIPPED'
+  | 'ALLOCATED_TO_HIGHER_PRIORITY'
   | 'ALREADY_TAKEN'
   | 'CAPACITY_FULL'
   | 'ALLOCATED_TO_HIGHER_PREFERENCE'
@@ -135,7 +140,7 @@ type State = {
   pastCourseIds: Set<string>;
   fixed: boolean;
   preferenceAttempts: PreferenceAttempt[];
-  selectedPreferenceCourseId?: string;
+  selectedPreference?: PreferenceAttempt;
   fallbackCandidates: string[];
 };
 
@@ -165,9 +170,9 @@ export const allocate = (
     fallbackAssignments,
     totalFallbackAssigned,
   );
-  const warnings = capacityWarnings(courses, existingCounts);
+  const warnings = [...capacityWarnings(courses, existingCounts), ...snapshotApplicationWarnings(input)];
   const preferenceCounts = countBy(states.flatMap((state) => (
-    state.selectedPreferenceCourseId ? [state.selectedPreferenceCourseId] : []
+    state.selectedPreference ? [state.selectedPreference.semesterCourseId] : []
   )));
   const fallbackCounts = countBy([...fallbackAssignments.values()]);
 
@@ -238,7 +243,17 @@ const allocatePreferences = (
 ): void => {
   const active = states.filter(({ fixed }) => !fixed);
   // ponytail: bounded materialization is simplest; stream by rank if GC-014 shows memory pressure.
-  const attempts = active.flatMap((state) => state.application.choices.map((choice) => ({ state, choice })));
+  const attempts = active.flatMap((state) => {
+    const seen = new Set<string>();
+    return [...state.application.choices]
+      .sort((left, right) => left.preference! - right.preference! || compareId(left.id, right.id))
+      .map((choice) => {
+        const courseId = courseById.get(choice.semesterCourseId)!.courseId;
+        const duplicate = seen.has(courseId);
+        seen.add(courseId);
+        return { state, choice, duplicate, retake: state.pastCourseIds.has(courseId) };
+      });
+  });
   const tieKeys = new Map(active.map(({ application }) => [
     application.memberId,
     seededKey(seed, 'preference-student', application.memberId),
@@ -246,7 +261,7 @@ const allocatePreferences = (
   attempts.sort((left, right) => {
     const newDifference = Number(right.state.isNew) - Number(left.state.isNew);
     const preferenceDifference = left.choice.preference! - right.choice.preference!;
-    return (
+    return Number(left.retake) - Number(right.retake) || (
       policy.preferenceMode === 'NEW_FIRST'
         ? newDifference || preferenceDifference
         : preferenceDifference || newDifference
@@ -257,7 +272,7 @@ const allocatePreferences = (
       || compareId(left.choice.id, right.choice.id);
   });
 
-  for (const { state, choice } of attempts) {
+  for (const { state, choice, duplicate, retake } of attempts) {
     const course = courseById.get(choice.semesterCourseId)!;
     const attempt: PreferenceAttempt = {
       choiceIdAtGeneration: choice.id,
@@ -267,15 +282,17 @@ const allocatePreferences = (
       decision: 'REJECTED',
       reasonCode: 'CAPACITY_FULL',
     };
-    if (state.selectedPreferenceCourseId) {
+    if (duplicate) {
       attempt.decision = 'NOT_EVALUATED';
-      attempt.reasonCode = 'ALLOCATED_TO_HIGHER_PREFERENCE';
-    } else if (state.pastCourseIds.has(course.courseId)) {
-      attempt.reasonCode = 'ALREADY_TAKEN';
+      attempt.reasonCode = 'DUPLICATE_CHOICE_SKIPPED';
+    } else if (state.selectedPreference) {
+      attempt.decision = 'NOT_EVALUATED';
+      attempt.reasonCode = state.selectedPreference.preference > attempt.preference
+        ? 'ALLOCATED_TO_HIGHER_PRIORITY' : 'ALLOCATED_TO_HIGHER_PREFERENCE';
     } else if ((remaining.get(course.id) ?? 0) > 0) {
       attempt.decision = 'SELECTED';
-      attempt.reasonCode = 'PREFERENCE_ALLOCATED';
-      state.selectedPreferenceCourseId = course.id;
+      attempt.reasonCode = retake ? 'RETAKE_PREFERENCE_ALLOCATED' : 'PREFERENCE_ALLOCATED';
+      state.selectedPreference = attempt;
       remaining.set(course.id, remaining.get(course.id)! - 1);
     }
     state.preferenceAttempts.push(attempt);
@@ -297,7 +314,7 @@ const allocateFallback = (
   const availableAtStart = courses
     .filter(({ id }) => (remaining.get(id) ?? 0) > 0)
     .sort((left, right) => compareId(left.id, right.id));
-  const active = states.filter((state) => !state.fixed && !state.selectedPreferenceCourseId);
+  const active = states.filter((state) => !state.fixed && !state.selectedPreference);
   for (const state of active) {
     const desired = new Set(state.application.choices.map(({ semesterCourseId }) => semesterCourseId));
     state.fallbackCandidates = availableAtStart
@@ -392,13 +409,13 @@ const resultItems = (
   totalFallbackAssigned: number,
 ): AllocationItem[] => {
   const items = states.filter(({ fixed }) => !fixed).map((state): AllocationItem => {
-    if (state.selectedPreferenceCourseId) return {
+    if (state.selectedPreference) return {
       memberId: state.application.memberId,
       memberNameAtGeneration: state.application.memberName,
       sourceApplicationId: state.application.id,
       autoDecision: 'SELECTED',
-      autoSemesterCourseId: state.selectedPreferenceCourseId,
-      autoReasonCode: 'PREFERENCE_ALLOCATED',
+      autoSemesterCourseId: state.selectedPreference.semesterCourseId,
+      autoReasonCode: state.selectedPreference.reasonCode,
       autoReasonDetail: { preferenceAttempts: state.preferenceAttempts, fallback: null },
     };
     const fallbackCourse = fallbackAssignments.get(state.application.memberId);
@@ -500,16 +517,11 @@ const validate = (
     if (choices.length > MAX_CHOICES_PER_APPLICATION) {
       issues.push(errorIssue('APPLICATION_CHOICE_LIMIT', 'Application has too many choices', application.memberId));
     }
-    const choiceCourses = new Set<string>();
     const preferences = new Set<number>();
     for (const choice of choices) {
       if (!courseIds.has(choice.semesterCourseId)) {
         issues.push(errorIssue('CHOICE_COURSE_INVALID', 'Choice does not belong to the target semester', application.memberId, choice.semesterCourseId));
       }
-      if (choiceCourses.has(choice.semesterCourseId)) {
-        issues.push(errorIssue('DUPLICATE_CHOICE_COURSE', 'Application course choice is duplicated', application.memberId, choice.semesterCourseId));
-      }
-      choiceCourses.add(choice.semesterCourseId);
       if (!positiveInteger(choice.preference) || choice.preference! > MAX_CHOICES_PER_APPLICATION || preferences.has(choice.preference!)) {
         issues.push(errorIssue('PREFERENCE_UNRESOLVED', 'Choice preference is missing, invalid, or duplicated', application.memberId, choice.semesterCourseId));
       } else preferences.add(choice.preference!);

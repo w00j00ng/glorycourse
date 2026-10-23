@@ -1,4 +1,4 @@
-import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 
 const [file, rawCount] = process.argv.slice(2);
 const count = Number(rawCount);
@@ -25,6 +25,10 @@ const data = {
   restoreReceipts: [],
 };
 
-const adapter = new SQLiteAdapter(file);
-const previous = await adapter.read();
-await adapter.write(data, previous);
+const repository = await openRepository(file, data);
+try {
+  const previous = repository.version();
+  await repository.restore(data, {
+    expectedRevision: previous.storeRevision, expectedEpoch: previous.storeEpoch, backup: async () => {},
+  });
+} finally { repository.close(); }

@@ -1,17 +1,21 @@
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import ExcelJS from '@excel.js/exceljs';
+import { seedRepository } from '../helpers/repository.mjs';
 
 import { startLocalServer } from '../../backend/src/server.ts';
 
 const timestamp = '2026-09-26T00:00:00.000Z';
+const { version } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 const server = await startLocalServer({
   dataDirectory: process.argv[2], staticDirectory: resolve(import.meta.dirname, '../../frontend'),
+  version,
 });
 process.send({ type: 'ready', origin: server.origin });
 process.on('message', async (message) => {
   try {
     if (message.type === 'clear-application-preferences') {
-      await server.store.write({}, (data) => {
+      await seedRepository(server.repository, (data) => {
         for (const choice of data.applicationChoices) choice.preference = null;
       });
       process.send({ type: 'preferences-cleared' });
@@ -45,16 +49,16 @@ process.on('message', async (message) => {
       const capacity = workbook.getWorksheet('개설강좌').getCell('C2').value;
       const sheet = workbook.getWorksheet('수강신청');
       const headers = sheet.getRow(1).values.slice(1);
-      sheet.getCell('I1').value = '5순위 강좌';
-      const rows = message.rows?.map(([semesterName, memberName, ...values]) => [semesterName, memberName, null, ...values])
-        ?? [['양식 학기', '양식 회원', '양식 소속', 1, '창세기', null, null, '마태복음', '마가복음']];
+      sheet.getCell('J1').value = '5순위 강좌';
+      const rows = message.rows?.map(([semesterName, memberName, applicationOrder, ...choices]) => [semesterName, memberName, null, applicationOrder, null, ...choices])
+        ?? [['양식 학기', '양식 회원', '양식 소속', 1, null, '창세기', null, null, '마태복음', '마가복음']];
       for (const row of rows) sheet.addRow(row);
       process.send({ type: 'template-completed', semesterName, courseName, capacity, headers,
         bytes: Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64') });
       return;
     }
     if (message.type !== 'seed-large') return;
-    await server.store.write({}, (data) => {
+    await seedRepository(server.repository, (data) => {
       data.semesters.push({ id: 'semester', name: '검증 학기', nameKey: '검증 학기', order: 1,
         allocationInputRevision: 0, createdAt: timestamp, updatedAt: timestamp });
       for (let index = 0; index < 100; index++) {
@@ -68,7 +72,7 @@ process.on('message', async (message) => {
         const applicationId = `application-${index}`;
         data.members.push({ id: memberId, name: `회원 ${index}`, nameKey: `회원 ${index}`,
           createdAt: timestamp, updatedAt: timestamp });
-        data.applications.push({ id: applicationId, semesterId: 'semester', memberId, affiliation: null, applicationOrder: index + 1,
+        data.applications.push({ applicantNote: null, id: applicationId, semesterId: 'semester', memberId, ministry: null, applicationOrder: index + 1,
           applicationOrderStatus: 'NORMAL', orderResolution: 'SOURCE_AGREED', orderResolutionNote: null,
           revision: 0, createdAt: timestamp, updatedAt: timestamp });
         data.applicationChoices.push({ id: `choice-${index}`, applicationId,

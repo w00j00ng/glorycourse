@@ -13,17 +13,17 @@ import {
   type ImportPreviewService,
 } from './import-preview.ts';
 import {
-  StoreRevisionConflictError,
   type ApplicationChoiceRecord as Choice,
   type ApplicationRecord as Application,
-  type DatabaseState,
   type ImportBatchRecord as ImportBatch,
   type ImportResolutionRecord as Resolution,
   type NamedRecord as Named,
   type SemesterCourseRecord as SemesterCourse,
   type SemesterRecord as Semester,
-  type Store,
-} from '../storage/store.ts';
+} from '../domain/records.ts';
+import { StoreRevisionConflictError, StoreEpochConflictError } from '../domain/errors.ts';
+import type { Repository } from '../repository/database.ts';
+import type { ImportContext } from '../repository/import-batches.ts';
 import { applyContext, bumpSemester, ImportCommitConflictError, resolveNamed, resolveSemester, resolveSemesterCourse } from './import-context.ts';
 export { ImportCommitConflictError } from './import-context.ts';
 type Dependencies = { id: () => string; now: () => Date };
@@ -61,12 +61,12 @@ export class ImportAcknowledgementError extends Error {
 }
 
 export class ImportCommitService {
-  readonly #store: Store;
+  readonly #repository: Repository;
   readonly #previews: ImportPreviewService;
   readonly #dependencies: Dependencies;
 
-  constructor(store: Store, previews: ImportPreviewService, dependencies: Dependencies) {
-    this.#store = store;
+  constructor(repository: Repository, previews: ImportPreviewService, dependencies: Dependencies) {
+    this.#repository = repository;
     this.#previews = previews;
     this.#dependencies = dependencies;
   }
@@ -74,7 +74,9 @@ export class ImportCommitService {
   async commit(input: CommitInput): Promise<ImportReceipt> {
     validateInput(input);
     const requestHash = hashRequest(input);
-    const previous = this.#store.findImportReceipt(input.previewId, input.storeEpoch, input.idempotencyKey);
+    const previous = this.#repository.read((queries) => queries.importReceipts.find({
+      previewId: input.previewId, storeEpoch: input.storeEpoch, idempotencyKey: input.idempotencyKey,
+    }));
     if (previous) return matchingReceipt(previous, requestHash);
 
     let preview: ImportPreview;
@@ -84,16 +86,19 @@ export class ImportCommitService {
       if (error instanceof ImportPreviewNotFoundError) throw new ImportPreviewStaleError();
       throw error;
     }
-    assertCurrent(this.#store.version(), preview, input);
-    if (preview.issues.some((issue) => (
+    assertCurrent(this.#repository.version(), preview, input);
+    const blockingIssues = preview.issues.filter((issue) => (
       issue.severity === 'ERROR' && issue.blockingStages.includes('IMPORT_COMMIT')
-    ))) throw new ImportCommitConflictError();
+    ));
+    if (blockingIssues.length) throw new ImportCommitConflictError('Import contains blocking errors', blockingIssues);
 
     const batchId = preview.sourceBatchId ?? this.#dependencies.id();
     const receiptId = this.#dependencies.id();
 
     try {
-      return await this.#store.write({ expectedRevision: preview.storeRevision }, (data) => {
+      return await this.#repository.write({ expectedRevision: preview.storeRevision, expectedEpoch: preview.storeEpoch }, (queries) => {
+        const previous = queries.importBatches.getContext();
+        const data = structuredClone(previous);
         assertCurrent(data.meta, preview, input);
         const committedAt = this.#dependencies.now().toISOString();
         applyContext(data, preview.contextChanges, input.resolutions, committedAt, this.#dependencies.id);
@@ -111,7 +116,7 @@ export class ImportCommitService {
           committedAt,
         };
         const batch = preview.sourceBatchId
-          ? batches(data).find(({ id }) => id === preview.sourceBatchId)
+          ? queries.importBatches.getBatch({ id: preview.sourceBatchId })
           : undefined;
         if (preview.sourceBatchId && (!batch || batch.status !== 'STAGED')) {
           throw new ImportCommitConflictError('Staged import is no longer available');
@@ -121,8 +126,9 @@ export class ImportCommitService {
           batch.importedAt = committedAt;
           batch.resolutions = structuredClone(input.resolutions);
           batch.receipt = receipt;
+          queries.importBatches.saveBatch({ record: batch });
         } else {
-          batches(data).push({
+          queries.importBatches.saveBatch({ record: {
             id: batchId,
             kind: preview.kind,
             templateVersion: preview.templateVersion,
@@ -132,13 +138,16 @@ export class ImportCommitService {
             rawRows: structuredClone(preview.rawRows),
             resolutions: structuredClone(input.resolutions),
             receipt,
-          });
+          } });
         }
+        queries.importBatches.applyCandidate({ previous, candidate: data });
         return structuredClone(receipt);
       });
     } catch (error) {
-      if (error instanceof StoreRevisionConflictError) {
-        const receipt = this.#store.findImportReceipt(input.previewId, input.storeEpoch, input.idempotencyKey);
+      if (error instanceof StoreRevisionConflictError || error instanceof StoreEpochConflictError) {
+        const receipt = this.#repository.read((queries) => queries.importReceipts.find({
+          previewId: input.previewId, storeEpoch: input.storeEpoch, idempotencyKey: input.idempotencyKey,
+        }));
         if (receipt) return matchingReceipt(receipt, requestHash);
         throw new ImportPreviewStaleError();
       }
@@ -149,7 +158,7 @@ export class ImportCommitService {
 }
 
 const applyApplications = (
-  data: DatabaseState,
+  data: ImportContext,
   preview: ImportPreview,
   resolutions: Resolution[],
   batchId: string,
@@ -180,7 +189,9 @@ const applyApplications = (
       continue;
     }
     if (existing) {
-      if (orderDecision && existing.affiliation === candidate.affiliation && choicesMatch(data, existing, candidate)) {
+      if (orderDecision && existing.ministry === candidate.ministry
+        && (candidate.applicantNote === undefined || existing.applicantNote === candidate.applicantNote)
+        && choicesMatch(data, existing, candidate)) {
         existing.applicationOrder = confirmedOrder!;
         existing.applicationOrderStatus = 'NORMAL';
         existing.orderResolution = 'ADMIN_CONFIRMED';
@@ -209,7 +220,7 @@ const applyApplications = (
 };
 
 const applyEnrollments = (
-  data: DatabaseState,
+  data: ImportContext,
   preview: ImportPreview,
   resolutions: Resolution[],
   now: string,
@@ -223,7 +234,7 @@ const applyEnrollments = (
     }
     const existing = findEnrollment(data, candidate);
     if (existing !== null) {
-      if (nameKey(existing.courseName) === nameKey(candidate.courseName) && existing.affiliation === candidate.affiliation) {
+      if (nameKey(existing.courseName) === nameKey(candidate.courseName) && existing.ministry === candidate.ministry) {
         counts.skipped += 1;
         continue;
       }
@@ -260,7 +271,7 @@ const applyEnrollments = (
 };
 
 const createApplication = (
-  data: DatabaseState,
+  data: ImportContext,
   candidate: ApplicationCandidate,
   orderConfirmed: boolean,
   batchId: string,
@@ -273,7 +284,8 @@ const createApplication = (
     id: id(),
     semesterId: semester.id,
     memberId: member.id,
-    affiliation: candidate.affiliation,
+    ministry: candidate.ministry,
+    applicantNote: candidate.applicantNote ?? null,
     applicationOrder: candidate.applicationOrder,
     applicationOrderStatus: candidate.applicationOrderStatus,
     orderResolution: candidate.applicationOrderStatus === 'NORMAL'
@@ -290,7 +302,7 @@ const createApplication = (
 };
 
 const replaceApplication = (
-  data: DatabaseState,
+  data: ImportContext,
   application: Application,
   candidate: ApplicationCandidate,
   orderConfirmed: boolean,
@@ -298,7 +310,8 @@ const replaceApplication = (
   now: string,
   id: () => string,
 ): void => {
-  application.affiliation = candidate.affiliation;
+  application.ministry = candidate.ministry;
+  if (candidate.applicantNote !== undefined) application.applicantNote = candidate.applicantNote;
   application.applicationOrder = candidate.applicationOrder;
   application.applicationOrderStatus = candidate.applicationOrderStatus;
   application.orderResolution = candidate.applicationOrderStatus === 'NORMAL'
@@ -314,7 +327,7 @@ const replaceApplication = (
 };
 
 const writeChoices = (
-  data: DatabaseState,
+  data: ImportContext,
   applicationId: string,
   semesterId: string,
   candidate: ApplicationCandidate,
@@ -352,7 +365,7 @@ const validateInput = (input: CommitInput): void => {
   ) throw new ImportCommitConflictError('Import commit request is invalid');
 };
 
-const assertCurrent = (meta: DatabaseState['meta'], preview: ImportPreview, input: CommitInput): void => {
+const assertCurrent = (meta: ImportContext['meta'], preview: ImportPreview, input: CommitInput): void => {
   if (
     input.storeRevision !== preview.storeRevision
     || input.storeEpoch !== preview.storeEpoch
@@ -411,7 +424,7 @@ const enrollmentResolution = (resolutions: Resolution[], candidate: EnrollmentCa
   && nameKey(String(item.courseName ?? '')) === nameKey(candidate.courseName)
 ));
 
-const findApplication = (data: DatabaseState, semesterName: string, memberName: string): Application | undefined => {
+const findApplication = (data: ImportContext, semesterName: string, memberName: string): Application | undefined => {
   const semester = semesters(data).find(({ nameKey: key }) => key === nameKey(semesterName));
   const member = members(data).find(({ nameKey: key }) => key === nameKey(memberName));
   return semester && member
@@ -419,16 +432,17 @@ const findApplication = (data: DatabaseState, semesterName: string, memberName: 
     : undefined;
 };
 
-const applicationMatches = (data: DatabaseState, application: Application, candidate: ApplicationCandidate): boolean => {
+const applicationMatches = (data: ImportContext, application: Application, candidate: ApplicationCandidate): boolean => {
   if (
     application.applicationOrder !== candidate.applicationOrder
     || application.applicationOrderStatus !== candidate.applicationOrderStatus
-    || application.affiliation !== candidate.affiliation
+    || application.ministry !== candidate.ministry
+    || (candidate.applicantNote !== undefined && application.applicantNote !== candidate.applicantNote)
   ) return false;
   return choicesMatch(data, application, candidate);
 };
 
-const choicesMatch = (data: DatabaseState, application: Application, candidate: ApplicationCandidate): boolean => {
+const choicesMatch = (data: ImportContext, application: Application, candidate: ApplicationCandidate): boolean => {
   const actual = choices(data)
     .filter((choice) => choice.applicationId === application.id)
     .map((choice) => {
@@ -441,7 +455,7 @@ const choicesMatch = (data: DatabaseState, application: Application, candidate: 
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 };
 
-const findEnrollment = (data: DatabaseState, candidate: EnrollmentCandidate): { courseName: string; affiliation: string | null } | null => {
+const findEnrollment = (data: ImportContext, candidate: EnrollmentCandidate): { courseName: string; ministry: string | null } | null => {
   const semester = semesters(data).find(({ nameKey: key }) => key === nameKey(candidate.semesterName));
   const member = members(data).find(({ nameKey: key }) => key === nameKey(candidate.memberName));
   if (!semester || !member) return null;
@@ -452,14 +466,13 @@ const findEnrollment = (data: DatabaseState, candidate: EnrollmentCandidate): { 
   if (!enrollment) return null;
   const semesterCourse = semesterCourses(data).find(({ id }) => id === enrollment.semesterCourseId);
   const course = semesterCourse && courses(data).find(({ id }) => id === semesterCourse.courseId);
-  return course ? { courseName: course.name, affiliation: enrollment.affiliation } : null;
+  return course ? { courseName: course.name, ministry: enrollment.ministry } : null;
 };
 
 const nameKey = (value: string): string => value.trim().normalize('NFC');
-const batches = (data: DatabaseState): ImportBatch[] => data.importBatches;
-const semesters = (data: DatabaseState): Semester[] => data.semesters;
-const members = (data: DatabaseState): Named[] => data.members;
-const courses = (data: DatabaseState): Named[] => data.courses;
-const semesterCourses = (data: DatabaseState): SemesterCourse[] => data.semesterCourses;
-const applications = (data: DatabaseState): Application[] => data.applications;
-const choices = (data: DatabaseState): Choice[] => data.applicationChoices;
+const semesters = (data: ImportContext): Semester[] => data.semesters;
+const members = (data: ImportContext): Named[] => data.members;
+const courses = (data: ImportContext): Named[] => data.courses;
+const semesterCourses = (data: ImportContext): SemesterCourse[] => data.semesterCourses;
+const applications = (data: ImportContext): Application[] => data.applications;
+const choices = (data: ImportContext): Choice[] => data.applicationChoices;

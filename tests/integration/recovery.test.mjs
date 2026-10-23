@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createSqliteSnapshot } from '../../backend/src/storage/sqlite-snapshot.ts';
-import { SQLiteAdapter } from '../../backend/src/storage/sqlite.ts';
-import { openStore } from '../../backend/src/storage/store.ts';
+import { openRepository } from '../../backend/src/bootstrap/database.ts';
 import { InstanceAlreadyRunningError, acquireInstanceLock } from '../../backend/src/storage/instance-lock.ts';
 
 const emptyStore = (epoch = 'epoch-1', revision = 0) => ({
@@ -26,8 +25,8 @@ const emptyStore = (epoch = 'epoch-1', revision = 0) => ({
   restoreReceipts: [],
 });
 const writeStore = async (file, data) => {
-  await openStore(file, emptyStore());
-  await new SQLiteAdapter(file).write(data, emptyStore());
+  const repository = await openRepository(file, data);
+  repository.close();
 };
 
 test('allows only one live instance lock for a data directory', async (t) => {
@@ -52,7 +51,7 @@ test('creates a byte-verifiable update snapshot of a valid store', async (t) => 
 
   const bytes = await readFile(backup.file);
   assert.equal(bytes.subarray(0, 16).toString(), 'SQLite format 3\0');
-  assert.deepEqual(await new SQLiteAdapter(backup.file).read(), await new SQLiteAdapter(dataFile).read());
+  assert.deepEqual((await openRepository(backup.file, emptyStore())).snapshot(), (await openRepository(dataFile, emptyStore())).snapshot());
   assert.equal(backup.digest, createHash('sha256').update(bytes).digest('hex'));
 });
 
@@ -67,7 +66,7 @@ test('does not change current data when the backup destination cannot be created
 
   await assert.rejects(createSqliteSnapshot(dataFile, invalidBackupDirectory, 'before-update'));
 
-  assert.equal(JSON.stringify(await new SQLiteAdapter(dataFile).read()), current);
+  assert.equal(JSON.stringify((await openRepository(dataFile, emptyStore())).snapshot()), current);
 });
 
 test('reopens a valid store with its persisted receipt unchanged', async (t) => {
@@ -99,8 +98,8 @@ test('reopens a valid store with its persisted receipt unchanged', async (t) => 
   });
   await writeStore(dataFile, data);
 
-  const reopened = await openStore(dataFile, emptyStore());
+  const reopened = await openRepository(dataFile, emptyStore());
 
-  assert.deepEqual(reopened.read().importBatches[0].receipt, data.importBatches[0].receipt);
-  assert.equal(reopened.read().meta.storeRevision, 7);
+  assert.deepEqual(reopened.snapshot().importBatches[0].receipt, data.importBatches[0].receipt);
+  assert.equal(reopened.snapshot().meta.storeRevision, 7);
 });
