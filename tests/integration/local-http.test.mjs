@@ -571,6 +571,65 @@ test('previews, stages, rechecks, and applies an xlsx import through the protect
   assert.equal(JSON.parse(applications.text).items[0].memberName, '김새롬');
 });
 
+test('validates finalReasonDetail through draft item PATCH without changing data on rejected requests', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const applicationResponse = await call(runtime.origin, '/api/v1/applications', {
+    method: 'POST', headers, body: JSON.stringify({
+      semesterName: '2031 봄', memberName: '검토 회원', applicationOrder: 1,
+      choices: [{ courseName: '발성', preference: 1 }],
+    }),
+  });
+  assert.equal(applicationResponse.status, 201);
+  const application = JSON.parse(applicationResponse.text);
+  const createdResponse = await call(runtime.origin, '/api/v1/allocation-drafts', {
+    method: 'POST', headers, body: JSON.stringify({
+      semesterId: application.semesterId, mode: 'MANUAL', policyId: 'course-allocation', policyVersion: '1.0.0',
+      policySettings: { preferenceMode: 'NEW_FIRST', fallbackMode: 'MAX_CARDINALITY_PRIORITIZED' },
+    }),
+  });
+  assert.equal(createdResponse.status, 201);
+  const created = JSON.parse(createdResponse.text);
+  const path = `/api/v1/allocation-drafts/${created.draft.id}/items/${application.memberId}`;
+  const input = { expectedDraftRevision: 0, finalDecision: 'REJECTED', finalSemesterCourseId: null, finalReasonCode: 'ADMIN_EXCLUDED' };
+  const before = runtime.repository.snapshot();
+  const invalidCases = [
+    { request: input, expected: { status: 422, code: 'UNPROCESSABLE', issue: /finalReasonDetail/ } },
+    ...['note', 1, true, [], {}, { note: null }, { note: 1 }, { note: '' }, { note: '   ' },
+      { note: '검토 완료', extra: true }, { note: '가'.repeat(2001) }]
+      .map((finalReasonDetail) => ({ request: { ...input, finalReasonDetail },
+        expected: { status: 422, code: 'UNPROCESSABLE', issue: /finalReasonDetail/ } })),
+  ];
+
+  for (const { request, expected } of invalidCases) {
+    const response = await call(runtime.origin, path, { method: 'PATCH', headers, body: JSON.stringify(request) });
+    assert.equal(response.status, expected.status);
+    const result = JSON.parse(response.text);
+    assert.equal(result.code, expected.code);
+    assert.ok(result.issues.some(({ message }) => expected.issue.test(message)));
+    assert.deepEqual(runtime.repository.snapshot(), before);
+    const unchanged = await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}`, { headers });
+    assert.equal(unchanged.status, 200);
+    assert.deepEqual(JSON.parse(unchanged.text), created);
+  }
+
+  const validCases = [null, { note: '검토 완료' }, { note: '가'.repeat(2000) }]
+    .map((finalReasonDetail) => ({ request: { finalReasonDetail }, expected: { status: 200, finalReasonDetail } }));
+  for (const { request, expected } of validCases) {
+    const current = JSON.parse((await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}`, { headers })).text);
+    const response = await call(runtime.origin, path, { method: 'PATCH', headers,
+      body: JSON.stringify({ ...input, expectedDraftRevision: current.draft.revision, ...request }) });
+    assert.equal(response.status, expected.status);
+    assert.deepEqual(JSON.parse(response.text).finalReasonDetail, expected.finalReasonDetail);
+    assert.equal(runtime.repository.snapshot().allocationDrafts[0].revision, current.draft.revision + 1);
+  }
+});
+
 test('creates and edits a draft, then replays finalization after the draft is removed', async (t) => {
   const workspace = await localWorkspace(t);
   let runtime = await startLocalServer({
