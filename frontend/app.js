@@ -301,7 +301,7 @@ const loadPaged = async (name, path, filters = '', pagination = state.pagination
 };
 
 const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseName,
-  renderMemberOptions, showMemberWarning } = createDraftDetail({
+  renderMemberOptions, showMemberWarning, discardEdits: discardDraftEdits } = createDraftDetail({
   state, byId, fillSelect, cell, actionsCell, policyName,
   renderPagination: (name) => renderPagination(name),
   fillDatalist: (id, items) => fillDatalist(id, items),
@@ -312,7 +312,7 @@ const { show: showDraft, renderItems: renderDraftItems, courseName: draftCourseN
 const { load: loadDrafts, openCreate: openDraftCreate, showPolicyDescription,
   showReadiness: showDraftReadiness, openDraft, submitDraft, saveDraftItem,
   restoreDraftItem, addManualDraftItem } = createDraftsPage({
-  state, byId, api, run, showDraft, loadCatalogs, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName,
+  state, byId, api, run, showDraft, discardDraftEdits, loadCatalogs, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName,
 });
 
 const { load: loadEnrollments, completeReport: completeEnrollmentReport,
@@ -321,7 +321,7 @@ const { load: loadEnrollments, completeReport: completeEnrollmentReport,
   reviewWarnings,
 });
 const { previewFinalization, finalizeDraft } = createFinalizationPage({
-  state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments,
+  state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments, discardDraftEdits,
 });
 
 const { loadCatalogManagement, createSemester, submitSemester, deleteSemester,

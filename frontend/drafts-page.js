@@ -11,6 +11,7 @@ import { draftFinalSelection } from './draft-view.js';
  *   api: (path: string, options?: RequestInit) => Promise<any>,
  *   run: (action: () => Promise<any>, success?: string) => Promise<any>,
  *   showDraft: (detail: any, context: any) => Promise<void> | void,
+ *   discardDraftEdits: (draftId: string) => void,
  *   loadCatalogs: () => Promise<void>,
  *   fillSelect: (select: HTMLSelectElement, items: { id: string, name: string }[], placeholder: string) => void,
  *   loadPaged: (name: string, path: string, filters: string, pagination: { page: number, limit: number, total: number }) => Promise<DraftSummary[]>,
@@ -20,7 +21,7 @@ import { draftFinalSelection } from './draft-view.js';
  *   policyName: (id: string, version: string) => string,
  * }} dependencies
  */
-export const createDraftsPage = ({ state, byId, api, run, showDraft, loadCatalogs, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
+export const createDraftsPage = ({ state, byId, api, run, showDraft, discardDraftEdits, loadCatalogs, fillSelect, loadPaged, cell, actionsCell, resourceName, policyName }) => {
   let readinessRequest = 0;
   let draftOpenRequest = 0;
 
@@ -59,6 +60,7 @@ export const createDraftsPage = ({ state, byId, api, run, showDraft, loadCatalog
       method: 'DELETE',
       body: JSON.stringify({ expectedDraftRevision: item.revision }),
     }), '배정초안을 삭제했습니다.');
+    discardDraftEdits(item.id);
     await load();
   };
 

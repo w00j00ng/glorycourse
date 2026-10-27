@@ -39,6 +39,18 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
   let courseStatuses = new Map();
   /** @type {Set<string>} */
   let enrolledNames = new Set();
+  /** @type {Map<string, Map<string, { semesterCourseId: string, ministry: string }>>} */
+  const editedByDraft = new Map();
+
+  /** @param {string} draftId */
+  const discardEdits = (draftId) => { editedByDraft.delete(draftId); };
+
+  /** @param {string} draftId @param {string} memberId @param {{ semesterCourseId: string, ministry: string } | undefined} captured */
+  const completeEdit = (draftId, memberId, captured) => {
+    const edits = editedByDraft.get(draftId);
+    if (edits && captured !== undefined && edits.get(memberId) === captured) edits.delete(memberId);
+    if (state.draft?.draft.id === draftId && byId('draft-dialog').open) renderItems();
+  };
 
   const showMemberWarning = () => {
     const name = byId('draft-add-member').value.trim().normalize('NFC');
@@ -73,8 +85,9 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     ]));
     /** @type {HTMLSelectElement[]} */
     const selects = Array.from(byId('draft-item-rows').querySelectorAll('select'));
-    const pending = new Map(selects.filter((select) => select.value !== original.get(select.dataset.memberId ?? ''))
-      .map((select) => [select.dataset.memberId ?? '', select.value]));
+    const pending = new Map([...(editedByDraft.get(state.draft.draft.id) ?? [])]
+      .filter(([memberId, edit]) => edit.semesterCourseId !== original.get(memberId))
+      .map(([memberId, edit]) => [memberId, edit.semesterCourseId]));
     const courses = draftCourseStatuses(state.draft, pending);
     courseStatuses = new Map(courses.map((course) => [course.semesterCourseId, course]));
     byId('draft-capacity-status').textContent = `${pending.size
@@ -128,6 +141,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     const applications = state.draftApplicationSummaries;
     if (!detail || !context || !applications) return;
     const readonly = detail.draft.status !== 'DRAFT';
+    const draftId = detail.draft.id;
     const courseView = byId('draft-grouping').value === 'COURSE';
     const items = sortDraftItems(filterDraftItems(detail.studentResults, {
       query: byId('draft-search').value,
@@ -145,7 +159,8 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       const finalSelect = document.createElement('select');
       finalSelect.dataset.memberId = item.memberId;
       finalSelect.setAttribute('aria-label', `${item.memberNameAtGeneration} 최종 배정`);
-      const selectedId = item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : null;
+      const edit = editedByDraft.get(draftId)?.get(item.memberId);
+      const selectedId = edit?.semesterCourseId ?? (item.finalDecision === 'SELECTED' ? item.finalSemesterCourseId : null);
       fillSelect(finalSelect, selectedId ? [{ id: selectedId, name: courseOptionName(selectedId) }] : [], '제외');
       finalSelect.value = selectedId ?? '';
       finalSelect.disabled = readonly;
@@ -154,7 +169,6 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
         fillSelect(finalSelect, context.semesterCourses.map((course) => ({ id: course.id, name: courseOptionName(course.id) })), '제외');
         finalSelect.value = selected;
       }, { once: true });
-      finalSelect.addEventListener('change', renderCapacities);
       const finalCell = document.createElement('td');
       finalCell.append(finalSelect);
       const application = applications.get(item.sourceApplicationId ?? '');
@@ -175,11 +189,18 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       const ministryCell = cell(item.ministry ?? '—');
       const ministry = document.createElement('input');
       if (!readonly) {
-        ministry.value = item.ministry ?? '';
+        ministry.value = edit?.ministry ?? item.ministry ?? '';
         ministry.maxLength = 200;
         ministry.setAttribute('aria-label', `${item.memberNameAtGeneration} 학생 소속`);
         ministryCell.replaceChildren(ministry);
       }
+      const recordEdit = () => {
+        const edits = editedByDraft.get(draftId) ?? new Map();
+        editedByDraft.set(draftId, edits);
+        edits.set(item.memberId, { semesterCourseId: finalSelect.value, ministry: ministry.value });
+      };
+      finalSelect.addEventListener('change', () => { recordEdit(); renderCapacities(); });
+      ministry.addEventListener('input', recordEdit);
       row.append(
         orderCell,
         cell(item.memberNameAtGeneration),
@@ -192,8 +213,17 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       if (readonly) row.append(cell(''));
       else {
         /** @type {[string, () => Promise<void>][]} */
-        const actions = [['저장', () => saveDraftItem(item, finalSelect.value, ministry.value)]];
-        if (item.autoDecision !== 'NOT_EVALUATED') actions.push(['자동 복원', () => restoreDraftItem(item)]);
+        const actions = [['저장', async () => {
+          const captured = editedByDraft.get(draftId)?.get(item.memberId);
+          await saveDraftItem(item, finalSelect.value, ministry.value);
+          completeEdit(draftId, item.memberId, captured);
+        }]];
+        if (item.autoDecision !== 'NOT_EVALUATED') actions.push(['자동 복원', async () => {
+          const captured = editedByDraft.get(draftId)?.get(item.memberId);
+          if (captured && !window.confirm('이 학생의 저장하지 않은 입력을 버리고 자동 결과로 복원할까요?')) return;
+          await restoreDraftItem(item);
+          completeEdit(draftId, item.memberId, captured);
+        }]);
         row.append(actionsCell(...actions));
       }
       return row;
@@ -226,6 +256,7 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
       ? '수동 · 정책 미적용' : `자동 · ${policyName(detail.draft.policyId, detail.draft.policyVersion)}`} · revision ${detail.draft.revision}`;
     byId('draft-stale').hidden = !detail.isStale;
     const readonly = detail.draft.status !== 'DRAFT';
+    if (readonly) discardEdits(detail.draft.id);
     const manualEntry = byId('draft-manual-entry');
     manualEntry.hidden = readonly || detail.draft.mode !== 'MANUAL';
     manualEntry.disabled = manualEntry.hidden;
@@ -251,5 +282,5 @@ export const createDraftDetail = ({ state, byId, fillSelect, fillDatalist, rende
     if (!byId('draft-dialog').open) byId('draft-dialog').showModal();
   };
 
-  return { show, renderItems, courseName, renderMemberOptions, showMemberWarning };
+  return { show, renderItems, courseName, renderMemberOptions, showMemberWarning, discardEdits };
 };
