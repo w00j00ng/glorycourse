@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import test from 'node:test';
 
 import {
+  AllocationValidationError,
   MAX_ALLOCATION_APPLICANTS,
   MAX_SEMESTER_COURSES,
   allocate,
@@ -104,4 +105,33 @@ test('completes a dense fallback workload without dropping applicants', (context
     elapsedMs: Math.round(elapsedMs),
     heapDeltaMiB: Math.round((process.memoryUsage().heapUsed - beforeHeap) / 1024 / 1024),
   }));
+});
+
+test('rejects the original dense limit before materializing 9990000 fallback candidates', (context) => {
+  const applications = Array.from({ length: 10_000 }, (_, index) => ({
+    id: `application-${index}`, memberId: `member-${index}`, memberName: `회원 ${index}`,
+    ministry: null, applicantNote: null, applicationOrder: index + 1, applicationOrderStatus: 'NORMAL',
+  }));
+  const input = {
+    semester: { id: 'semester', name: '대체 배정 최대 입력', order: 1 },
+    semesterCourses: [
+      { id: 'blocked', courseId: 'blocked', courseName: '희망 강좌', capacity: 0 },
+      ...Array.from({ length: 999 }, (_, index) => ({
+        id: `fallback-${index}`, courseId: `course-${index}`, courseName: `대체 강좌 ${index}`, capacity: 11,
+      })),
+    ],
+    applications,
+    choices: applications.map(({ id }, index) => ({
+      id: `choice-${index}`, applicationId: id, semesterCourseId: 'blocked', preference: 1,
+    })),
+    relevantPastEnrollments: [], existingEnrollments: [],
+  };
+  const startedAt = performance.now();
+  assert.throws(() => allocate(input, policy, 'review-dense-limit'), (error) => (
+    error instanceof AllocationValidationError && error.issues[0].code === 'ALLOCATION_FALLBACK_WORK_LIMIT'
+  ));
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  context.diagnostic(JSON.stringify({ scenario: 'dense-limit-rejection', applicants: applications.length,
+    semesterCourses: input.semesterCourses.length, rejectedCandidate: 100_001, elapsedMs,
+    targetMs: 2_000, withinTarget: elapsedMs < 2_000 }));
 });

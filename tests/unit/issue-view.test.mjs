@@ -3,6 +3,11 @@ import test from 'node:test';
 
 import { issueText } from '../../frontend/issue-view.js';
 
+test('explains how to reduce automatic fallback work without changing existing drafts', () => {
+  assert.equal(issueText({ code: 'ALLOCATION_FALLBACK_WORK_LIMIT', severity: 'ERROR' }),
+    '오류: 자동 배정의 대체 후보가 100,000개를 넘었습니다. 희망 강좌와 정원을 확인해 미배정 인원이나 대체 강좌 수를 줄이거나 수동 초안을 사용하세요.');
+});
+
 test('shows allocation and enrollment problems in Korean with the affected person and course', () => {
   const cases = [
     {

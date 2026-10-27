@@ -53,6 +53,7 @@ const messages = {
   DUPLICATE_EXISTING_ENROLLMENT: '같은 회원의 현재 학기 수강이력이 두 건 이상 있습니다.',
   EXISTING_ENROLLMENT_COURSE_INVALID: '현재 수강이력의 강좌가 해당 학기에 개설되어 있지 않습니다.',
   ALLOCATION_APPLICANT_LIMIT: '신청 인원이 한 번에 처리할 수 있는 수를 넘었습니다.',
+  ALLOCATION_FALLBACK_WORK_LIMIT: '자동 배정의 대체 후보가 100,000개를 넘었습니다. 희망 강좌와 정원을 확인해 미배정 인원이나 대체 강좌 수를 줄이거나 수동 초안을 사용하세요.',
   SEMESTER_COURSE_LIMIT: '개설강좌 수가 한 번에 처리할 수 있는 수를 넘었습니다.',
   INVALID_PREFERENCE_MODE: '배정 기준 설정을 확인하세요.',
   INVALID_FALLBACK_MODE: '남은 자리 배정 설정을 확인하세요.',

@@ -12,6 +12,7 @@ import { exportApplicationRows } from '../../backend/src/excel/workbooks.ts';
 import { startLocalServer } from '../../backend/src/server.ts';
 import { InstanceAlreadyRunningError } from '../../backend/src/storage/instance-lock.ts';
 import { StoreRecoveryRequiredError } from '../../backend/src/domain/errors.ts';
+import { fallbackBoundaryInput, fallbackStore } from '../fixtures/fallback-workload.mjs';
 
 test('serves local files and allows a protected same-origin write without external services', async (t) => {
   const workspace = await localWorkspace(t);
@@ -737,6 +738,33 @@ test('creates and edits a draft, then replays finalization after the draft is re
   assert.equal(runtime.repository.snapshot().allocationDrafts.length, 0);
   assert.equal(runtime.repository.snapshot().allocationDraftItems.length, 0);
   assert.equal(runtime.repository.snapshot().enrollments.length, 1);
+});
+
+test('returns 422 for oversized fallback without persisting any draft records or automatic semester revisions', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  t.after(() => runtime.close());
+  await seedRepository(runtime.repository, (data) => Object.assign(data, fallbackStore(fallbackBoundaryInput(100_001), null)));
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const request = { semesterId: 'current', mode: 'AUTO', policyId: 'course-allocation', policyVersion: '1.0.0',
+    policySettings: { preferenceMode: 'NEW_FIRST', fallbackMode: 'MAX_CARDINALITY_PRIORITIZED' } };
+  const before = runtime.repository.snapshot();
+  const rejected = await call(runtime.origin, '/api/v1/allocation-drafts', { method: 'POST', headers, body: JSON.stringify(request) });
+  assert.equal(rejected.status, 422);
+  const problem = JSON.parse(rejected.text);
+  assert.equal(problem.code, 'UNPROCESSABLE');
+  assert.equal(problem.issues[0].code, 'ALLOCATION_FALLBACK_WORK_LIMIT');
+  assert.equal(problem.issues[0].severity, 'ERROR');
+  assert.match(problem.issues[0].message, /100,000.*수동 초안/);
+  assert.deepEqual(runtime.repository.snapshot(), before);
+  const manual = await call(runtime.origin, '/api/v1/allocation-drafts', {
+    method: 'POST', headers, body: JSON.stringify({ ...request, mode: 'MANUAL' }),
+  });
+  assert.equal(manual.status, 201);
+  assert.equal(JSON.parse(manual.text).studentResults.length, 1_001);
 });
 
 test('moves a semester through the API and shows the new order in the catalog', async (t) => {

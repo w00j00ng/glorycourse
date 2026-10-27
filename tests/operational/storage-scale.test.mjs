@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { cpus, release, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,6 +9,10 @@ import test from 'node:test';
 import { buildAllocationSnapshot } from '../../backend/src/allocation/snapshot.ts';
 import { openRepository } from '../../backend/src/bootstrap/database.ts';
 import { ApplicationService } from '../../backend/src/services/applications.ts';
+import { DraftService } from '../../backend/src/services/drafts.ts';
+import { FinalizationService } from '../../backend/src/services/finalization.ts';
+import { startLocalServer } from '../../backend/src/server.ts';
+import { fallbackBoundaryInput, fallbackStore } from '../fixtures/fallback-workload.mjs';
 
 const empty = JSON.parse(await readFile(new URL('../fixtures/store/store-valid-empty.json', import.meta.url), 'utf8'));
 const timestamp = '2026-09-26T00:00:00.000Z';
@@ -128,4 +132,95 @@ test('an administrator filters 10000 applications with five repeated choices wit
   context.diagnostic(JSON.stringify({ scenario: 'repeated-choice-course-filter', applicants: 10_000,
     choices: 50_000, matchedApplicants: result.total, elapsedMs }));
   assert.ok(elapsedMs < 10_000, `application course filter took ${elapsedMs} ms`);
+});
+
+test('dense fallback lifecycle', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'glorycourse-dense-fallback-'));
+  const file = join(directory, 'db.sqlite');
+  let runtime;
+  let reopened;
+  context.after(async () => {
+    await runtime?.close();
+    reopened?.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const input = fallbackBoundaryInput(100_000);
+  input.semesterCourses.pop();
+  const initial = await openRepository(file, fallbackStore(input));
+  initial.close();
+  runtime = await startLocalServer({ dataDirectory: directory, staticDirectory: directory, port: 0 });
+  let nextId = 0;
+  const dependencies = { id: () => `dense-${++nextId}`, now: () => new Date(timestamp), seed: () => 'storage-dense-fallback' };
+  const drafts = new DraftService(runtime.repository, dependencies);
+  const finalization = new FinalizationService(runtime.repository, { ...dependencies, secret: '0123456789abcdef0123456789abcdef' });
+  const bytes = async (path) => {
+    try { return (await stat(path)).size; }
+    catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
+  };
+  const disk = async () => ({ databaseBytes: await bytes(file), walBytes: await bytes(`${file}-wal`) });
+  const candidateCount = () => {
+    const db = new DatabaseSync(file, { readOnly: true });
+    try { return Number(db.prepare('SELECT COUNT(*) AS count FROM allocation_item_fallback_candidates').get().count); }
+    finally { db.close(); }
+  };
+  const phases = {};
+  const measure = async (name, action) => {
+    const before = await disk();
+    let result;
+    const started = performance.now();
+    const changedRows = await changedRowsFor(async () => { result = await action(); });
+    const elapsedMs = Math.round((performance.now() - started) * 10) / 10;
+    phases[name] = { elapsedMs, changedRows, maxRssMiB: process.resourceUsage().maxRSS / 1024, before, after: await disk() };
+    return result;
+  };
+  let created = await measure('createPersist', () => drafts.create({ semesterId: 'current', mode: 'AUTO',
+    policyId: 'default', policyVersion: '1',
+    policySettings: { preferenceMode: 'NEW_FIRST', fallbackMode: 'MAX_CARDINALITY_PRIORITIZED' } }));
+  const draftId = created.draft.id;
+  const assignments = created.studentResults.map(({ memberId, autoSemesterCourseId }) => [memberId, autoSemesterCourseId]);
+  assert.equal(assignments.length, 1_000);
+  assert.ok(created.studentResults.every(({ autoReasonCode }) => autoReasonCode === 'RANDOM_FALLBACK'));
+  assert.equal(created.studentResults.reduce((sum, item) => sum + item.autoReasonDetail.fallback.stageCandidateSemesterCourseIds.length, 0), 99_000);
+  created = null;
+  const persistedCandidates = candidateCount();
+  assert.equal(persistedCandidates, 99_000);
+  const session = await fetch(`${runtime.origin}/api/v1/session`, { method: 'POST', headers: { Origin: runtime.origin } }).then((response) => response.json());
+  let download = await measure('httpReadDownload', async () => {
+    const response = await fetch(`${runtime.origin}/api/v1/allocation-drafts/${draftId}`, { headers: { 'X-Glorycourse-Session': session.token } });
+    assert.equal(response.status, 200);
+    const body = Buffer.from(await response.arrayBuffer());
+    assert.equal(Number(response.headers.get('content-length')), body.byteLength);
+    return body;
+  });
+  const httpJsonBytes = download.byteLength;
+  let read = JSON.parse(download.toString('utf8'));
+  download = null;
+  assert.deepEqual(read.studentResults.map(({ memberId, autoSemesterCourseId }) => [memberId, autoSemesterCourseId]), assignments);
+  assert.equal(read.isStale, false);
+  read = null;
+  let preview = await measure('preview', () => finalization.preview(draftId, { expectedDraftRevision: 0 }));
+  assert.equal(preview.enrollments.length, 1_000);
+  assert.deepEqual(preview.issues, []);
+  const confirmation = { idempotencyKey: 'dense-fallback-finalization', expectedDraftRevision: 0,
+    preparedActionToken: preview.preparedActionToken, acknowledgedWarningDigest: preview.warningDigest };
+  preview = null;
+  const receipt = await measure('finalize', () => finalization.finalize(draftId, confirmation));
+  assert.equal(receipt.createdCount, 1_000);
+  assert.equal(candidateCount(), 0, 'finalization removes the draft and its candidate rows');
+  await runtime.close();
+  runtime = undefined;
+  await measure('reopen', async () => { reopened = await openRepository(file, empty); });
+  const saved = reopened.snapshot();
+  assert.deepEqual(saved.enrollments.map(({ memberId, semesterCourseId }) => [memberId, semesterCourseId]).sort(), assignments.sort());
+  assert.equal(saved.allocationDrafts.length, 0);
+  assert.equal(saved.allocationDraftItems.length, 0);
+  assert.equal(saved.finalizationReceipts.length, 1);
+  assert.deepEqual(saved.finalizationReceipts[0].receipt, receipt);
+  const createSaveReadMs = phases.createPersist.elapsedMs + phases.httpReadDownload.elapsedMs;
+  const databaseGrowthBytes = phases.createPersist.after.databaseBytes - phases.createPersist.before.databaseBytes;
+  context.diagnostic(JSON.stringify({ scenario: 'dense-fallback-lifecycle', environment: { node: process.version,
+    platform: process.platform, arch: process.arch, osRelease: release(), cpu: cpus()[0]?.model, tempDirectory: tmpdir() },
+    applicants: 1_000, fallbackCourses: 99, persistedCandidates, httpJsonBytes, phases, createSaveReadMs,
+    peakRssMiB: process.resourceUsage().maxRSS / 1024, databaseGrowthBytes,
+    proposedTargets: { createSaveReadMs: 10_000, peakRssMiB: 512, databaseGrowthBytes: 64 * 1024 * 1024 } }));
 });

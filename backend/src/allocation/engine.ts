@@ -5,6 +5,7 @@ export const ALLOCATION_ENGINE_VERSION = '2.0.0';
 export const MAX_ALLOCATION_APPLICANTS = 10_000;
 export const MAX_SEMESTER_COURSES = 1_000;
 export const MAX_CHOICES_PER_APPLICATION = 5;
+export const MAX_FALLBACK_CANDIDATE_EDGES = 100_000;
 
 export type PolicySettings = {
   preferenceMode: 'NEW_FIRST' | 'RANK_FIRST';
@@ -315,11 +316,20 @@ const allocateFallback = (
     .filter(({ id }) => (remaining.get(id) ?? 0) > 0)
     .sort((left, right) => compareId(left.id, right.id));
   const active = states.filter((state) => !state.fixed && !state.selectedPreference);
+  let candidateEdges = 0;
   for (const state of active) {
     const desired = new Set(state.application.choices.map(({ semesterCourseId }) => semesterCourseId));
-    state.fallbackCandidates = availableAtStart
-      .filter((item) => !desired.has(item.id) && !state.pastCourseIds.has(item.courseId))
-      .map(({ id }) => id);
+    state.fallbackCandidates = [];
+    for (const course of availableAtStart) {
+      if (desired.has(course.id) || state.pastCourseIds.has(course.courseId)) continue;
+      candidateEdges += 1;
+      if (candidateEdges > MAX_FALLBACK_CANDIDATE_EDGES) {
+        throw new AllocationValidationError([
+          errorIssue('ALLOCATION_FALLBACK_WORK_LIMIT', '자동 배정의 대체 후보가 100,000개를 넘었습니다. 희망 강좌와 정원을 확인해 미배정 인원이나 대체 강좌 수를 줄이거나 수동 초안을 사용하세요.'),
+        ]);
+      }
+      state.fallbackCandidates.push(course.id);
+    }
   }
   const studentKeys = new Map(active.map(({ application }) => [
     application.memberId,
