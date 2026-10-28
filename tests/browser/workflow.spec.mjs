@@ -1881,6 +1881,7 @@ test('draft review pages large results and loads course choices only when editin
 });
 
 test.describe('unsaved draft', () => {
+  // Keep delayed-response routes active so their removal cannot race the follow-up detail GET.
   const row = (page, member) => page.locator('#draft-item-rows tr').filter({
     has: page.getByRole('combobox', { name: `회원 ${member} 최종 배정`, exact: true }),
   });
@@ -1963,7 +1964,7 @@ test.describe('unsaved draft', () => {
         saved();
         await gate;
         await route.fulfill({ response });
-      }, { times: 1 });
+      });
       await row(page, 0).getByRole('button', { name: '저장', exact: true }).click();
       await stored;
       if (lateEdit) await edit(page, 0, 'offering-2', '대학부');
@@ -1987,7 +1988,7 @@ test.describe('unsaved draft', () => {
       restored();
       await gate;
       await route.fulfill({ response });
-    }, { times: 1 });
+    });
     page.once('dialog', (dialog) => dialog.accept());
     await row(page, 0).getByRole('button', { name: '자동 복원' }).click();
     await stored;
@@ -2027,7 +2028,7 @@ test.describe('unsaved draft', () => {
         completed();
         await gate;
         await route.fulfill({ response });
-      }, { times: 1 });
+      });
       if (action === '자동 복원') page.once('dialog', (dialog) => dialog.accept());
       await row(page, 0).getByRole('button', { name: action, exact: true }).click();
       await stored;
@@ -2093,7 +2094,7 @@ test.describe('unsaved draft', () => {
         saved();
         await gate;
         await route.fulfill({ response });
-      }, { times: 1 });
+      });
       await edit(page, 0, 'offering-1', '청년부');
       await row(page, 0).getByRole('button', { name: '저장', exact: true }).click();
       await stored;
