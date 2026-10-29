@@ -7,13 +7,19 @@ import { startLocalServer } from '../../backend/src/server.ts';
 
 test('protected shutdown finishes an accepted save and allows restart with saved data', async (t) => {
   const dataDirectory = await mkdtemp(join(tmpdir(), 'glorycourse-shutdown-'));
-  t.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  let runtime;
+  let restarted;
   let releaseSave;
   let saveStarted;
   const saving = new Promise((resolve) => { saveStarted = resolve; });
   const proceed = new Promise((resolve) => { releaseSave = resolve; });
-  t.after(() => releaseSave());
-  const runtime = await startLocalServer({
+  t.after(async () => {
+    releaseSave();
+    await runtime?.close();
+    await restarted?.close();
+    await rm(dataDirectory, { recursive: true, force: true });
+  });
+  runtime = await startLocalServer({
     dataDirectory, staticDirectory: 'frontend',
     apiHandler: async (request, { repository }) => {
       if (request.path !== '/api/v1/save') return;
@@ -28,7 +34,6 @@ test('protected shutdown finishes an accepted save and allows restart with saved
       return { status: 200, json: { saved: true } };
     },
   });
-  t.after(() => runtime.close());
   const session = await fetch(`${runtime.origin}/api/v1/session`, { method: 'POST', headers: { Origin: runtime.origin } }).then((r) => r.json());
   const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token };
   for (const supplied of [{ Origin: runtime.origin }, { ...headers, Origin: 'https://other.example' }]) {
@@ -49,7 +54,6 @@ test('protected shutdown finishes an accepted save and allows restart with saved
   assert.equal((await save).status, 200);
   assert.deepEqual(await shutdown, { status: 200, body: { state: 'stopped' } });
   await runtime.close();
-  const restarted = await startLocalServer({ dataDirectory, staticDirectory: 'frontend' });
-  t.after(() => restarted.close());
+  restarted = await startLocalServer({ dataDirectory, staticDirectory: 'frontend' });
   assert.equal(restarted.repository.snapshot().members[0].id, 'saved-before-exit');
 });
