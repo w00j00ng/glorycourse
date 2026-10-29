@@ -6,9 +6,9 @@ import { issueText } from './issue-view.js';
  * @typedef {{ preview: FinalizationPreview, draftId: string, idempotencyKey: string, request: null | { preparedActionToken: string, expectedDraftRevision: number, acknowledgedWarningDigest: string, acknowledgementNote: string } }} FinalizationState
  * @typedef {{ draft: { id: string, revision: number }, studentResults: { memberId: string, memberNameAtGeneration: string }[] }} DraftDetail
  * @typedef {{ semesterCourses: { courseId: string, courseName: string }[] }} DraftContext
- * @param {{ state: { draft: DraftDetail | null, draftContext: DraftContext | null }, api: (path: string, options?: Record<string, unknown>) => Promise<unknown>, byId: (id: string) => any, run: (action: () => Promise<unknown>, success?: string, isCurrent?: () => boolean) => Promise<unknown>, draftCourseName: (id: string) => string, showMessage: (message: string) => void, loadDrafts: () => Promise<void>, loadEnrollments: () => Promise<void> }} dependencies
+ * @param {{ state: { draft: DraftDetail | null, draftContext: DraftContext | null }, api: (path: string, options?: Record<string, unknown>) => Promise<unknown>, byId: (id: string) => any, run: (action: () => Promise<unknown>, success?: string, isCurrent?: () => boolean) => Promise<unknown>, draftCourseName: (id: string) => string, showMessage: (message: string) => void, loadDrafts: () => Promise<void>, loadEnrollments: () => Promise<void>, discardDraftEdits: (draftId: string) => void }} dependencies
  */
-export const createFinalizationPage = ({ state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments }) => {
+export const createFinalizationPage = ({ state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments, discardDraftEdits }) => {
   /** @type {FinalizationState | null} */
   let finalization = null;
 
@@ -78,6 +78,7 @@ export const createFinalizationPage = ({ state, api, byId, run, draftCourseName,
       if (code === 'UNPROCESSABLE' && current.request === request) current.request = null;
       throw error;
     }
+    discardDraftEdits(current.draftId);
     if (finalization === current) {
       byId('finalize-dialog').close();
       finalization = null;

@@ -42,6 +42,7 @@ test('saving a draft course keeps its cached ministry unless the administrator c
   const requests = [];
   const state = { draft: { draft: { id: 'draft', revision: 3 } }, drafts: [], pagination: { draft: { total: 0 } } };
   const page = createDraftsPage({
+    discardDraftEdits() {},
     state, byId: () => ({ open: false, replaceChildren() {} }), run: (action) => action(),
     api: async (_path, options) => { requests.push(JSON.parse(options.body)); },
     loadPaged: async () => [],
@@ -75,6 +76,7 @@ test('manual draft addition preserves ministry entered while saving the previous
     let complete;
     let request;
     const page = createDraftsPage({
+      discardDraftEdits() {},
       state: { draft: { draft: { id: 'draft', revision: 3 } }, drafts: [], pagination: { draft: { total: 0 } } },
       byId, run: (action) => action(), loadPaged: async () => [], loadCatalogs: async () => {},
       api: (_path, options) => { request = JSON.parse(options.body); return new Promise((resolve) => { complete = resolve; }); },
@@ -338,6 +340,7 @@ test('keeps the latest draft list and page when earlier requests finish later', 
       });
       vm.runInContext(`${appFunction('loadPaged')}\nglobalThis.loadPaged = loadPaged;`, context);
       const { load } = createDraftsPage({
+        discardDraftEdits() {},
         state: context.state, byId: (id) => nodes[id], loadPaged: context.loadPaged,
         cell: () => ({}), actionsCell: () => ({}), resourceName: () => '', policyName: () => '',
       });
@@ -367,6 +370,7 @@ test('shows readiness only for the semester currently chosen in the draft form',
   const form = { elements: { semesterId: { value: 'first' }, mode: { value: 'AUTO' } } };
   const readiness = { textContent: '' };
   const { showReadiness } = createDraftsPage({
+    discardDraftEdits() {},
     state: { drafts: [], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 0 } } },
     byId: (id) => ({ 'draft-create-form': form, 'draft-readiness': readiness })[id],
     api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
@@ -409,6 +413,7 @@ test('opening another draft keeps the latest selection when an older context fin
   const pending = [];
   const shown = [];
   const { openDraft } = createDraftsPage({
+    discardDraftEdits() {},
     state: { drafts: [], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 0 } } },
     api: (path) => new Promise((resolve) => pending.push({ path, resolve })),
     showDraft: async (detail, context) => shown.push([detail.draft.id, context.semester.name]),
@@ -434,6 +439,7 @@ test('draft deletion asks for confirmation and refreshes only after deleting the
   globalThis.window = { confirm: () => confirmations.shift() };
   try {
     const requests = [];
+    const discarded = [];
     const draft = { id: 'draft-1', revision: 7 };
     const nodes = {
       'draft-rows': { replaceChildren() {} },
@@ -441,6 +447,7 @@ test('draft deletion asks for confirmation and refreshes only after deleting the
       'draft-count': { textContent: '1' },
     };
     const { deleteDraft } = createDraftsPage({
+      discardDraftEdits: (draftId) => discarded.push(draftId),
       state: { drafts: [draft], semesters: [], policies: [], pagination: { draft: { page: 1, limit: 50, total: 1 } } },
       byId: (id) => nodes[id],
       api: async (path, options) => { requests.push({ path, options }); },
@@ -450,6 +457,7 @@ test('draft deletion asks for confirmation and refreshes only after deleting the
 
     await deleteDraft(draft);
     assert.equal(requests.length, 0);
+    assert.deepEqual(discarded, []);
     assert.equal(nodes['draft-count'].textContent, '1');
     await deleteDraft(draft);
     assert.deepEqual(requests, [{
@@ -458,9 +466,29 @@ test('draft deletion asks for confirmation and refreshes only after deleting the
     }]);
     assert.equal(nodes['draft-empty'].hidden, false);
     assert.equal(nodes['draft-count'].textContent, '0');
+    assert.deepEqual(discarded, ['draft-1']);
   } finally {
     globalThis.window = previousWindow;
   }
+});
+
+test('deletion preserves edits on failure and discards the requested draft before refreshing after success', async () => {
+  const previousWindow = globalThis.window;
+  globalThis.window = { confirm: () => true };
+  try {
+    for (const succeeds of [false, true]) {
+      const discarded = [];
+      const state = { draft: { draft: { id: 'another-draft', revision: 1 } }, pagination: { draft: { page: 1, limit: 50, total: 1 } } };
+      const { deleteDraft } = createDraftsPage({
+        state, run: (action) => action(), discardDraftEdits: (draftId) => discarded.push(draftId),
+        api: async () => { if (!succeeds) throw new Error('Delete failed'); },
+        loadPaged: async () => { assert.deepEqual(discarded, ['draft-1']); throw new Error('Reload failed'); },
+      });
+      await assert.rejects(deleteDraft({ id: 'draft-1', revision: 7 }), succeeds ? /Reload failed/ : /Delete failed/);
+      assert.deepEqual(discarded, succeeds ? ['draft-1'] : []);
+      assert.equal(state.draft.draft.id, 'another-draft');
+    }
+  } finally { globalThis.window = previousWindow; }
 });
 
 test('a completed draft item edit does not reopen an older draft after another draft is selected', async () => {
@@ -484,6 +512,7 @@ test('a completed draft item edit does not reopen an older draft after another d
       'draft-rows': { replaceChildren() {} }, 'draft-empty': {}, 'draft-count': {},
     };
     const page = createDraftsPage({
+      discardDraftEdits() {},
       state, byId: (id) => nodes[id],
       api: async (path, options) => { requests.push({ path, options }); },
       run: async (action) => { await action(); await gate; },
@@ -514,6 +543,7 @@ test('saving the current draft refreshes its detail but leaves a closed dialog c
     'draft-empty': {}, 'draft-count': {},
   };
   const page = createDraftsPage({
+    discardDraftEdits() {},
     state: {
       draft: { draft: { id: 'draft-1', revision: 7 } }, drafts: [], semesters: [], policies: [],
       pagination: { draft: { page: 1, limit: 50, total: 0 } },

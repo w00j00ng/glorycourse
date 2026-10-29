@@ -576,7 +576,7 @@ test('previews, stages, rechecks, and applies an xlsx import through the protect
 test('validates finalReasonDetail through draft item PATCH without changing data on rejected requests', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -803,7 +803,7 @@ test('creates and edits a draft, then replays finalization after the draft is re
 test('returns 422 for oversized fallback without persisting any draft records or automatic semester revisions', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   await seedRepository(runtime.repository, (data) => Object.assign(data, fallbackStore(fallbackBoundaryInput(100_001), null)));
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },

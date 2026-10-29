@@ -2098,3 +2098,243 @@ test('draft review pages large results and loads course choices only when editin
   await page.locator('#draft-item-rows details').first().locator('summary').click();
   await expect(page.locator('#draft-item-rows details li')).toHaveCount(1);
 });
+
+test.describe('unsaved draft', () => {
+  // Keep delayed-response routes active so their removal cannot race the follow-up detail GET.
+  const row = (page, member) => page.locator('#draft-item-rows tr').filter({
+    has: page.getByRole('combobox', { name: `회원 ${member} 최종 배정`, exact: true }),
+  });
+  const edit = async (page, member, course, ministry) => {
+    const student = row(page, member);
+    await student.locator('select').focus();
+    await student.locator('select').selectOption(course);
+    await student.locator('input').fill(ministry);
+  };
+  const expectEdit = async (page, member, course, ministry) => {
+    await expect(row(page, member).locator('select')).toHaveValue(course);
+    await expect(row(page, member).locator('input')).toHaveValue(ministry);
+  };
+  const createDraft = async (page) => {
+    await page.locator('#new-draft').click();
+    await page.locator('#draft-create-form [name="semesterId"]').selectOption({ label: '검증 학기' });
+    await page.locator('#draft-create-form [type="submit"]').click();
+    await expect(page.locator('#draft-dialog')).toBeVisible();
+  };
+
+  test.beforeEach(async ({ page, app }) => {
+    await app.seedLarge();
+    await page.reload();
+    await page.getByRole('button', { name: '배정초안', exact: true }).click();
+    await createDraft(page);
+  });
+
+  test('keeps course and ministry across review controls, pages and another row save or restore', async ({ page }) => {
+    await edit(page, 0, 'offering-1', '청년부');
+    for (const [control, hidden, restored] of [
+      ['#draft-sort', 'ORDER_DESC', 'ORDER_ASC'],
+      ['#draft-result-filter', 'AUTO_REJECTED', 'ALL'],
+      ['#draft-grouping', 'COURSE', 'STUDENT'],
+    ]) {
+      await page.locator(control).selectOption(hidden);
+      await page.locator(control).selectOption(restored);
+      await expectEdit(page, 0, 'offering-1', '청년부');
+    }
+    await page.locator('#draft-search').fill('회원 499');
+    await page.locator('#draft-search').fill('');
+    await expectEdit(page, 0, 'offering-1', '청년부');
+    await page.locator('#draft-item-next-page').click();
+    const capacity = (course) => page.locator('#draft-capacity-rows tr').filter({
+      has: page.getByRole('cell', { name: `강좌 ${course}`, exact: true }),
+    }).locator('td').nth(2);
+    await expect(capacity(0)).toHaveText('4');
+    await expect(capacity(1)).toHaveText('6');
+    await page.locator('#draft-item-previous-page').click();
+    await expectEdit(page, 0, 'offering-1', '청년부');
+    await edit(page, 1, 'offering-2', '  대학부  ');
+    await row(page, 1).getByRole('button', { name: '저장', exact: true }).click();
+    await expectEdit(page, 1, 'offering-2', '대학부');
+    await expectEdit(page, 0, 'offering-1', '청년부');
+    await edit(page, 1, 'offering-3', '복원 전');
+    page.once('dialog', (dialog) => dialog.dismiss());
+    await row(page, 1).getByRole('button', { name: '자동 복원' }).click();
+    await expectEdit(page, 1, 'offering-3', '복원 전');
+    page.once('dialog', (dialog) => dialog.accept());
+    await row(page, 1).getByRole('button', { name: '자동 복원' }).click();
+    await expectEdit(page, 1, 'offering-1', '대학부');
+    await expectEdit(page, 0, 'offering-1', '청년부');
+  });
+
+  test('ministry-only changes leave capacity at the saved course counts', async ({ page }) => {
+    await row(page, 0).locator('input').fill('청년부');
+    await page.locator('#draft-item-next-page').click();
+    await expect(page.locator('#draft-capacity-status')).not.toContainText('저장 전');
+    await page.locator('#draft-item-previous-page').click();
+    await expectEdit(page, 0, 'offering-0', '청년부');
+  });
+
+  for (const lateEdit of [false, true]) {
+    test(`saving an untouched row ${lateEdit ? 'preserves later input' : 'shows the refreshed server values'}`, async ({ page }) => {
+      let release;
+      let saved;
+      const gate = new Promise((resolve) => { release = resolve; });
+      const stored = new Promise((resolve) => { saved = resolve; });
+      await page.route('**/api/v1/allocation-drafts/*/items/member-0', async (route) => {
+        const response = await route.fetch();
+        saved();
+        await gate;
+        await route.fulfill({ response });
+      });
+      await row(page, 0).getByRole('button', { name: '저장', exact: true }).click();
+      await stored;
+      if (lateEdit) await edit(page, 0, 'offering-2', '대학부');
+      const refreshed = page.waitForResponse((response) => /\/allocation-drafts\/[^/?]+$/.test(response.url()) && response.request().method() === 'GET');
+      release();
+      await refreshed;
+      await page.locator('#draft-sort').selectOption('NAME_ASC');
+      await expectEdit(page, 0, lateEdit ? 'offering-2' : 'offering-0', lateEdit ? '대학부' : '');
+    });
+  }
+
+  test('restore preserves new input entered while the restore response is pending', async ({ page }) => {
+    await edit(page, 0, 'offering-1', '복원 전');
+    await edit(page, 1, 'offering-2', '다른 학생');
+    let release;
+    let restored;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const stored = new Promise((resolve) => { restored = resolve; });
+    await page.route('**/api/v1/allocation-drafts/*/items/member-0/restore-auto', async (route) => {
+      const response = await route.fetch();
+      restored();
+      await gate;
+      await route.fulfill({ response });
+    });
+    page.once('dialog', (dialog) => dialog.accept());
+    await row(page, 0).getByRole('button', { name: '자동 복원' }).click();
+    await stored;
+    await edit(page, 0, 'offering-3', '복원 중 새 입력');
+    const refreshed = page.waitForResponse((response) => /\/allocation-drafts\/[^/?]+$/.test(response.url()) && response.request().method() === 'GET');
+    release();
+    await refreshed;
+    await page.locator('#draft-sort').selectOption('NAME_ASC');
+    await expectEdit(page, 0, 'offering-3', '복원 중 새 입력');
+    await expectEdit(page, 1, 'offering-2', '다른 학생');
+  });
+
+  for (const [action, status, code] of [['저장', 409, 'CONFLICT'], ['자동 복원', 503, 'INTERNAL_ERROR']]) {
+    test(`${action} failure preserves the row after sorting`, async ({ page }) => {
+      await edit(page, 0, 'offering-1', '실패해도 유지');
+      await page.route('**/api/v1/allocation-drafts/*/items/**', (route) => route.fulfill({
+        status, contentType: 'application/json', json: { code, message: '검증용 요청 실패' },
+      }), { times: 1 });
+      if (action === '자동 복원') page.once('dialog', (dialog) => dialog.accept());
+      await row(page, 0).getByRole('button', { name: action, exact: true }).click();
+      await expect(page.locator('#dialog-message')).toContainText('검증용 요청 실패');
+      await page.locator('#draft-sort').selectOption('NAME_ASC');
+      await expectEdit(page, 0, 'offering-1', '실패해도 유지');
+    });
+  }
+
+  for (const action of ['저장', '자동 복원']) for (const switched of [false, true]) {
+    test(`a late ${action} preserves ${switched ? 'another open draft' : 'a closed dialog'} and keeps edits isolated across drafts`, async ({ page }) => {
+      await edit(page, 0, 'offering-1', '첫 초안 입력');
+      let release;
+      let completed;
+      const gate = new Promise((resolve) => { release = resolve; });
+      const stored = new Promise((resolve) => { completed = resolve; });
+      const suffix = action === '저장' ? '' : '/restore-auto';
+      await page.route(`**/api/v1/allocation-drafts/*/items/member-0${suffix}`, async (route) => {
+        const response = await route.fetch();
+        completed();
+        await gate;
+        await route.fulfill({ response });
+      });
+      if (action === '자동 복원') page.once('dialog', (dialog) => dialog.accept());
+      await row(page, 0).getByRole('button', { name: action, exact: true }).click();
+      await stored;
+      await page.locator('#draft-dialog .close-dialog').first().click();
+      if (switched) {
+        await createDraft(page);
+        await edit(page, 0, 'offering-4', '대기 중 다른 초안');
+      }
+      const loaded = page.waitForResponse((response) => response.url().includes('/allocation-drafts?'));
+      release();
+      await loaded;
+      if (switched) {
+        await expectEdit(page, 0, 'offering-4', '대기 중 다른 초안');
+        await page.locator('#draft-dialog .close-dialog').first().click();
+      } else await expect(page.locator('#draft-dialog')).toBeHidden();
+      const original = page.locator('#draft-rows tr');
+      await (switched ? original.last() : original.first()).getByRole('button', { name: '검토', exact: true }).click();
+      const expected = action === '저장' ? ['offering-1', '첫 초안 입력'] : ['offering-0', ''];
+      await expectEdit(page, 0, ...expected);
+      await edit(page, 0, 'offering-2', '첫 초안 미저장');
+      await page.locator('#draft-dialog .close-dialog').first().click();
+      await createDraft(page);
+      await expectEdit(page, 0, 'offering-0', '');
+      await edit(page, 0, 'offering-3', '둘째 초안 미저장');
+      await page.locator('#draft-dialog .close-dialog').first().click();
+      await page.locator('#draft-rows tr').last().getByRole('button', { name: '검토', exact: true }).click();
+      await expectEdit(page, 0, 'offering-2', '첫 초안 미저장');
+      await page.locator('#draft-dialog .close-dialog').first().click();
+      await page.locator('#draft-rows tr').first().getByRole('button', { name: '검토', exact: true }).click();
+      await expectEdit(page, 0, 'offering-3', '둘째 초안 미저장');
+    });
+  }
+
+  test('showing a readonly draft clears its old edits before it is reopened', async ({ page }) => {
+    await edit(page, 0, 'offering-1', '이전 미저장');
+    await page.locator('#draft-dialog .close-dialog').first().click();
+    await page.route('**/api/v1/allocation-drafts/*', async (route) => {
+      const response = await route.fetch();
+      const detail = await response.json();
+      await route.fulfill({ response, json: { ...detail, draft: { ...detail.draft, status: 'FINALIZED' } } });
+    }, { times: 1 });
+    await page.locator('#draft-rows tr').first().getByRole('button', { name: '검토', exact: true }).click();
+    await expect(page.locator('#draft-readonly')).toContainText('읽기 전용');
+    await expect(row(page, 0).locator('select')).toHaveValue('offering-0');
+    await page.locator('#draft-dialog .close-dialog').first().click();
+    await page.locator('#draft-rows tr').first().getByRole('button', { name: '검토', exact: true }).click();
+    await expectEdit(page, 0, 'offering-0', '');
+  });
+
+  for (const [fields, course, ministry] of [
+    ['course reverted to the original value', 'offering-0', '청년부'],
+    ['ministry reverted to the original value', 'offering-1', ''],
+    ['both reverted to the original value', 'offering-0', ''],
+    ['new course and ministry values', 'offering-2', '대학부'],
+  ]) {
+    test(`keeps ${fields} while a save response is pending`, async ({ page }) => {
+      let release;
+      let saved;
+      const gate = new Promise((resolve) => { release = resolve; });
+      const stored = new Promise((resolve) => { saved = resolve; });
+      await page.route('**/api/v1/allocation-drafts/*/items/member-0', async (route) => {
+        const response = await route.fetch();
+        saved();
+        await gate;
+        await route.fulfill({ response });
+      });
+      await edit(page, 0, 'offering-1', '청년부');
+      await row(page, 0).getByRole('button', { name: '저장', exact: true }).click();
+      await stored;
+      if (course !== 'offering-1') {
+        await row(page, 0).locator('select').selectOption('offering-2');
+        if (course === 'offering-0') await row(page, 0).locator('select').selectOption(course);
+      }
+      if (ministry !== '청년부') {
+        await row(page, 0).locator('input').fill('대학부');
+        if (!ministry) await row(page, 0).locator('input').fill(ministry);
+      }
+      const refreshed = page.waitForResponse((response) => /\/allocation-drafts\/[^/?]+$/.test(response.url()) && response.request().method() === 'GET');
+      release();
+      await refreshed;
+      await page.locator('#draft-sort').selectOption('NAME_ASC');
+      await expectEdit(page, 0, course, ministry);
+      const committed = page.waitForResponse('**/api/v1/allocation-drafts/*/items/member-0');
+      await row(page, 0).getByRole('button', { name: '저장', exact: true }).click();
+      const response = await committed;
+      expect(response.ok()).toBe(true);
+      expect(response.request().postDataJSON()).toMatchObject({ finalSemesterCourseId: course, ministry: ministry || null });
+    });
+  }
+});

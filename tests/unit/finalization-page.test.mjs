@@ -11,6 +11,7 @@ const preview = {
 const setup = (api) => {
   const closed = [];
   const opened = [];
+  const discarded = [];
   const messages = [];
   const refreshed = [];
   const note = { value: '' };
@@ -46,9 +47,10 @@ const setup = (api) => {
     },
     draftCourseName: (id) => id, showMessage: (message) => messages.push(message),
     loadDrafts: async () => { refreshed.push('drafts'); }, loadEnrollments: async () => { refreshed.push('enrollments'); },
+    discardDraftEdits: (draftId) => discarded.push(draftId),
   });
   const event = { preventDefault() {}, currentTarget: { elements: { note } } };
-  return { page, state, note, opened, closed, event, nodes, messages, refreshed };
+  return { page, state, note, opened, closed, event, nodes, discarded, messages, refreshed };
 };
 
 const withDocument = async (action) => {
@@ -74,7 +76,7 @@ test('a corrected finalization note creates a new request only after rejection',
   for (const code of ['UNPROCESSABLE', 'INTERNAL_ERROR', undefined]) {
     const requests = [];
     const failure = Object.assign(new Error('Request failed'), code ? { code } : {});
-    const { page, state, note, closed, event } = setup(async (path, options) => {
+    const { page, state, note, closed, event, discarded } = setup(async (path, options) => {
       if (path.endsWith('/finalize-preview')) return preview;
       requests.push({ path, body: options.body, key: options.headers['Idempotency-Key'] });
       if (requests.length === 1) throw failure;
@@ -83,6 +85,7 @@ test('a corrected finalization note creates a new request only after rejection',
     await page.previewFinalization();
     note.value = code === 'UNPROCESSABLE' ? '   ' : 'Original acknowledgement';
     await assert.rejects(page.finalizeDraft(event), (error) => error === failure);
+    assert.deepEqual(discarded, [], 'failed finalization keeps the draft edits');
     note.value = 'Corrected acknowledgement';
     await page.finalizeDraft(event);
 
@@ -98,6 +101,7 @@ test('a corrected finalization note creates a new request only after rejection',
     }
     assert.equal(state.draft, null);
     assert.deepEqual(closed, ['finalize-dialog', 'draft-dialog']);
+    assert.deepEqual(discarded, ['draft']);
   }
 }));
 
@@ -139,6 +143,26 @@ test('a late preview does not reopen the finalization dialog for another draft',
   assert.deepEqual(opened, []);
 }));
 
+test('finalization discards only the requested draft after success while another draft is selected', async () => withDocument(async () => {
+  for (const succeeds of [false, true]) {
+    let resolve;
+    let reject;
+    const { page, state, event, discarded } = setup((path) => {
+      if (path.endsWith('/finalize-preview')) return Promise.resolve(preview);
+      return new Promise((done, fail) => { resolve = done; reject = fail; });
+    });
+    await page.previewFinalization();
+    assert.deepEqual(discarded, [], 'preview cancellation keeps the draft edits');
+    const pending = page.finalizeDraft(event);
+    const outcome = succeeds ? pending : assert.rejects(pending, /Connection lost/);
+    state.draft = { draft: { id: 'another-draft', revision: 1 }, studentResults: [] };
+    if (succeeds) resolve({ createdCount: 1 });
+    else reject(new Error('Connection lost'));
+    await outcome;
+    assert.deepEqual(discarded, succeeds ? ['draft'] : []);
+  }
+}));
+
 test('a late finalization success preserves the draft or review opened afterward', async () => withDocument(async () => {
   const scenarios = [
     { name: 'another draft being edited', draftId: 'another-draft', review: false },
@@ -153,7 +177,7 @@ test('a late finalization success preserves the draft or review opened afterward
     const requests = [];
     let previews = 0;
     const replacementPreview = { ...preview, preparedActionToken: 'replacement-token', warningDigest: 'replacement-warnings' };
-    const { page, state, note, event, nodes, closed, messages, refreshed } = setup((path, options) => {
+    const { page, state, note, event, nodes, closed, discarded, messages, refreshed } = setup((path, options) => {
       if (path.endsWith('/finalize-preview')) return Promise.resolve(previews++ === 0 ? preview : replacementPreview);
       requests.push({ path, body: options.body, key: options.headers['Idempotency-Key'] });
       return new Promise((resolve) => pending.push(resolve));
@@ -180,6 +204,7 @@ test('a late finalization success preserves the draft or review opened afterward
     closed.length = 0;
     messages.length = 0;
     refreshed.length = 0;
+    discarded.length = 0;
 
     pending.at(-1)({ createdCount: 1 });
     await first;
@@ -191,6 +216,7 @@ test('a late finalization success preserves the draft or review opened afterward
     assert.equal(note.value, 'Replacement acknowledgement', scenario.name);
     assert.deepEqual(messages, [], scenario.name);
     assert.deepEqual(refreshed, ['drafts', 'enrollments'], scenario.name);
+    assert.deepEqual(discarded, ['draft'], scenario.name);
 
     if (!scenario.review) {
       await page.previewFinalization();
@@ -211,6 +237,7 @@ test('a late finalization success preserves the draft or review opened afterward
     assert.equal(nodes['finalize-dialog'].open, false, scenario.name);
     assert.equal(nodes['draft-dialog'].open, false, scenario.name);
     assert.match(messages.at(-1), /2건/, scenario.name);
+    assert.deepEqual(discarded, ['draft', scenario.draftId], scenario.name);
   }
 }));
 
@@ -218,7 +245,7 @@ test('a late finalization failure leaves the newer review and its acknowledgemen
   for (const code of ['INTERNAL_ERROR', 'UNPROCESSABLE']) {
     const pending = [];
     const requests = [];
-    const { page, state, note, event, nodes, messages, refreshed } = setup((path, options) => {
+    const { page, state, note, event, nodes, discarded, messages, refreshed } = setup((path, options) => {
       if (path.endsWith('/finalize-preview')) return Promise.resolve(preview);
       requests.push({ path, body: options.body });
       return new Promise((resolve, reject) => pending.push({ resolve, reject }));
@@ -239,11 +266,13 @@ test('a late finalization failure leaves the newer review and its acknowledgemen
     assert.equal(note.value, 'Replacement acknowledgement', code);
     assert.deepEqual(messages, [], code);
     assert.deepEqual(refreshed, [], code);
+    assert.deepEqual(discarded, [], code);
     const replacement = page.finalizeDraft(event);
     assert.equal(requests[1].path, '/allocation-drafts/another-draft/finalize', code);
     assert.equal(JSON.parse(requests[1].body).acknowledgementNote, 'Replacement acknowledgement', code);
     pending[1].resolve({ createdCount: 2 });
     await replacement;
     assert.equal(state.draft, null, code);
+    assert.deepEqual(discarded, ['another-draft'], code);
   }
 }));
