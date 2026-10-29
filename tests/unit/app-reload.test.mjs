@@ -95,6 +95,7 @@ test('reloads imported records using the catalog and filters shown to the user',
   const semesterSelect = { value: 'old' };
   const nodes = {
     'application-semester-filter': semesterSelect, 'import-preview-status': {}, 'commit-import': {}, 'import-commit-blocked': {},
+    'import-resolutions': { querySelectorAll: () => [] }, 'import-preview-action': {},
   };
   const queries = [];
   let loadedSemester;
@@ -150,6 +151,119 @@ test('reloads imported records using the catalog and filters shown to the user',
   assert.deepEqual(queries.filter(({ name }) => name === 'application').map(({ filter }) => filter), ['new']);
   assert.equal(context.state.applications[0].semesterId, 'new');
   assert.equal(loadedSemester, 'new');
+});
+
+const importPage = (dependencies) => {
+  const fields = new Map([
+    ['application-action-0', { value: 'KEEP_EXISTING', disabled: false }],
+    ['application-order-0', { value: '1', disabled: false }],
+    ['context-action-0', { value: 'KEEP_EXISTING', disabled: false }],
+  ]);
+  const nodes = new Map();
+  const byId = (id) => {
+    if (!nodes.has(id)) nodes.set(id, { disabled: false, hidden: id === 'import-preview-action', textContent: '',
+      querySelector: (selector) => fields.get(selector.match(/name="([^"]+)"/)[1]),
+      querySelectorAll: () => [...fields.values()],
+    });
+    return nodes.get(id);
+  };
+  const state = { importPreview: {
+    kind: 'APPLICATIONS', previewId: 'preview', storeRevision: 1, storeEpoch: 'epoch', warningDigest: 'digest',
+    applications: [{ semesterName: '학기', memberName: '회원', applicationOrderStatus: 'UNRESOLVED' }],
+    enrollments: [], issues: [],
+    contextChanges: [{ entity: 'SEMESTER', status: 'EXISTING_CONFLICT', semesterName: '학기', field: 'order' }],
+  } };
+  const page = createImportsPage({ state, byId, run: (action) => action(), showMessage() {},
+    reviewWarnings: async () => '', loadCatalogs: async () => {},
+    loadApplications: async () => {}, loadEnrollments: async () => {}, ...dependencies });
+  return { page, state, byId, fields };
+};
+
+test('retries uncertain Excel commits using the reviewed request without rereading changed controls', async () => {
+  const cases = [
+    { request: new TypeError('Failed to fetch'), expected: 'Failed to fetch' },
+    { request: new SyntaxError('Invalid response'), expected: 'Invalid response' },
+    { request: Object.assign(new Error('Internal failure'), { code: 'INTERNAL_ERROR' }), expected: 'Internal failure' },
+    { request: Object.assign(new Error('Try later'), { code: 'UNAVAILABLE' }), expected: 'Try later' },
+  ];
+  for (const { request, expected } of cases) {
+    const requests = [];
+    let reviews = 0;
+    const { page, byId, fields } = importPage({
+      reviewWarnings: async () => { reviews++; return `검토 ${reviews}`; },
+      api: async (_path, options) => {
+        requests.push(options);
+        if (requests.length === 1) throw request;
+        return { inserted: 1, updated: 0, skipped: 0 };
+      },
+    });
+    await assert.rejects(page.commit(), { message: expected });
+    assert.equal(byId('commit-import').disabled, false);
+    assert.equal(byId('import-preview-action').hidden, false);
+    assert.match(byId('import-commit-blocked').textContent, /같은 요청/);
+    assert.ok([...fields.values()].every(({ disabled }) => disabled));
+    fields.get('application-order-0').value = '2';
+    fields.get('context-action-0').value = 'APPLY_FILE_VALUE';
+    await page.commit();
+    assert.equal(reviews, 1);
+    assert.equal(requests[1].body, requests[0].body);
+    assert.equal(requests[1].headers['Idempotency-Key'], requests[0].headers['Idempotency-Key']);
+    assert.match(byId('import-preview-status').textContent, /반영됨/);
+    assert.equal(byId('commit-import').disabled, true);
+    assert.equal(byId('import-preview-action').hidden, true);
+    await page.commit();
+    assert.equal(requests.length, 2);
+  }
+});
+
+test('allows correcting a rejected Excel request with a new key but requires review after stale or conflicting commits', async () => {
+  const cases = [
+    { request: 'BAD_REQUEST', expected: 'correct' },
+    { request: 'UNPROCESSABLE', expected: 'correct' },
+    { request: 'PREVIEW_STALE', expected: 'review' },
+    { request: 'CONFLICT', expected: 'review' },
+  ];
+  for (const { request, expected } of cases) {
+    const requests = [];
+    const { page, byId, fields } = importPage({
+      api: async (_path, options) => {
+        requests.push(options);
+        if (requests.length === 1) throw Object.assign(new Error(request), { code: request });
+        return { inserted: 1, updated: 0, skipped: 0 };
+      },
+    });
+    await assert.rejects(page.commit(), { code: request });
+    assert.equal(byId('commit-import').disabled, expected === 'review');
+    assert.equal(byId('import-preview-action').hidden, expected !== 'review');
+    assert.ok([...fields.values()].every(({ disabled }) => disabled === (expected === 'review')));
+    fields.get('application-order-0').value = '2';
+    await page.commit();
+    if (expected === 'review') {
+      assert.equal(requests.length, 1);
+      assert.match(byId('import-commit-blocked').textContent, /다시 검토/);
+    } else {
+      assert.equal(requests.length, 2);
+      assert.notEqual(requests[1].headers['Idempotency-Key'], requests[0].headers['Idempotency-Key']);
+      const order = JSON.parse(requests[1].body).resolutions.find(({ action }) => action === 'CONFIRM_APPLICATION_ORDER');
+      assert.equal(order.applicationOrder, 2);
+    }
+  }
+});
+
+test('keeps a successful Excel commit applied when refreshing catalogs or lists fails', async () => {
+  for (const request of ['loadCatalogs', 'loadApplications', 'loadEnrollments']) {
+    let writes = 0;
+    const { page, byId } = importPage({
+      api: async () => { writes++; return { inserted: 1, updated: 0, skipped: 0 }; },
+      [request]: async () => { throw new Error(request); },
+    });
+    await assert.rejects(page.commit(), { message: request });
+    assert.match(byId('import-preview-status').textContent, /반영됨/);
+    assert.equal(byId('commit-import').disabled, true);
+    assert.equal(byId('import-commit-blocked').hidden, true);
+    await page.commit();
+    assert.equal(writes, 1);
+  }
 });
 
 test('keeps all catalog choices beyond 200 records and preserves the selected filters', async () => {
