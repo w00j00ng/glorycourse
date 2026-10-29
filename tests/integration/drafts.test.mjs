@@ -225,6 +225,46 @@ test('allows only one edit at a draft revision and keeps a previously archived d
   assert.equal(store.snapshot().enrollments.length, 0);
 });
 
+test('rejects invalid finalReasonDetail without changing the draft or stored revision', async (t) => {
+  const { service, store } = await temporaryService(t, fixture());
+  const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  const before = store.snapshot();
+  const input = { expectedDraftRevision: 0, finalDecision: 'REJECTED', finalSemesterCourseId: null, finalReasonCode: 'ADMIN_EXCLUDED' };
+  const cases = [
+    { request: {}, expected: /finalReasonDetail/ },
+    ...['note', 1, true, [], {}, { note: null }, { note: 1 }, { note: '' }, { note: '   ' },
+      { note: '검토 완료', extra: true }, { note: '가'.repeat(2001) }]
+      .map((finalReasonDetail) => ({ request: { finalReasonDetail }, expected: /finalReasonDetail/ })),
+  ];
+
+  for (const { request, expected } of cases) {
+    await assert.rejects(service.updateItem(created.draft.id, 'member-1', { ...input, ...request }), (error) => {
+      assert.ok(error instanceof DraftValidationError, `${error.name}: ${error.message}`);
+      assert.match(error.message, expected);
+      assert.ok(error.issues.some(({ message }) => expected.test(message)));
+      return true;
+    });
+    assert.deepEqual(store.snapshot(), before);
+    assert.deepEqual(service.get(created.draft.id), created);
+  }
+});
+
+test('accepts null and valid finalReasonDetail notes at the current draft revision', async (t) => {
+  const { service } = await temporaryService(t, fixture());
+  const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  const cases = [null, { note: '검토 완료' }, { note: '가'.repeat(2000) }]
+    .map((finalReasonDetail) => ({ request: { finalReasonDetail }, expected: finalReasonDetail }));
+
+  for (const { request, expected } of cases) {
+    const current = service.get(created.draft.id);
+    const updated = await service.updateItem(created.draft.id, 'member-1', {
+      ...rejection(current.draft.revision, 'ADMIN_EXCLUDED'), ...request,
+    });
+    assert.equal(updated.draft.revision, current.draft.revision + 1);
+    assert.deepEqual(updated.studentResults[0].finalReasonDetail, expected);
+  }
+});
+
 test('deletes an archived draft without deleting enrollments', async (t) => {
   const { service, store } = await temporaryService(t, fixture());
   const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
