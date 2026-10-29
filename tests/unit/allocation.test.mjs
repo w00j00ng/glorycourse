@@ -8,6 +8,7 @@ import {
   allocate,
 } from '../../backend/src/allocation/engine.ts';
 import { allocationFingerprint, allocationInputChanges } from '../../backend/src/allocation/snapshot.ts';
+import { fallbackBoundaryInput } from '../fixtures/fallback-workload.mjs';
 
 const policy = (preferenceMode = 'NEW_FIRST') => ({
   preferenceMode,
@@ -56,6 +57,30 @@ const past = (memberId, courseId, semesterOrder = 1) => ({
 });
 
 const itemFor = (result, memberId) => result.items.find((item) => item.memberId === memberId);
+
+test('admits effective fallback candidates through 100000 and rejects candidate 100001', () => {
+  const cases = [
+    { input: fallbackBoundaryInput(99_999), expected: { candidates: 99_999, assigned: 1_000 } },
+    { input: fallbackBoundaryInput(100_000), expected: { candidates: 100_000, assigned: 1_000 } },
+    { input: fallbackBoundaryInput(100_001), expected: { code: 'ALLOCATION_FALLBACK_WORK_LIMIT' } },
+  ];
+  for (const { input, expected } of cases) {
+    if (expected.code) {
+      assert.throws(() => allocate(input, policy(), 'fallback-boundary'), (error) => (
+        error instanceof AllocationValidationError
+        && error.issues.some(({ code, severity }) => code === expected.code && severity === 'ERROR')
+      ));
+      continue;
+    }
+    const result = allocate(input, policy(), 'fallback-boundary');
+    assert.equal(result.items.reduce((sum, item) => sum + item.autoReasonDetail.fallback.stageCandidateSemesterCourseIds.length, 0), expected.candidates);
+    assert.equal(result.items.filter(({ autoReasonCode }) => autoReasonCode === 'RANDOM_FALLBACK').length, expected.assigned);
+    for (const item of result.items) {
+      assert.ok(item.autoReasonDetail.fallback.stageCandidateSemesterCourseIds.includes(item.autoSemesterCourseId));
+    }
+    assert.equal(result.engineVersion, '2.0.0');
+  }
+});
 
 test('distinguishes new-first from rank-first preference allocation', () => {
   const input = snapshot({
