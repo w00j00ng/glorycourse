@@ -15,6 +15,8 @@ import {
 } from '../../backend/src/services/drafts.ts';
 import { FinalizationService } from '../../backend/src/services/finalization.ts';
 import { draftFinalSelection } from '../../frontend/draft-view.js';
+import { AllocationValidationError } from '../../backend/src/allocation/engine.ts';
+import { fallbackBoundaryInput, fallbackStore } from '../fixtures/fallback-workload.mjs';
 
 const timestamp = '2026-09-23T00:00:00.000Z';
 const policy = {
@@ -186,6 +188,73 @@ test('assigns the next semester order before creating an automatic draft', async
   assert.equal(created.studentResults.length, 1);
 });
 
+test('rolls back every record and revision when fallback exceeds the limit while manual drafts remain usable', async (t) => {
+  const { service, store } = await temporaryService(t, fallbackStore(fallbackBoundaryInput(100_001), null));
+  t.after(() => store.close());
+  const request = { semesterId: 'current', mode: 'AUTO', ...policy };
+  const before = store.snapshot();
+  await assert.rejects(service.create(request), (error) => error instanceof AllocationValidationError
+    && error.issues.some(({ code }) => code === 'ALLOCATION_FALLBACK_WORK_LIMIT'));
+  assert.deepEqual(store.snapshot(), before, 'semester order, allocationInputRevision, storeRevision, drafts, items and candidates all roll back');
+
+  const manual = await service.create({ ...request, mode: 'MANUAL' });
+  assert.equal(manual.studentResults.length, 1_001);
+  assert.ok(manual.studentResults.every(({ autoReasonDetail }) => autoReasonDetail.fallback === null));
+  await service.updateItem(manual.draft.id, 'member-1000', {
+    expectedDraftRevision: 0, finalDecision: 'SELECTED', finalSemesterCourseId: 'sc-99',
+    finalReasonCode: 'ADMIN_ASSIGNED', finalReasonDetail: null,
+  });
+  let nextId = 0;
+  const finalization = new FinalizationService(store, { id: () => `manual-limit-${++nextId}`, now: () => new Date(timestamp), secret: '0123456789abcdef0123456789abcdef' });
+  const preview = finalization.preview(manual.draft.id, { expectedDraftRevision: 1 });
+  const receipt = await finalization.finalize(manual.draft.id, {
+    expectedDraftRevision: 1, preparedActionToken: preview.preparedActionToken,
+    acknowledgedWarningDigest: preview.warningDigest, idempotencyKey: 'manual-over-limit',
+  });
+  assert.equal(receipt.createdCount, 1);
+});
+
+test('reads restores and finalizes saved oversized evidence while rejecting newly computed replay', async (t) => {
+  const { service, store } = await temporaryService(t, fallbackStore(fallbackBoundaryInput(100_001)));
+  t.after(() => store.close());
+  const created = await service.create({ semesterId: 'current', mode: 'MANUAL', ...policy });
+  // Historical AUTO evidence predates the admission cap; do not recompute it with the current engine.
+  await seedRepository(store, (data) => {
+    data.allocationDrafts[0].mode = 'AUTO';
+    for (const item of data.allocationDraftItems) {
+      const index = Number(item.memberId.slice('member-'.length));
+      const candidates = index === 1_000 ? ['sc-99'] : Array.from({ length: 100 }, (_, course) => `sc-${course}`).sort();
+      const selected = index === 1_000 ? 'sc-99' : `sc-${index % 100}`;
+      Object.assign(item, {
+        autoSemesterCourseId: selected, autoDecision: 'SELECTED', autoReasonCode: 'RANDOM_FALLBACK',
+        finalSemesterCourseId: selected, finalDecision: 'SELECTED',
+        autoReasonDetail: {
+          preferenceAttempts: [{ choiceIdAtGeneration: `choice-${index}`, semesterCourseId: 'sc-blocked',
+            courseNameAtGeneration: '희망 강좌', preference: 1, decision: 'REJECTED', reasonCode: 'CAPACITY_FULL' }],
+          fallback: { stageCandidateSemesterCourseIds: candidates, selectedSemesterCourseId: selected,
+            reasonCode: 'RANDOM_FALLBACK', totalAssignedInStage: 1_001 },
+        },
+      });
+    }
+  });
+  const saved = service.get(created.draft.id);
+  assert.equal(saved.studentResults.reduce((sum, item) => sum + item.autoReasonDetail.fallback.stageCandidateSemesterCourseIds.length, 0), 100_001);
+  const beforeReplay = store.snapshot();
+  await assert.rejects(service.create({ semesterId: 'current', mode: 'AUTO', ...policy, replayFromDraftId: created.draft.id }),
+    (error) => error instanceof AllocationValidationError && error.issues[0].code === 'ALLOCATION_FALLBACK_WORK_LIMIT');
+  assert.deepEqual(store.snapshot(), beforeReplay);
+  const restored = await service.restoreAuto(created.draft.id, 'member-1000', { expectedDraftRevision: 0 });
+  assert.equal(restored.studentResults.find(({ memberId }) => memberId === 'member-1000').finalSemesterCourseId, 'sc-99');
+  let nextId = 0;
+  const finalization = new FinalizationService(store, { id: () => `saved-limit-${++nextId}`, now: () => new Date(timestamp), secret: '0123456789abcdef0123456789abcdef' });
+  const preview = finalization.preview(created.draft.id, { expectedDraftRevision: 1 });
+  const receipt = await finalization.finalize(created.draft.id, {
+    expectedDraftRevision: 1, preparedActionToken: preview.preparedActionToken,
+    acknowledgedWarningDigest: preview.warningDigest, idempotencyKey: 'saved-over-limit',
+  });
+  assert.equal(receipt.createdCount, 1_001);
+});
+
 test('allows only one edit at a draft revision and keeps a previously archived draft read-only', async (t) => {
   const { service, store } = await temporaryService(t, fixture());
   const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
@@ -223,6 +292,46 @@ test('allows only one edit at a draft revision and keeps a previously archived d
   assert.equal(service.get(created.draft.id).draft.status, 'ARCHIVED');
   assert.deepEqual(service.list(), []);
   assert.equal(store.snapshot().enrollments.length, 0);
+});
+
+test('rejects invalid finalReasonDetail without changing the draft or stored revision', async (t) => {
+  const { service, store } = await temporaryService(t, fixture());
+  const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  const before = store.snapshot();
+  const input = { expectedDraftRevision: 0, finalDecision: 'REJECTED', finalSemesterCourseId: null, finalReasonCode: 'ADMIN_EXCLUDED' };
+  const cases = [
+    { request: {}, expected: /finalReasonDetail/ },
+    ...['note', 1, true, [], {}, { note: null }, { note: 1 }, { note: '' }, { note: '   ' },
+      { note: '검토 완료', extra: true }, { note: '가'.repeat(2001) }]
+      .map((finalReasonDetail) => ({ request: { finalReasonDetail }, expected: /finalReasonDetail/ })),
+  ];
+
+  for (const { request, expected } of cases) {
+    await assert.rejects(service.updateItem(created.draft.id, 'member-1', { ...input, ...request }), (error) => {
+      assert.ok(error instanceof DraftValidationError, `${error.name}: ${error.message}`);
+      assert.match(error.message, expected);
+      assert.ok(error.issues.some(({ message }) => expected.test(message)));
+      return true;
+    });
+    assert.deepEqual(store.snapshot(), before);
+    assert.deepEqual(service.get(created.draft.id), created);
+  }
+});
+
+test('accepts null and valid finalReasonDetail notes at the current draft revision', async (t) => {
+  const { service } = await temporaryService(t, fixture());
+  const created = await service.create({ semesterId: 'semester-1', mode: 'AUTO', ...policy });
+  const cases = [null, { note: '검토 완료' }, { note: '가'.repeat(2000) }]
+    .map((finalReasonDetail) => ({ request: { finalReasonDetail }, expected: finalReasonDetail }));
+
+  for (const { request, expected } of cases) {
+    const current = service.get(created.draft.id);
+    const updated = await service.updateItem(created.draft.id, 'member-1', {
+      ...rejection(current.draft.revision, 'ADMIN_EXCLUDED'), ...request,
+    });
+    assert.equal(updated.draft.revision, current.draft.revision + 1);
+    assert.deepEqual(updated.studentResults[0].finalReasonDetail, expected);
+  }
 });
 
 test('deletes an archived draft without deleting enrollments', async (t) => {

@@ -30,8 +30,11 @@ import { issueText } from './issue-view.js';
 export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showMessage,
   loadCatalogs, loadApplications, loadEnrollments }) => {
   let previewRequest = 0;
+  /** @type {{ preview: ImportPreview, key: string, body: string } | null} */
+  let commitOperation = null;
   const invalidatePreview = () => {
     previewRequest++;
+    commitOperation = null;
     state.importPreview = null;
     byId('import-preview').hidden = true;
     byId('import-candidate-details').open = false;
@@ -150,13 +153,15 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     const form = /** @type {HTMLFormElement & { elements: HTMLFormControlsCollection & { kind: HTMLInputElement } }} */ (event.currentTarget);
     const payload = new FormData(form);
     if (form.elements.kind.value === 'ENROLLMENTS') payload.set('mode', 'MERGE_KEEP_EXISTING');
-    const request = ++previewRequest;
+    invalidatePreview();
+    const request = previewRequest;
     const preview = /** @type {ImportPreview} */ (await run(
       () => api('/imports/preview', { method: 'POST', body: payload }), undefined,
       () => request === previewRequest,
     ));
     if (request !== previewRequest) return;
     state.importPreview = preview;
+    commitOperation = null;
     byId('import-source-count').textContent = String(preview.sourceRowCount);
     byId('import-insert-count').textContent = String(preview.insertCandidates);
     byId('import-identical-count').textContent = String(preview.identicalRows);
@@ -217,79 +222,98 @@ export const createImportsPage = ({ state, byId, api, run, reviewWarnings, showM
     if (!preview || button.disabled) return;
     button.disabled = true;
     byId('import-commit-blocked').hidden = true;
+    let operation = commitOperation;
     let applied = false;
+    let requiresPreview = false;
     try {
-      let invalidOrder = '';
-      const review = preview.kind === 'APPLICATIONS' ? { ...preview, issues: preview.issues.filter((issue) => (
-        !(['RETAKE', 'SEMESTER_ORDER_UNRESOLVED'].includes(issue.code) && issue.blockingStages.length === 0)
-      )) } : preview;
-      const note = await reviewWarnings(review);
-      if (note === null || state.importPreview !== preview) return;
-      /** @type {Record<string, unknown>[]} */
-      const resolutions = preview.kind === 'ENROLLMENTS'
-        ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
-          entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
-          warningDigest: preview.warningDigest, acknowledgementNote: note,
-        }))
-        : [];
-      preview.applications.forEach((candidate, index) => {
-        const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
-        if (action) resolutions.push({
-          entity: 'APPLICATION', action,
-          semesterName: candidate.semesterName, memberName: candidate.memberName,
-        });
-        if (candidate.applicationOrderStatus !== 'NORMAL') {
-          const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
-          if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
-            invalidOrder = candidate.memberName;
-            return;
-          }
-          resolutions.push({
-            entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
-            semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+      if (!operation) {
+        let invalidOrder = '';
+        const review = preview.kind === 'APPLICATIONS' ? { ...preview, issues: preview.issues.filter((issue) => (
+          !(['RETAKE', 'SEMESTER_ORDER_UNRESOLVED'].includes(issue.code) && issue.blockingStages.length === 0)
+        )) } : preview;
+        const note = await reviewWarnings(review);
+        if (note === null || state.importPreview !== preview) return;
+        /** @type {Record<string, unknown>[]} */
+        const resolutions = preview.kind === 'ENROLLMENTS'
+          ? preview.enrollments.map(({ semesterName, memberName, courseName }) => ({
+            entity: 'ENROLLMENT', action: 'ACKNOWLEDGE_WARNING', semesterName, memberName, courseName,
+            warningDigest: preview.warningDigest, acknowledgementNote: note,
+          }))
+          : [];
+        preview.applications.forEach((candidate, index) => {
+          const action = byId('import-resolutions').querySelector(`[name="application-action-${index}"]`)?.value;
+          if (action) resolutions.push({
+            entity: 'APPLICATION', action,
+            semesterName: candidate.semesterName, memberName: candidate.memberName,
           });
-        }
-      });
-      if (invalidOrder) {
-        showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
-        return;
-      }
-      preview.contextChanges.forEach((change, index) => {
-        if (change.status !== 'EXISTING_CONFLICT') return;
-        resolutions.push({
-          entity: change.entity,
-          action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
-          field: change.field,
-          semesterName: change.semesterName,
-          ...(change.courseName ? { courseName: change.courseName } : {}),
+          if (candidate.applicationOrderStatus !== 'NORMAL') {
+            const applicationOrder = Number(byId('import-resolutions').querySelector(`[name="application-order-${index}"]`)?.value);
+            if (!Number.isSafeInteger(applicationOrder) || applicationOrder < 1) {
+              invalidOrder = candidate.memberName;
+              return;
+            }
+            resolutions.push({
+              entity: 'APPLICATION', action: 'CONFIRM_APPLICATION_ORDER',
+              semesterName: candidate.semesterName, memberName: candidate.memberName, applicationOrder,
+            });
+          }
         });
-      });
-      const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${preview.previewId}/commit`, {
-        method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({
-          storeRevision: preview.storeRevision,
-          storeEpoch: preview.storeEpoch,
-          warningDigest: preview.warningDigest,
-          resolutions,
-        }),
-      }), 'Excel 자료를 반영했습니다.', () => state.importPreview === preview));
+        if (invalidOrder) {
+          showMessage(`${invalidOrder}의 신청순서를 확인하세요.`, true);
+          return;
+        }
+        preview.contextChanges.forEach((change, index) => {
+          if (change.status !== 'EXISTING_CONFLICT') return;
+          resolutions.push({
+            entity: change.entity,
+            action: byId('import-resolutions').querySelector(`[name="context-action-${index}"]`).value,
+            field: change.field,
+            semesterName: change.semesterName,
+            ...(change.courseName ? { courseName: change.courseName } : {}),
+          });
+        });
+        operation = commitOperation = {
+          preview, key: crypto.randomUUID(), body: JSON.stringify({
+            storeRevision: preview.storeRevision,
+            storeEpoch: preview.storeEpoch,
+            warningDigest: preview.warningDigest,
+            resolutions,
+          }),
+        };
+      }
+      const request = operation;
+      for (const field of byId('import-resolutions').querySelectorAll('input, select')) field.disabled = true;
+      const receipt = /** @type {{ inserted: number, updated: number, skipped: number }} */ (await run(() => api(`/imports/${request.preview.previewId}/commit`, {
+        method: 'POST', headers: { 'Idempotency-Key': request.key }, body: request.body,
+      }), 'Excel 자료를 반영했습니다.', () => state.importPreview === preview && commitOperation === operation));
       applied = true;
-      if (state.importPreview === preview) {
+      if (state.importPreview === preview && commitOperation === operation) {
         byId('import-preview-status').textContent = `반영됨 · 추가 ${receipt.inserted} · 수정 ${receipt.updated} · 동일 ${receipt.skipped}`;
+        byId('import-preview-action').hidden = true;
       }
       await loadCatalogs();
       await Promise.all([loadApplications(), loadEnrollments()]);
     } catch (error) {
-      if (state.importPreview === preview && !applied) {
+      if (state.importPreview === preview && commitOperation === operation && !applied) {
         const blocked = byId('import-commit-blocked');
-        const failure = /** @type {Error & { issues?: ImportPreview['issues'] }} */ (error);
-        blocked.textContent = [failure.message, ...(failure.issues ?? []).map((issue) => issueText(issue))].join('\n');
+        const failure = /** @type {Error & { code?: string, issues?: ImportPreview['issues'] }} */ (error);
+        requiresPreview = failure.code === 'PREVIEW_STALE' || failure.code === 'CONFLICT';
+        let guidance = '';
+        if (failure.code === 'BAD_REQUEST' || failure.code === 'UNPROCESSABLE') {
+          operation = commitOperation = null;
+          for (const field of byId('import-resolutions').querySelectorAll('input, select')) field.disabled = false;
+        } else if (requiresPreview) {
+          guidance = '파일을 다시 검토한 뒤 반영하세요.';
+        } else if (operation) {
+          guidance = '저장 결과를 확인하지 못했습니다. 반영을 다시 누르면 같은 요청으로 결과를 확인합니다. 선택 내용을 바꾸려면 파일을 다시 검토하세요. 이전 요청은 이미 반영되었을 수 있습니다.';
+        }
+        if (guidance) byId('import-preview-action').hidden = false;
+        blocked.textContent = [failure.message, ...(failure.issues ?? []).map((issue) => issueText(issue)), guidance].filter(Boolean).join('\n');
         blocked.hidden = false;
       }
       throw error;
     } finally {
-      if (state.importPreview === preview) button.disabled = applied;
+      if (state.importPreview === preview && commitOperation === operation) button.disabled = applied || requiresPreview;
     }
   };
 

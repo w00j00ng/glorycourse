@@ -12,6 +12,7 @@ import { exportApplicationRows } from '../../backend/src/excel/workbooks.ts';
 import { startLocalServer } from '../../backend/src/server.ts';
 import { InstanceAlreadyRunningError } from '../../backend/src/storage/instance-lock.ts';
 import { StoreRecoveryRequiredError } from '../../backend/src/domain/errors.ts';
+import { fallbackBoundaryInput, fallbackStore } from '../fixtures/fallback-workload.mjs';
 
 test('serves local files and allows a protected same-origin write without external services', async (t) => {
   const workspace = await localWorkspace(t);
@@ -21,7 +22,7 @@ test('serves local files and allows a protected same-origin write without extern
     port: 0,
     apiHandler: testApi,
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
 
   assert.equal(runtime.address, '127.0.0.1');
   const page = await call(runtime.origin, '/');
@@ -66,7 +67,7 @@ test('keeps GET and HEAD handlers read-only while accepting a protected POST sav
       return { status: 201, json: { saved: true } };
     },
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -92,7 +93,7 @@ test('rejects forged Host, external Origin, missing tokens, and multipart forms 
       return testApi(...args);
     },
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -147,7 +148,7 @@ test('returns a readable size error for a streaming upload and accepts the next 
     dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0,
     uploadBytes: 8, apiHandler: testApi,
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -177,7 +178,7 @@ test('rejects non-object JSON as a client error without changing stored data', a
   const runtime = await startLocalServer({
     dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0,
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -212,6 +213,7 @@ test('persists local data across restart, invalidates the old session, and keeps
     port: 0,
     apiHandler: testApi,
   });
+  workspace.onClose(() => first.close());
   const session = JSON.parse((await call(first.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: first.origin },
   })).text);
@@ -239,7 +241,7 @@ test('persists local data across restart, invalidates the old session, and keeps
     port: 0,
     apiHandler: testApi,
   });
-  t.after(() => second.close());
+  workspace.onClose(() => second.close());
   const rejected = await call(second.origin, '/api/v1/test/state', {
     headers: { 'X-Glorycourse-Session': session.token },
   });
@@ -262,7 +264,7 @@ test('maps recovery failures to a safe 503 response and enforces the upload limi
     uploadBytes: 8,
     apiHandler: testApi,
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -295,7 +297,7 @@ test('manages catalog and application records through the protected API and keep
     staticDirectory: workspace.static,
     port: 0,
   });
-  t.after(() => first.close());
+  workspace.onClose(() => first.close());
   const firstSession = JSON.parse((await call(first.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: first.origin },
   })).text);
@@ -457,7 +459,7 @@ test('manages catalog and application records through the protected API and keep
     staticDirectory: workspace.static,
     port: 0,
   });
-  t.after(() => second.close());
+  workspace.onClose(() => second.close());
   const secondSession = JSON.parse((await call(second.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: second.origin },
   })).text);
@@ -492,7 +494,7 @@ test('previews, stages, rechecks, and applies an xlsx import through the protect
     staticDirectory: workspace.static,
     port: 0,
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -571,6 +573,65 @@ test('previews, stages, rechecks, and applies an xlsx import through the protect
   assert.equal(JSON.parse(applications.text).items[0].memberName, '김새롬');
 });
 
+test('validates finalReasonDetail through draft item PATCH without changing data on rejected requests', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  workspace.onClose(() => runtime.close());
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const applicationResponse = await call(runtime.origin, '/api/v1/applications', {
+    method: 'POST', headers, body: JSON.stringify({
+      semesterName: '2031 봄', memberName: '검토 회원', applicationOrder: 1,
+      choices: [{ courseName: '발성', preference: 1 }],
+    }),
+  });
+  assert.equal(applicationResponse.status, 201);
+  const application = JSON.parse(applicationResponse.text);
+  const createdResponse = await call(runtime.origin, '/api/v1/allocation-drafts', {
+    method: 'POST', headers, body: JSON.stringify({
+      semesterId: application.semesterId, mode: 'MANUAL', policyId: 'course-allocation', policyVersion: '1.0.0',
+      policySettings: { preferenceMode: 'NEW_FIRST', fallbackMode: 'MAX_CARDINALITY_PRIORITIZED' },
+    }),
+  });
+  assert.equal(createdResponse.status, 201);
+  const created = JSON.parse(createdResponse.text);
+  const path = `/api/v1/allocation-drafts/${created.draft.id}/items/${application.memberId}`;
+  const input = { expectedDraftRevision: 0, finalDecision: 'REJECTED', finalSemesterCourseId: null, finalReasonCode: 'ADMIN_EXCLUDED' };
+  const before = runtime.repository.snapshot();
+  const invalidCases = [
+    { request: input, expected: { status: 422, code: 'UNPROCESSABLE', issue: /finalReasonDetail/ } },
+    ...['note', 1, true, [], {}, { note: null }, { note: 1 }, { note: '' }, { note: '   ' },
+      { note: '검토 완료', extra: true }, { note: '가'.repeat(2001) }]
+      .map((finalReasonDetail) => ({ request: { ...input, finalReasonDetail },
+        expected: { status: 422, code: 'UNPROCESSABLE', issue: /finalReasonDetail/ } })),
+  ];
+
+  for (const { request, expected } of invalidCases) {
+    const response = await call(runtime.origin, path, { method: 'PATCH', headers, body: JSON.stringify(request) });
+    assert.equal(response.status, expected.status);
+    const result = JSON.parse(response.text);
+    assert.equal(result.code, expected.code);
+    assert.ok(result.issues.some(({ message }) => expected.issue.test(message)));
+    assert.deepEqual(runtime.repository.snapshot(), before);
+    const unchanged = await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}`, { headers });
+    assert.equal(unchanged.status, 200);
+    assert.deepEqual(JSON.parse(unchanged.text), created);
+  }
+
+  const validCases = [null, { note: '검토 완료' }, { note: '가'.repeat(2000) }]
+    .map((finalReasonDetail) => ({ request: { finalReasonDetail }, expected: { status: 200, finalReasonDetail } }));
+  for (const { request, expected } of validCases) {
+    const current = JSON.parse((await call(runtime.origin, `/api/v1/allocation-drafts/${created.draft.id}`, { headers })).text);
+    const response = await call(runtime.origin, path, { method: 'PATCH', headers,
+      body: JSON.stringify({ ...input, expectedDraftRevision: current.draft.revision, ...request }) });
+    assert.equal(response.status, expected.status);
+    assert.deepEqual(JSON.parse(response.text).finalReasonDetail, expected.finalReasonDetail);
+    assert.equal(runtime.repository.snapshot().allocationDrafts[0].revision, current.draft.revision + 1);
+  }
+});
+
 test('creates and edits a draft, then replays finalization after the draft is removed', async (t) => {
   const workspace = await localWorkspace(t);
   let runtime = await startLocalServer({
@@ -578,7 +639,7 @@ test('creates and edits a draft, then replays finalization after the draft is re
     staticDirectory: workspace.static,
     port: 0,
   });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -739,10 +800,37 @@ test('creates and edits a draft, then replays finalization after the draft is re
   assert.equal(runtime.repository.snapshot().enrollments.length, 1);
 });
 
+test('returns 422 for oversized fallback without persisting any draft records or automatic semester revisions', async (t) => {
+  const workspace = await localWorkspace(t);
+  const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
+  workspace.onClose(() => runtime.close());
+  await seedRepository(runtime.repository, (data) => Object.assign(data, fallbackStore(fallbackBoundaryInput(100_001), null)));
+  const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
+    method: 'POST', headers: { Origin: runtime.origin },
+  })).text);
+  const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
+  const request = { semesterId: 'current', mode: 'AUTO', policyId: 'course-allocation', policyVersion: '1.0.0',
+    policySettings: { preferenceMode: 'NEW_FIRST', fallbackMode: 'MAX_CARDINALITY_PRIORITIZED' } };
+  const before = runtime.repository.snapshot();
+  const rejected = await call(runtime.origin, '/api/v1/allocation-drafts', { method: 'POST', headers, body: JSON.stringify(request) });
+  assert.equal(rejected.status, 422);
+  const problem = JSON.parse(rejected.text);
+  assert.equal(problem.code, 'UNPROCESSABLE');
+  assert.equal(problem.issues[0].code, 'ALLOCATION_FALLBACK_WORK_LIMIT');
+  assert.equal(problem.issues[0].severity, 'ERROR');
+  assert.match(problem.issues[0].message, /100,000.*수동 초안/);
+  assert.deepEqual(runtime.repository.snapshot(), before);
+  const manual = await call(runtime.origin, '/api/v1/allocation-drafts', {
+    method: 'POST', headers, body: JSON.stringify({ ...request, mode: 'MANUAL' }),
+  });
+  assert.equal(manual.status, 201);
+  assert.equal(JSON.parse(manual.text).studentResults.length, 1_001);
+});
+
 test('moves a semester through the API and shows the new order in the catalog', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -770,7 +858,7 @@ test('moves a semester through the API and shows the new order in the catalog', 
 test('sorts all applications before dividing them into pages', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -812,7 +900,7 @@ test('sorts all applications before dividing them into pages', async (t) => {
 test('filters application review statuses consistently across pages and Excel exports', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -875,7 +963,7 @@ test('filters application review statuses consistently across pages and Excel ex
 test('exports application semester and course settings with filtered students and reimports them on a new store', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -934,7 +1022,7 @@ test('exports application semester and course settings with filtered students an
 
   const restoredWorkspace = await localWorkspace(t);
   const restored = await startLocalServer({ dataDirectory: restoredWorkspace.data, staticDirectory: restoredWorkspace.static, port: 0 });
-  t.after(() => restored.close());
+  restoredWorkspace.onClose(() => restored.close());
   const restoredSession = JSON.parse((await call(restored.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: restored.origin },
   })).text);
@@ -970,7 +1058,7 @@ test('exports application semester and course settings with filtered students an
 test('sorts filtered enrollment history before pagination and exports the same order without modifying data', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -1027,7 +1115,7 @@ test('sorts filtered enrollment history before pagination and exports the same o
 test('registers multiple applications and reviewed enrollments atomically through the protected API', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -1087,7 +1175,7 @@ test('registers multiple applications and reviewed enrollments atomically throug
 test('exports distinct course capacities and enrollment notes within the selected report scope', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -1132,7 +1220,7 @@ test('exports distinct course capacities and enrollment notes within the selecte
 test('removes the manual backup and restore API without changing stored data', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', {
     method: 'POST', headers: { Origin: runtime.origin },
   })).text);
@@ -1166,7 +1254,7 @@ const testApi = async (request, { repository }) => {
 test('previews semester application deletion and requires matching confirmation and current data before deleting', async (t) => {
   const workspace = await localWorkspace(t);
   const runtime = await startLocalServer({ dataDirectory: workspace.data, staticDirectory: workspace.static, port: 0 });
-  t.after(() => runtime.close());
+  workspace.onClose(() => runtime.close());
   const session = JSON.parse((await call(runtime.origin, '/api/v1/session', { method: 'POST', headers: { Origin: runtime.origin } })).text);
   const headers = { Origin: runtime.origin, 'X-Glorycourse-Session': session.token, 'Content-Type': 'application/json' };
   const create = async (semesterName, memberName, applicationOrder) => {
@@ -1219,8 +1307,12 @@ const localWorkspace = async (t) => {
   const staticDirectory = join(root, 'static');
   await mkdir(staticDirectory);
   await writeFile(join(staticDirectory, 'index.html'), '<!doctype html><h1>로컬 수강 관리</h1>');
-  t.after(() => rm(root, { recursive: true, force: true }));
-  return { data, static: staticDirectory };
+  const closers = [];
+  t.after(async () => {
+    for (const close of closers) await close();
+    await rm(root, { recursive: true, force: true });
+  });
+  return { data, static: staticDirectory, onClose: (close) => closers.push(close) };
 };
 
 const call = (origin, path, options = {}) => new Promise((resolve, reject) => {

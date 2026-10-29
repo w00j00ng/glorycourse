@@ -6,7 +6,7 @@ import { issueText } from './issue-view.js';
  * @typedef {{ preview: FinalizationPreview, draftId: string, idempotencyKey: string, request: null | { preparedActionToken: string, expectedDraftRevision: number, acknowledgedWarningDigest: string, acknowledgementNote: string } }} FinalizationState
  * @typedef {{ draft: { id: string, revision: number }, studentResults: { memberId: string, memberNameAtGeneration: string }[] }} DraftDetail
  * @typedef {{ semesterCourses: { courseId: string, courseName: string }[] }} DraftContext
- * @param {{ state: { draft: DraftDetail | null, draftContext: DraftContext | null }, api: (path: string, options?: Record<string, unknown>) => Promise<unknown>, byId: (id: string) => any, run: (action: () => Promise<unknown>, success?: string) => Promise<unknown>, draftCourseName: (id: string) => string, showMessage: (message: string) => void, loadDrafts: () => Promise<void>, loadEnrollments: () => Promise<void>, discardDraftEdits: (draftId: string) => void }} dependencies
+ * @param {{ state: { draft: DraftDetail | null, draftContext: DraftContext | null }, api: (path: string, options?: Record<string, unknown>) => Promise<unknown>, byId: (id: string) => any, run: (action: () => Promise<unknown>, success?: string, isCurrent?: () => boolean) => Promise<unknown>, draftCourseName: (id: string) => string, showMessage: (message: string) => void, loadDrafts: () => Promise<void>, loadEnrollments: () => Promise<void>, discardDraftEdits: (draftId: string) => void }} dependencies
  */
 export const createFinalizationPage = ({ state, api, byId, run, draftCourseName, showMessage, loadDrafts, loadEnrollments, discardDraftEdits }) => {
   /** @type {FinalizationState | null} */
@@ -58,6 +58,7 @@ export const createFinalizationPage = ({ state, api, byId, run, draftCourseName,
     event.preventDefault();
     const current = finalization;
     if (!current) return;
+    const draft = state.draft;
     const form = /** @type {HTMLFormElement & { elements: HTMLFormControlsCollection & { note: HTMLTextAreaElement } }} */ (event.currentTarget);
     const request = current.request ??= {
       preparedActionToken: current.preview.preparedActionToken,
@@ -71,18 +72,22 @@ export const createFinalizationPage = ({ state, api, byId, run, draftCourseName,
         method: 'POST',
         headers: { 'Idempotency-Key': current.idempotencyKey },
         body: JSON.stringify(request),
-      }), '배정초안을 확정하고 수강이력을 생성했습니다.'));
+      }), '배정초안을 확정하고 수강이력을 생성했습니다.', () => finalization === current && state.draft === draft));
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
       if (code === 'UNPROCESSABLE' && current.request === request) current.request = null;
       throw error;
     }
     discardDraftEdits(current.draftId);
-    byId('finalize-dialog').close();
-    byId('draft-dialog').close();
-    finalization = null;
-    state.draft = null;
-    showMessage(`배정을 확정했습니다. 추가된 수강이력 ${receipt.createdCount}건`);
+    if (finalization === current) {
+      byId('finalize-dialog').close();
+      finalization = null;
+      if (state.draft === draft) {
+        byId('draft-dialog').close();
+        state.draft = null;
+        showMessage(`배정을 확정했습니다. 추가된 수강이력 ${receipt.createdCount}건`);
+      }
+    }
     await Promise.all([loadDrafts(), loadEnrollments()]);
   };
 

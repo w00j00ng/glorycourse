@@ -376,8 +376,13 @@ const validateItemInput = (input: DraftItemInput): void => {
     || (input.finalDecision === 'REJECTED' && input.finalSemesterCourseId !== null)
   ) throw new DraftValidationError('finalDecision and finalSemesterCourseId do not match');
   if (input.finalReasonCode !== null) requireId(input.finalReasonCode, 'finalReasonCode');
+  if (input.finalReasonDetail === undefined) {
+    throw new DraftValidationError('finalReasonDetail is required; use null when there is no note');
+  }
   if (input.finalReasonDetail !== null && (
-    !plainObject(input.finalReasonDetail)
+    typeof input.finalReasonDetail !== 'object'
+    || Array.isArray(input.finalReasonDetail)
+    || !plainObject(input.finalReasonDetail)
     || Object.keys(input.finalReasonDetail).length !== 1
     || typeof input.finalReasonDetail.note !== 'string'
     || !input.finalReasonDetail.note.trim()
