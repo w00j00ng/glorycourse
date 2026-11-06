@@ -47,6 +47,13 @@ const application = (memberName) => ({ semesterName: '2033 봄', memberName, min
 try {
   await mkdir(unpacked);
   if (process.platform === 'darwin') execFileSync('ditto', ['-x', '-k', archive, unpacked]);
+  else if (process.platform === 'win32') {
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      '$ErrorActionPreference = "Stop"; Expand-Archive -LiteralPath $env:GLORYCOURSE_TEST_ARCHIVE -DestinationPath $env:GLORYCOURSE_TEST_UNPACKED'], {
+      env: { ...process.env, GLORYCOURSE_TEST_ARCHIVE: archive, GLORYCOURSE_TEST_UNPACKED: unpacked },
+      windowsHide: true,
+    });
+  }
   else execFileSync('tar', ['-xf', archive, '-C', unpacked]);
   await mkdir(localized);
   await rename(join(unpacked, 'Glorycourse'), top);
