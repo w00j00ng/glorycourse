@@ -90,7 +90,7 @@ down은 서버 종료 후 명시적 CLI로 수행하며 자동 실행하지 않�
 
 ## C-09 런타임과 도구
 
-최소 런타임은 Node.js `>=22.14.0`이며, 개발용 `node` 의존성·`.nvmrc`·배포 설정·CI는 `22.23.3`을 사용한다. `npm ci` 후 npm scripts는 프로젝트 Node를 우선 사용하며, `--ignore-scripts` 설치는 지원 버전의 시스템 Node를 먼저 준비해야 한다. 루트 `package-lock.json`으로 실제 설치 버전을 고정한다. 계약 검증은 Node test runner, Ajv 8, YAML 2, Redocly CLI 2를 사용한다. 저장과 HTTP는 Node 내장 모듈, xlsx는 `@excel.js/exceljs`, 프런트는 HTML/CSS/JavaScript를 사용한다. 하위 디렉터리에 별도 Git 저장소나 비공개 dependency를 두지 않는다.
+최소 런타임은 Node.js `>=22.14.0`이며, 개발용 `node` 의존성·`.nvmrc`·배포 설정·CI는 `22.23.3`을 사용한다. `npm ci` 후 npm scripts는 프로젝트 Node를 우선 사용하며, `--ignore-scripts` 설치는 지원 버전의 시스템 Node를 먼저 준비해야 한다. 루트 `package-lock.json`으로 실제 설치 버전을 고정한다. 계약 검증은 Node test runner, Ajv 8, YAML 2, Redocly CLI 2를 사용한다. 저장과 HTTP는 Node 내장 모듈, xlsx는 `@excel.js/exceljs`, 프런트는 HTML/CSS/JavaScript를 사용한다. 제품 소스와 실행 의존성은 이 저장소와 공개 npm 패키지로 관리한다. 공통 개발용 Task만 공개 `w00j00ng/tasks` 저장소를 `tasks` 서브모듈로 포함하며 고객 배포본에는 넣지 않는다. 비공개 dependency는 사용하지 않는다.
 
 ## 수동 일괄 등록
 

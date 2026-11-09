@@ -1,0 +1,7 @@
+version: '3'
+
+includes:
+  shared:
+    taskfile: ./tasks/Taskfile.yml
+    dir: .
+    flatten: true

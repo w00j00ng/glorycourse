@@ -16,15 +16,62 @@ concurrency:
 
 jobs:
   npm-audit:
+    name: dependency-scan (npm)
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.23.3'
           cache: npm
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.54.0
+      - name: Verify shared security behavior
+        run: task security:test
       - name: Audit locked dependencies (high and critical fail)
-        run: npm audit --package-lock-only --include=dev --audit-level=high --registry=https://registry.npmjs.org
+        id: scan
+        run: task --exit-code security:npm
+      - name: Fail for reachable vulnerabilities
+        if: steps.scan.outputs.vulnerable == 'true'
+        run: exit 1
+
+  security-issue:
+    name: Report scheduled security findings
+    needs: npm-audit
+    if: >-
+      ${{ !cancelled() && github.event_name == 'schedule' &&
+          github.ref == 'refs/heads/main' && needs.npm-audit.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    concurrency:
+      group: dependency-security-issue
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.54.0
+      - name: Update issue and notify once per day
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: task security:report
