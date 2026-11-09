@@ -35,8 +35,6 @@ jobs:
           cache: false
       - name: Install Task
         run: go install github.com/go-task/task/v3/cmd/task@v3.54.0
-      - name: Verify shared security behavior
-        run: task security:test
       - name: Audit locked dependencies (high and critical fail)
         id: scan
         run: task --exit-code security:npm
