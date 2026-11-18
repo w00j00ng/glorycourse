@@ -25,7 +25,7 @@ npm run package
 npm run test:package
 ```
 
-`scripts/release-config.json`이 동봉 Node 버전, OS/아키텍처, 공식 배포 파일 SHA-256 및 최종 파일명을 정한다. 현재 Node는 개발 의존성·`.nvmrc`·CI와 같은 `22.23.3`이다. CI의 `npm ci --ignore-scripts`는 프로젝트 Node 바이너리 설치를 생략하므로 먼저 `setup-node`로 해당 버전을 준비한다. Node를 올릴 때 [공식 배포 검증 안내](https://github.com/nodejs/node#verifying-binaries)에 따라 검증값을 갱신하고 세 OS를 다시 확인한다. 패키징은 해당 OS/아키텍처에서 수행한다.
+`scripts/release-config.json`이 동봉 Node 버전, OS/아키텍처, 공식 배포 파일 SHA-256 및 최종 파일명을 정한다. 현재 Node는 개발 의존성·`.nvmrc`·CI와 같은 `22.23.5`이다. CI의 `npm ci --ignore-scripts`는 프로젝트 Node 바이너리 설치를 생략하므로 먼저 `setup-node`로 해당 버전을 준비한다. Node를 올릴 때 [공식 배포 검증 안내](https://github.com/nodejs/node#verifying-binaries)에 따라 검증값을 갱신하고 세 OS를 다시 확인한다. 패키징은 해당 OS/아키텍처에서 수행한다.
 
 `dist`에 최종 압축 파일과 `.sha256`이 생긴다. 패키지는 `backend/src`, `frontend`, `schema/migrations`의 모든 up/down 쌍·manifest·고정된 `legacy-manifest.json`, 저장 스키마, 실행기와 명시적 down 스크립트, production 의존성, Node 및 라이선스를 포함한다. Markdown은 `scripts/package.mjs`의 목록에 따라 README와 사용·문제 해결·개발·배포·계약·의존성 문서 6개, README 배지·측정 요약을 동봉한다. 개발자의 자료 폴더, 테스트, OpenAPI와 나머지 점검·계획 문서는 포함하지 않는다. `release.json`에는 목표 DB 버전과 migration manifest의 SHA-256을 기록한다. `MANIFEST.json`에는 파일별 SHA-256, 앱/Node 버전, 커밋과 수정 여부가 있다. 수정 중인 로컬 빌드는 `dirty: true`로 표시하며 고객 Release에는 사용하지 않는다. 이 빌드 표시와 DB 상태의 `dirty`는 별개다.
 
