@@ -48,8 +48,10 @@ try {
   await mkdir(unpacked);
   if (process.platform === 'darwin') execFileSync('ditto', ['-x', '-k', archive, unpacked]);
   else if (process.platform === 'win32') {
+    // Use the two-argument overload available in Windows PowerShell's .NET Framework.
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      '$ErrorActionPreference = "Stop"; Expand-Archive -LiteralPath $env:GLORYCOURSE_TEST_ARCHIVE -DestinationPath $env:GLORYCOURSE_TEST_UNPACKED'], {
+      '$ErrorActionPreference = "Stop"; Add-Type -AssemblyName System.IO.Compression.FileSystem; ' +
+      '[System.IO.Compression.ZipFile]::ExtractToDirectory($env:GLORYCOURSE_TEST_ARCHIVE, $env:GLORYCOURSE_TEST_UNPACKED)'], {
       env: { ...process.env, GLORYCOURSE_TEST_ARCHIVE: archive, GLORYCOURSE_TEST_UNPACKED: unpacked },
       windowsHide: true,
     });
