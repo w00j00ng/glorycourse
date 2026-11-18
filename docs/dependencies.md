@@ -16,7 +16,7 @@
 
 저장은 Node.js 내장 `node:sqlite`를 사용하며 별도 SQLite 패키지를 설치하지 않는다. 기준 런타임 Node.js 22.14의 해당 API는 experimental 상태다. [공식 API 문서](https://nodejs.org/download/release/v22.14.0/docs/api/sqlite.html)를 기준으로 사용한다.
 
-배포본의 Node.js는 [release-config.json](../scripts/release-config.json)에 고정한 22.23.3을 사용한다. 공식 바이너리의 SHA-256을 확인하고 Node LICENSE와 production 의존성의 원래 라이선스 파일을 동봉한다. `ajv`, `ajv-formats`, `immer`는 개발 도구 없이도 필요한 실행 의존성이다. JSON Schema는 저장 전 구조 검증용이며 SQLite에 업무 자료를 JSON으로 보관한다는 의미가 아니다.
+배포본의 Node.js는 [release-config.json](../scripts/release-config.json)에 고정한 22.23.5를 사용한다. 공식 바이너리의 SHA-256을 확인하고 Node LICENSE와 production 의존성의 원래 라이선스 파일을 동봉한다. `ajv`, `ajv-formats`, `immer`는 개발 도구 없이도 필요한 실행 의존성이다. JSON Schema는 저장 전 구조 검증용이며 SQLite에 업무 자료를 JSON으로 보관한다는 의미가 아니다.
 
 ## 개발 의존성
 
@@ -29,7 +29,7 @@
 | `yaml` 2.9.1 | 계약 테스트의 YAML 읽기 |
 | `c8` 12.0.0 | 테스트 커버리지와 HTML·LCOV 보고서 |
 | `marked` 16.0.0 | 배포용 오프라인 HTML 설명서 생성 (MIT) |
-| `node` 22.23.3 | npm 명령에서 사용할 프로젝트 전용 Node.js 런타임 (MIT, <https://github.com/aredridel/node-bin-gen>) |
+| `node` 22.23.5 | npm 명령에서 사용할 프로젝트 전용 Node.js 런타임 (MIT, <https://github.com/aredridel/node-bin-gen>) |
 
 테스트 실행에는 Node.js 내장 test runner를 사용한다. 프런트엔드는 별도 프레임워크나 빌드 의존성이 없다. `marked`는 배포 파일을 만들 때만 사용하며, 생성된 HTML은 외부 스크립트 없이 열린다. 개발 의존성은 고객용 production 설치 대상에 포함하지 않는다.
 
@@ -51,12 +51,16 @@ git submodule update --init --recursive
 go install github.com/go-task/task/v3/cmd/task@v3.54.0
 task security:test
 task --exit-code security:npm
+python -B scripts/node_runtime_audit.py
 ```
 
-Task v3.54.0, jq 및 POSIX 명령 도구가 필요하며 실제 GitHub 보고에는 `gh`도 필요하다.
-기존 Node 22.23.3과 루트 lockfile을 사용하고 개발 의존성을 포함한다.
-high·critical 취약점에서 CI가 실패하며 일반 레지스트리·네트워크 오류는 취약점 알림으로
-취급하지 않는다. 검사·테스트 과정에서 패키지를 설치하거나 자동 수정하지 않는다.
+공통 Task에는 Task v3.54.0, jq 및 POSIX 명령 도구가 필요하며 실제 GitHub 보고에는 `gh`도 필요하다.
+배포 Node.js 검사에는 Python 3이 필요하다.
+npm 감사는 루트 lockfile의 개발 의존성을 포함한다. 배포 Node.js 검사는
+`release-config.json`의 동봉 버전을 [OpenJS 권고 피드](https://cna.openjsf.org/feed.xml)에
+등록된 Node.js CVE의 버전 범위 및 심각도와 대조한다.
+두 검사 모두 high·critical 발견 시 CI가 실패한다. 조회나 응답 검증 오류는 별도 검사 실패로
+표시된다. 검사·테스트 과정에서 패키지를 설치하거나 자동 수정하지 않는다.
 
 공통 Task의 Go 검사에서는 플랫폼·CGO 구성과 package/module 경고를 별도로 보고한다.
 glorycourse는 기존 npm 보고 경로를 사용하므로 Go 결과 artifact를 요구하지 않는다.
